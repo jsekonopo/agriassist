@@ -11,13 +11,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import { cn } from '@/lib/utils';
 
 interface HarvestingLog {
   id: string;
   cropName: string;
   yieldAmount?: number;
   yieldUnit?: string;
-  farmId: string; // Ensure this is part of the interface
+  farmId: string;
   userId: string;
 }
 
@@ -30,7 +31,7 @@ interface CropYieldSummary {
 interface TaskLog {
   id: string;
   status: "To Do" | "In Progress" | "Done";
-  farmId: string; // Ensure this is part of the interface
+  farmId: string;
   userId: string;
 }
 
@@ -41,18 +42,38 @@ interface TaskStatusSummary {
   total: number;
 }
 
+interface RevenueLog {
+    id: string;
+    amount: number;
+    farmId: string;
+}
+
+interface ExpenseLog {
+    id: string;
+    amount: number;
+    farmId: string;
+}
+
+interface FinancialSummary {
+    totalRevenue: number;
+    totalExpenses: number;
+    netProfit: number;
+}
+
 export default function ReportingPage() {
   const [cropYields, setCropYields] = useState<CropYieldSummary[]>([]);
   const [taskSummary, setTaskSummary] = useState<TaskStatusSummary | null>(null);
+  const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user || !user.farmId) { // Check for farmId
+    if (!user || !user.farmId) {
       setIsLoading(false);
       setCropYields([]);
       setTaskSummary(null);
+      setFinancialSummary(null);
       return;
     }
 
@@ -61,17 +82,17 @@ export default function ReportingPage() {
 
     const fetchReportData = async () => {
       try {
-        // Process Harvesting Logs from Firestore, filtered by farmId
+        // Fetch Harvesting Logs
         const harvestingQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingSnapshot = await getDocs(harvestingQuery);
         const harvestingLogs: HarvestingLog[] = harvestingSnapshot.docs.map(doc => doc.data() as HarvestingLog);
 
         const yieldMap = new Map<string, { total: number; unit: string; count: number }>();
         harvestingLogs.forEach(log => {
-          if (log.cropName && log.yieldAmount !== undefined) {
+          if (log.cropName && typeof log.yieldAmount === 'number') {
             const existing = yieldMap.get(log.cropName) || { total: 0, unit: log.yieldUnit || 'units', count: 0 };
             existing.total += log.yieldAmount;
-            if (!existing.unit && log.yieldUnit) existing.unit = log.yieldUnit; // Keep first encountered unit or default
+            if (!existing.unit && log.yieldUnit) existing.unit = log.yieldUnit;
             existing.count++;
             yieldMap.set(log.cropName, existing);
           }
@@ -83,18 +104,36 @@ export default function ReportingPage() {
         }));
         setCropYields(yields);
 
-        // Process Task Logs from Firestore, filtered by farmId
+        // Fetch Task Logs
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId));
         const tasksSnapshot = await getDocs(tasksQuery);
         const taskLogs: TaskLog[] = tasksSnapshot.docs.map(doc => doc.data() as TaskLog);
 
-        const summary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: taskLogs.length };
+        const taskStatusSummary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: taskLogs.length };
         taskLogs.forEach(log => {
-          if (log.status === "To Do") summary.toDo++;
-          else if (log.status === "In Progress") summary.inProgress++;
-          else if (log.status === "Done") summary.done++;
+          if (log.status === "To Do") taskStatusSummary.toDo++;
+          else if (log.status === "In Progress") taskStatusSummary.inProgress++;
+          else if (log.status === "Done") taskStatusSummary.done++;
         });
-        setTaskSummary(summary);
+        setTaskSummary(taskStatusSummary);
+
+        // Fetch Revenue Logs
+        const revenueQuery = query(collection(db, "revenueLogs"), where("farmId", "==", user.farmId));
+        const revenueSnapshot = await getDocs(revenueQuery);
+        const revenueLogs: RevenueLog[] = revenueSnapshot.docs.map(doc => doc.data() as RevenueLog);
+        const totalRevenue = revenueLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
+
+        // Fetch Expense Logs
+        const expenseQuery = query(collection(db, "expenseLogs"), where("farmId", "==", user.farmId));
+        const expenseSnapshot = await getDocs(expenseQuery);
+        const expenseLogs: ExpenseLog[] = expenseSnapshot.docs.map(doc => doc.data() as ExpenseLog);
+        const totalExpenses = expenseLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
+        
+        setFinancialSummary({
+            totalRevenue,
+            totalExpenses,
+            netProfit: totalRevenue - totalExpenses,
+        });
 
       } catch (e) {
         console.error("Error fetching report data from Firestore:", e);
@@ -126,7 +165,7 @@ export default function ReportingPage() {
     );
   }
   
-  if (!user?.farmId && !isLoading && user) { // User is logged in but not associated with a farm
+  if (!user?.farmId && !isLoading && user) {
     return (
          <div className="space-y-8">
             <PageHeader
@@ -145,7 +184,6 @@ export default function ReportingPage() {
     );
   }
 
-
   if (error) {
     return (
       <div className="space-y-6">
@@ -163,6 +201,10 @@ export default function ReportingPage() {
     );
   }
 
+  const formatCurrency = (value: number) => {
+    return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }); // Adjust currency as needed
+  };
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -170,6 +212,51 @@ export default function ReportingPage() {
         description="Summary of your farm's activities and performance based on your Firestore data."
         icon={Icons.Reporting}
       />
+
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle>Financial Overview</CardTitle>
+          <CardDescription>Summary of your farm's logged revenue and expenses.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-6 w-1/2" />
+              <Skeleton className="h-6 w-1/3" />
+              <Skeleton className="h-6 w-1/4" />
+            </div>
+          ) : financialSummary ? (
+            <ul className="space-y-3 text-base">
+              <li className="flex justify-between items-center py-2 border-b">
+                <span className="text-muted-foreground">Total Revenue:</span>
+                <span className="font-semibold text-green-600">{formatCurrency(financialSummary.totalRevenue)}</span>
+              </li>
+              <li className="flex justify-between items-center py-2 border-b">
+                <span className="text-muted-foreground">Total Expenses:</span>
+                <span className="font-semibold text-red-600">{formatCurrency(financialSummary.totalExpenses)}</span>
+              </li>
+              <li className="flex justify-between items-center py-3 mt-2">
+                <span className="text-lg font-bold text-foreground">Net Profit / Loss:</span>
+                <span className={cn(
+                    "text-lg font-bold",
+                    financialSummary.netProfit >= 0 ? "text-green-700" : "text-red-700"
+                  )}
+                >
+                  {formatCurrency(financialSummary.netProfit)}
+                </span>
+              </li>
+            </ul>
+          ) : (
+            <Alert>
+              <Icons.Info className="h-4 w-4" />
+              <AlertTitle>No Financial Data</AlertTitle>
+              <AlertDescription>
+                No revenue or expense logs found in Firestore for this farm to generate this summary.
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="shadow-lg">
         <CardHeader>
@@ -185,7 +272,7 @@ export default function ReportingPage() {
             </div>
           ) : cropYields.length > 0 ? (
             <Table>
-              <TableCaption>Data derived from your farm's harvesting logs in Firestore.</TableCaption>
+              <TableCaption>Data derived from your farm's harvesting logs.</TableCaption>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[200px]">Crop Name</TableHead>
@@ -248,3 +335,4 @@ export default function ReportingPage() {
     </div>
   );
 }
+
