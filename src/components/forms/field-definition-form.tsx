@@ -6,13 +6,16 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Icons } from "../icons";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type PreferredAreaUnit } from "@/contexts/auth-context";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+
+const areaUnits: PreferredAreaUnit[] = ["acres", "hectares"];
 
 const fieldDefinitionSchema = z.object({
   fieldName: z.string().min(1, "Field name is required."),
@@ -20,9 +23,13 @@ const fieldDefinitionSchema = z.object({
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "Field size must be a number"}).positive("Field size must be positive.").optional()
   ),
-  fieldSizeUnit: z.string().optional().default("acres"),
+  fieldSizeUnit: z.enum(areaUnits, {required_error: "Please select a unit for the field size if providing a size."}).optional(),
   notes: z.string().optional(),
+}).refine(data => (data.fieldSize !== undefined) ? data.fieldSizeUnit !== undefined : true, {
+  message: "Unit is required if field size is provided.",
+  path: ["fieldSizeUnit"],
 });
+
 
 interface FieldDefinitionFormProps {
   onLogSaved?: () => void;
@@ -32,19 +39,28 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { user } = useAuth();
+  const preferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
   const form = useForm<z.infer<typeof fieldDefinitionSchema>>({
     resolver: zodResolver(fieldDefinitionSchema),
     defaultValues: {
       fieldName: "",
-      fieldSizeUnit: "acres",
       notes: "",
       fieldSize: undefined,
+      fieldSizeUnit: preferredAreaUnit,
     },
   });
 
+  useEffect(() => {
+    // Update default unit if user preference changes and form hasn't been touched for unit
+    if (user?.settings?.preferredAreaUnit && !form.formState.dirtyFields.fieldSizeUnit) {
+      form.setValue("fieldSizeUnit", user.settings.preferredAreaUnit);
+    }
+  }, [user?.settings?.preferredAreaUnit, form]);
+
+
   async function onSubmit(values: z.infer<typeof fieldDefinitionSchema>) {
-    if (!user || !user.farmId) { // Check for user and farmId
+    if (!user || !user.farmId) { 
       toast({
         title: "Authentication Error",
         description: "You must be logged in and associated with a farm to save a field definition.",
@@ -55,9 +71,12 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
     setIsSubmitting(true);
     try {
       const fieldData = {
-        ...values,
-        userId: user.uid, // Keep userId for individual tracking if needed, or it can be removed if all data is farm-centric
-        farmId: user.farmId, // Associate with the farm
+        fieldName: values.fieldName,
+        fieldSize: values.fieldSize,
+        fieldSizeUnit: values.fieldSize !== undefined ? values.fieldSizeUnit : undefined, // Only save unit if size is provided
+        notes: values.notes,
+        userId: user.uid, 
+        farmId: user.farmId, 
         createdAt: serverTimestamp(),
       };
       await addDoc(collection(db, "fields"), fieldData);
@@ -65,7 +84,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
         title: "Field Definition Saved",
         description: `Field: ${values.fieldName} has been saved to Firestore for farm ${user.farmId}.`,
       });
-      form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: "acres", notes: "" });
+      form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: preferredAreaUnit, notes: "" });
       if (onLogSaved) {
         onLogSaved();
       }
@@ -98,7 +117,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
               </FormItem>
             )}
           />
-           <div className="grid grid-cols-2 gap-4">
+           <div className="grid grid-cols-[2fr_1fr] gap-2 items-end"> {/* Adjusted for better alignment */}
             <FormField
               control={form.control}
               name="fieldSize"
@@ -106,7 +125,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
                 <FormItem>
                   <FormLabel>Size (Optional)</FormLabel>
                   <FormControl>
-                    <Input type="number" placeholder="e.g., 100" {...field} value={field.value === undefined ? '' : field.value} />
+                    <Input type="number" step="any" placeholder="e.g., 100" {...field} value={field.value ?? ''} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -117,10 +136,17 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
               name="fieldSizeUnit"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Unit (Optional)</FormLabel>
-                  <FormControl>
-                    <Input placeholder="acres, hectares" {...field} />
-                  </FormControl>
+                  <FormLabel>Unit</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                     <FormControl>
+                        <SelectTrigger>
+                            <SelectValue placeholder="Select unit"/>
+                        </SelectTrigger>
+                     </FormControl>
+                     <SelectContent>
+                        {areaUnits.map(unit => <SelectItem key={unit} value={unit}>{unit.charAt(0).toUpperCase() + unit.slice(1)}</SelectItem>)}
+                     </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
@@ -147,7 +173,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
         <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
+              <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
               Saving Field...
             </>
           ) : (
@@ -159,5 +185,3 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
     </Form>
   );
 }
-
-    
