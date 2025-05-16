@@ -1,3 +1,4 @@
+
 "use client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -12,25 +13,71 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
+import { Icons } from "../icons";
+
+interface WeatherLogData {
+  id: string;
+  date: string; // Stored as YYYY-MM-DD string
+  location: string;
+  temperatureHigh?: number;
+  temperatureLow?: number;
+  precipitation?: number;
+  precipitationUnit?: string;
+  windSpeed?: number;
+  windSpeedUnit?: string;
+  conditions?: string;
+  notes?: string;
+  submittedAt: string; // ISO string
+}
+
+const mockWeatherLogService = {
+  save: async (logData: Omit<WeatherLogData, 'id' | 'submittedAt' | 'date'> & {date: Date}): Promise<WeatherLogData> => {
+    console.log("Mock service: Attempting to save weather log:", logData);
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        try {
+          const existingLogsString = localStorage.getItem('weatherLogs');
+          const existingLogs: WeatherLogData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
+          
+          const newLog: WeatherLogData = { 
+            ...logData, 
+            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
+            submittedAt: new Date().toISOString(),
+            date: format(logData.date, "yyyy-MM-dd"),
+          };
+          existingLogs.push(newLog);
+          localStorage.setItem('weatherLogs', JSON.stringify(existingLogs));
+          console.log("Mock service: Weather log saved to localStorage:", newLog);
+          resolve(newLog);
+        } catch (error) {
+          console.error("Mock service: Error saving weather log to localStorage:", error);
+          reject(error);
+        }
+      }, 500);
+    });
+  }
+};
+
 
 const weatherDataSchema = z.object({
   date: z.date({ required_error: "Date is required." }),
   location: z.string().min(1, "Location is required (e.g., farm name, specific field)."),
   temperatureHigh: z.preprocess(
-    (val) => (val === "" ? undefined : Number(val)),
+    (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "Temperature must be a number"}).optional()
   ),
   temperatureLow: z.preprocess(
-    (val) => (val === "" ? undefined : Number(val)),
+    (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "Temperature must be a number"}).optional()
   ),
   precipitation: z.preprocess(
-    (val) => (val === "" ? undefined : Number(val)),
+    (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "Precipitation must be a number"}).min(0).optional()
   ),
   precipitationUnit: z.string().optional().default("mm"),
   windSpeed: z.preprocess(
-    (val) => (val === "" ? undefined : Number(val)),
+    (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "Wind speed must be a number"}).min(0).optional()
   ),
   windSpeedUnit: z.string().optional().default("km/h"),
@@ -38,8 +85,13 @@ const weatherDataSchema = z.object({
   notes: z.string().optional(),
 });
 
-export function WeatherDataForm() {
+interface WeatherDataFormProps {
+  onLogSaved?: () => void;
+}
+
+export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
   const { toast } = useToast();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const form = useForm<z.infer<typeof weatherDataSchema>>({
     resolver: zodResolver(weatherDataSchema),
     defaultValues: {
@@ -48,16 +100,46 @@ export function WeatherDataForm() {
       windSpeedUnit: "km/h",
       conditions: "",
       notes: "",
+      temperatureHigh: undefined,
+      temperatureLow: undefined,
+      precipitation: undefined,
+      windSpeed: undefined,
     },
   });
 
-  function onSubmit(values: z.infer<typeof weatherDataSchema>) {
-    console.log("Weather Data:", values);
-    toast({
-      title: "Weather Data Submitted (Simulated)",
-      description: `Date: ${format(values.date, "PPP")}, Temp: ${values.temperatureHigh || 'N/A'}°C`,
-    });
-    form.reset();
+  async function onSubmit(values: z.infer<typeof weatherDataSchema>) {
+    setIsSubmitting(true);
+    try {
+      await mockWeatherLogService.save(values);
+      toast({
+        title: "Weather Log Saved",
+        description: `Weather for ${format(values.date, "PPP")} at ${values.location} saved.`,
+      });
+      form.reset({
+        date: undefined,
+        location: "",
+        temperatureHigh: undefined,
+        temperatureLow: undefined,
+        precipitation: undefined,
+        precipitationUnit: "mm",
+        windSpeed: undefined,
+        windSpeedUnit: "km/h",
+        conditions: "",
+        notes: "",
+      });
+      if (onLogSaved) {
+        onLogSaved();
+      }
+    } catch (error) {
+       console.error("Error saving weather log:", error);
+      toast({
+        title: "Error Saving Log",
+        description: "Could not save the weather log.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -125,7 +207,7 @@ export function WeatherDataForm() {
               <FormItem>
                 <FormLabel>Max Temperature (°C) (Optional)</FormLabel>
                 <FormControl>
-                  <Input type="number" placeholder="e.g., 25" {...field} />
+                  <Input type="number" placeholder="e.g., 25" {...field} value={field.value === undefined ? '' : field.value} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -138,7 +220,7 @@ export function WeatherDataForm() {
               <FormItem>
                 <FormLabel>Min Temperature (°C) (Optional)</FormLabel>
                 <FormControl>
-                  <Input type="number" placeholder="e.g., 15" {...field} />
+                  <Input type="number" placeholder="e.g., 15" {...field} value={field.value === undefined ? '' : field.value} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -152,7 +234,7 @@ export function WeatherDataForm() {
                 <FormItem>
                   <FormLabel>Precipitation (Optional)</FormLabel>
                   <FormControl>
-                    <Input type="number" placeholder="e.g., 10" {...field} />
+                    <Input type="number" placeholder="e.g., 10" {...field} value={field.value === undefined ? '' : field.value} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -180,7 +262,7 @@ export function WeatherDataForm() {
                   <FormItem>
                     <FormLabel>Wind Speed (Optional)</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="e.g., 15" {...field} />
+                      <Input type="number" placeholder="e.g., 15" {...field} value={field.value === undefined ? '' : field.value} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -231,7 +313,16 @@ export function WeatherDataForm() {
             </FormItem>
           )}
         />
-        <Button type="submit">Save Weather Log</Button>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? (
+            <>
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            "Save Weather Log"
+          )}
+        </Button>
       </form>
     </Form>
   );

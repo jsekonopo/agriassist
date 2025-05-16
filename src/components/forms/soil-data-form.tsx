@@ -1,3 +1,4 @@
+
 "use client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -12,12 +13,58 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
+import { Icons } from "../icons";
+
+interface SoilLogData {
+  id: string;
+  fieldId: string;
+  sampleDate: string; // Stored as YYYY-MM-DD string
+  phLevel?: number;
+  organicMatter?: string;
+  nutrients?: {
+    nitrogen?: string;
+    phosphorus?: string;
+    potassium?: string;
+  };
+  treatmentsApplied?: string;
+  notes?: string;
+  submittedAt: string; // ISO string
+}
+
+const mockSoilLogService = {
+  save: async (logData: Omit<SoilLogData, 'id' | 'submittedAt' | 'sampleDate'> & { sampleDate: Date }): Promise<SoilLogData> => {
+    console.log("Mock service: Attempting to save soil data log:", logData);
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        try {
+          const existingLogsString = localStorage.getItem('soilDataLogs');
+          const existingLogs: SoilLogData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
+          
+          const newLog: SoilLogData = { 
+            ...logData, 
+            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
+            submittedAt: new Date().toISOString(),
+            sampleDate: format(logData.sampleDate, "yyyy-MM-dd"),
+          };
+          existingLogs.push(newLog);
+          localStorage.setItem('soilDataLogs', JSON.stringify(existingLogs));
+          console.log("Mock service: Soil data log saved to localStorage:", newLog);
+          resolve(newLog);
+        } catch (error) {
+          console.error("Mock service: Error saving soil data log to localStorage:", error);
+          reject(error);
+        }
+      }, 500);
+    });
+  }
+};
 
 const soilDataSchema = z.object({
   fieldId: z.string().min(1, "Field ID or name is required."),
   sampleDate: z.date({ required_error: "Sample date is required." }),
   phLevel: z.preprocess(
-    (val) => (val === "" ? undefined : Number(val)),
+    (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "pH must be a number"}).min(0).max(14).optional()
   ),
   organicMatter: z.string().optional(), // e.g., "3.5%"
@@ -30,8 +77,13 @@ const soilDataSchema = z.object({
   notes: z.string().optional(),
 });
 
-export function SoilDataForm() {
+interface SoilDataFormProps {
+  onLogSaved?: () => void;
+}
+
+export function SoilDataForm({ onLogSaved }: SoilDataFormProps) {
   const { toast } = useToast();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const form = useForm<z.infer<typeof soilDataSchema>>({
     resolver: zodResolver(soilDataSchema),
     defaultValues: {
@@ -40,16 +92,40 @@ export function SoilDataForm() {
       nutrients: { nitrogen: "", phosphorus: "", potassium: "" },
       treatmentsApplied: "",
       notes: "",
+      phLevel: undefined,
     },
   });
 
-  function onSubmit(values: z.infer<typeof soilDataSchema>) {
-    console.log("Soil Data:", values);
-    toast({
-      title: "Soil Data Submitted (Simulated)",
-      description: `Field: ${values.fieldId}, pH: ${values.phLevel || 'N/A'}`,
-    });
-    form.reset();
+  async function onSubmit(values: z.infer<typeof soilDataSchema>) {
+    setIsSubmitting(true);
+    try {
+      await mockSoilLogService.save(values);
+      toast({
+        title: "Soil Data Saved",
+        description: `Soil data for Field: ${values.fieldId} has been saved.`,
+      });
+      form.reset({
+        fieldId: "",
+        sampleDate: undefined,
+        phLevel: undefined,
+        organicMatter: "",
+        nutrients: { nitrogen: "", phosphorus: "", potassium: "" },
+        treatmentsApplied: "",
+        notes: "",
+      });
+      if (onLogSaved) {
+        onLogSaved();
+      }
+    } catch (error) {
+      console.error("Error saving soil data:", error);
+      toast({
+        title: "Error Saving Log",
+        description: "Could not save the soil data.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -117,7 +193,7 @@ export function SoilDataForm() {
               <FormItem>
                 <FormLabel>pH Level (Optional)</FormLabel>
                 <FormControl>
-                  <Input type="number" step="0.1" placeholder="e.g., 6.5" {...field} />
+                  <Input type="number" step="0.1" placeholder="e.g., 6.5" {...field} value={field.value === undefined ? '' : field.value} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -215,7 +291,16 @@ export function SoilDataForm() {
             </FormItem>
           )}
         />
-        <Button type="submit">Save Soil Data</Button>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? (
+            <>
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            "Save Soil Data"
+          )}
+        </Button>
       </form>
     </Form>
   );
