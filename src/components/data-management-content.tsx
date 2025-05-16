@@ -8,12 +8,14 @@ import { PlantingLogForm } from "./forms/planting-log-form";
 import { HarvestingLogForm } from "./forms/harvesting-log-form";
 import { SoilDataForm } from "./forms/soil-data-form";
 import { WeatherDataForm } from "./forms/weather-data-form";
+import { FieldDefinitionForm } from "./forms/field-definition-form"; // Added
 import { Icons } from "./icons"; 
 import type { LucideIcon } from "lucide-react";
 import { PlantingLogTable } from "./data-management/planting-log-table";
 import { HarvestingLogTable } from "./data-management/harvesting-log-table";
 import { SoilDataLogTable } from "./data-management/soil-data-log-table";
 import { WeatherDataLogTable } from "./data-management/weather-data-log-table";
+import { FieldDefinitionTable } from "./data-management/field-definition-table"; // Added
 import { Separator } from "@/components/ui/separator";
 
 interface DataTab {
@@ -21,11 +23,19 @@ interface DataTab {
   label: string;
   icon: LucideIcon;
   description: string;
-  formComponent: React.ElementType<{ onLogSaved?: () => void }>; // Add onLogSaved prop
+  formComponent: React.ElementType<{ onLogSaved?: () => void }>;
   tableComponent?: React.ElementType<{ refreshTrigger: number, onLogDeleted: () => void }>;
 }
 
 const dataTabs: DataTab[] = [
+   {
+    value: "fields",
+    label: "Fields",
+    icon: Icons.Location, // Using MapPin via Icons.Location
+    description: "Define and manage your farm fields.",
+    formComponent: FieldDefinitionForm,
+    tableComponent: FieldDefinitionTable,
+  },
   {
     value: "planting",
     label: "Planting Logs",
@@ -68,10 +78,10 @@ export function DataManagementContent() {
   };
 
   return (
-    <Tabs defaultValue="planting" className="w-full">
-      <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 mb-6">
+    <Tabs defaultValue="fields" className="w-full"> {/* Default to fields tab */}
+      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5 mb-6"> {/* Adjusted for 5 tabs */}
         {dataTabs.map((tab) => (
-          <TabsTrigger key={tab.value} value={tab.value} className="flex items-center gap-2">
+          <TabsTrigger key={tab.value} value={tab.value} className="flex items-center gap-2 text-xs sm:text-sm">
             <tab.icon className="h-4 w-4" />
             {tab.label}
           </TabsTrigger>
@@ -92,7 +102,7 @@ export function DataManagementContent() {
               {tab.tableComponent && (
                 <>
                   <Separator className="my-8" />
-                  <h3 className="text-xl font-semibold mb-4">Recorded Logs</h3>
+                  <h3 className="text-xl font-semibold mb-4">Recorded Entries</h3>
                   <tab.tableComponent refreshTrigger={logRefreshTrigger} onLogDeleted={handleLogSaved} />
                 </>
               )}
