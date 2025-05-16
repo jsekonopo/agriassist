@@ -26,11 +26,11 @@ const fieldDefinitionSchema = z.object({
   fieldSizeUnit: z.enum(areaUnits).optional(),
   latitude: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? undefined : parseFloat(String(val))),
-    z.number({invalid_type_error: "Latitude must be a number."}).min(-90).max(90).optional().nullable()
+    z.number({invalid_type_error: "Latitude must be a number."}).min(-90, "Latitude must be between -90 and 90.").max(90, "Latitude must be between -90 and 90.").optional().nullable()
   ),
   longitude: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? undefined : parseFloat(String(val))),
-    z.number({invalid_type_error: "Longitude must be a number."}).min(-180).max(180).optional().nullable()
+    z.number({invalid_type_error: "Longitude must be a number."}).min(-180, "Longitude must be between -180 and 180.").max(180, "Longitude must be between -180 and 180.").optional().nullable()
   ),
   notes: z.string().optional(),
 }).refine(data => (data.fieldSize !== undefined && data.fieldSize !== null) ? data.fieldSizeUnit !== undefined : true, {
@@ -83,8 +83,8 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
         fieldName: values.fieldName,
         fieldSize: values.fieldSize,
         fieldSizeUnit: (values.fieldSize !== undefined && values.fieldSize !== null) ? values.fieldSizeUnit : undefined,
-        latitude: values.latitude,
-        longitude: values.longitude,
+        latitude: values.latitude !== undefined ? values.latitude : null, // Ensure null if undefined
+        longitude: values.longitude !== undefined ? values.longitude : null, // Ensure null if undefined
         notes: values.notes,
         userId: user.uid, 
         farmId: user.farmId, 
@@ -232,5 +232,6 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
     </Form>
   );
 }
+    
 
     

@@ -15,10 +15,10 @@ import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth, type UserRole } from "@/contexts/auth-context"; 
+import { useAuth, type UserRole, type PreferredAreaUnit } from "@/contexts/auth-context"; 
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
-import { PreferredAreaUnit } from "@/contexts/auth-context";
+
 
 interface FieldDefinitionLog {
   id: string; 
@@ -42,7 +42,7 @@ const ACRES_TO_HECTARES = 0.404686;
 const HECTARES_TO_ACRES = 1 / ACRES_TO_HECTARES;
 
 const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
-const rolesThatCanDelete: UserRole[] = [...ownerRoles, 'admin'];
+const rolesThatCanDeleteData: UserRole[] = [...ownerRoles, 'admin'];
 
 export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefinitionTableProps) {
   const [logs, setLogs] = useState<FieldDefinitionLog[]>([]);
@@ -66,13 +66,13 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
         const q = query(
           collection(db, "fields"),
           where("farmId", "==", user.farmId), 
-          orderBy("fieldName", "asc") // Order by name for consistency
+          orderBy("fieldName", "asc")
         );
         const querySnapshot = await getDocs(q);
-        const fetchedLogs: FieldDefinitionLog[] = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : undefined,
+        const fetchedLogs: FieldDefinitionLog[] = querySnapshot.docs.map(docSnap => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+          createdAt: docSnap.data().createdAt?.toDate ? docSnap.data().createdAt.toDate() : undefined,
         } as FieldDefinitionLog));
         setLogs(fetchedLogs);
       } catch (e) {
@@ -90,7 +90,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     fetchFieldDefinitions();
   }, [user?.farmId, refreshTrigger, toast]);
 
-  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDeleteData.includes(user.roleOnCurrentFarm);
 
   const handleDeleteLog = async (logId: string) => {
     if (!canUserDelete) {
@@ -181,7 +181,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your farm fields. Data is stored in Firestore.</TableCaption>
+        <TableCaption>A list of your farm fields. Displaying area in {preferredAreaUnit}.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[150px]">Field Name</TableHead>
