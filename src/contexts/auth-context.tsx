@@ -13,7 +13,7 @@ import {
   updateProfile as firebaseUpdateProfile
 } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, serverTimestamp, arrayUnion, arrayRemove, writeBatch, DocumentData } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, serverTimestamp, writeBatch, DocumentData } from 'firebase/firestore';
 
 interface User {
   uid: string;
@@ -53,19 +53,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      setIsLoading(true); // Start loading when auth state changes
       setFirebaseUser(fbUser);
       if (fbUser) {
         const userDocRef = doc(db, "users", fbUser.uid);
         const userDocSnap = await getDoc(userDocRef);
 
         if (userDocSnap.exists()) {
-          const appUserData = userDocSnap.data() as User;
+          const appUserData = userDocSnap.data() as User; // User data from 'users' collection
           let currentFarmName: string | null = null;
           let currentStaffMembers: string[] = [];
-          let currentIsFarmOwner = appUserData.isFarmOwner;
+          let currentIsFarmOwner = appUserData.isFarmOwner; // Default to value from user doc
+          let currentFarmId = appUserData.farmId;
 
-          if (appUserData.farmId) {
-            const farmDocRef = doc(db, "farms", appUserData.farmId);
+
+          if (currentFarmId) { // User is associated with a farm
+            const farmDocRef = doc(db, "farms", currentFarmId);
             const farmDocSnap = await getDoc(farmDocRef);
             if (farmDocSnap.exists()) {
               const farmData = farmDocSnap.data();
@@ -76,25 +79,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 currentStaffMembers = farmData?.staffMembers || [];
               }
             } else {
-                console.warn(`Farm document ${appUserData.farmId} not found for user ${fbUser.uid}.`);
-                // If farm doc is missing, user might be an owner of a farm that was deleted, or staff of deleted farm
-                // Reset farm-specific fields if farm doc doesn't exist
-                appUserData.farmId = null; 
-                currentIsFarmOwner = false; 
+                console.warn(`Farm document ${currentFarmId} not found for user ${fbUser.uid}. The user might be in a limbo state or their assigned farm was deleted.`);
+                // If farm doc is missing, this user might be orphaned.
+                // For safety, treat as not owning this (potentially non-existent) farm.
+                // A more robust solution might create a new personal farm for them here.
+                currentFarmId = null; 
+                currentFarmName = null;
+                currentIsFarmOwner = false;
             }
           }
-          setUser({
+           setUser({
             uid: fbUser.uid,
             email: fbUser.email,
             name: appUserData.name || fbUser.displayName,
-            farmId: appUserData.farmId,
+            farmId: currentFarmId,
             farmName: currentFarmName,
             isFarmOwner: currentIsFarmOwner,
-            staffMembers: currentIsFarmOwner ? currentStaffMembers : [], // Only owner sees staff list for this farm
+            staffMembers: currentIsFarmOwner ? currentStaffMembers : [],
           });
+
         } else {
-          console.warn(`User document for UID ${fbUser.uid} not found during auth state change.`);
-          setUser(null); // Or handle as an error/incomplete registration
+          console.warn(`User document for UID ${fbUser.uid} not found during auth state change. This could happen if registration was interrupted.`);
+          // If user doc doesn't exist but they are authenticated, something is wrong.
+          // Potentially log them out or redirect to complete profile. For now, set user to null.
+          setUser(null);
         }
       } else {
         setUser(null);
@@ -115,19 +123,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await firebaseUpdateProfile(fbUser, { displayName: name });
 
     const userDocRef = doc(db, "users", fbUser.uid);
-    const newFarmId = doc(collection(db, "farms")).id; 
+    // Generate a unique ID for the new farm. Using the owner's UID is a simple way to ensure uniqueness for their initial farm.
+    const newFarmId = fbUser.uid; 
 
-    const userDataForFirestore: User & { createdAt: any } = { 
+    const userDataForFirestore = { 
       uid: fbUser.uid,
       email: fbUser.email,
       name: name,
-      farmId: newFarmId,
-      isFarmOwner: true,
+      farmId: newFarmId, // User's initial farmId is their own UID
+      isFarmOwner: true, // They own this initial farm
       createdAt: serverTimestamp(),
     };
 
     const farmDataForFirestore = {
-      farmId: newFarmId, // Store the farmId also within the farm document for consistency
+      farmId: newFarmId, 
       farmName: farmNameFromInput,
       ownerId: fbUser.uid,
       staffMembers: [], 
@@ -136,9 +145,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const batch = writeBatch(db);
     batch.set(userDocRef, userDataForFirestore);
-    batch.set(doc(db, "farms", newFarmId), farmDataForFirestore);
+    batch.set(doc(db, "farms", newFarmId), farmDataForFirestore); // Create the farm document
     await batch.commit();
 
+    // Update local user state immediately
     setUser({
       uid: fbUser.uid,
       email: fbUser.email,
@@ -155,7 +165,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!firebaseUser || !user) throw new Error("User not authenticated.");
     
     const updatesToFirebaseUser: { displayName?: string } = {};
-    if (name !== user.name && name) { // Ensure name is not empty
+    if (name !== user.name && name) { 
       updatesToFirebaseUser.displayName = name;
     }
 
@@ -172,137 +182,97 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         batch.update(userDocRef, userUpdateData); 
     }
 
-    let updatedFarmName = user.farmName;
-    if (user.isFarmOwner && user.farmId && newFarmName !== user.farmName && newFarmName) { // Ensure newFarmName is not empty
+    let updatedLocalFarmName = user.farmName;
+    if (user.isFarmOwner && user.farmId && newFarmName !== user.farmName && newFarmName) { 
       const farmDocRef = doc(db, "farms", user.farmId);
       batch.update(farmDocRef, { farmName: newFarmName }); 
-      updatedFarmName = newFarmName;
+      updatedLocalFarmName = newFarmName;
     }
 
     await batch.commit();
-    setUser(prevUser => prevUser ? { ...prevUser, name: name || prevUser.name, farmName: updatedFarmName } : null);
+    setUser(prevUser => prevUser ? { ...prevUser, name: name || prevUser.name, farmName: updatedLocalFarmName } : null);
   };
 
   const inviteStaffMemberByEmail = async (emailToInvite: string): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.isFarmOwner || !user.farmId) {
-      return { success: false, message: "Only farm owners can invite staff." };
+    if (!user || !user.isFarmOwner || !user.farmId || !firebaseUser) {
+      return { success: false, message: "Only authenticated farm owners can invite staff." };
     }
-    if (!emailToInvite || emailToInvite.toLowerCase() === user.email?.toLowerCase()) { 
-      return { success: false, message: "Invalid email or cannot invite yourself."};
+    if (!emailToInvite) {
+      return { success: false, message: "Email address is required." };
     }
-    
+
     try {
-      // In a real implementation, this would write to a 'pendingInvitations' collection
-      // and a Cloud Function would process it (send email, handle acceptance).
-      // For now, this is a simulation.
-      console.log(`Simulating logging of invitation for ${emailToInvite} to farm ${user.farmId} by ${user.name}`);
-      // Example: const pendingRef = await addDoc(collection(db, "pendingInvitations"), { inviterFarmId: user.farmId, invitedEmail: emailToInvite, ... });
+      const idToken = await firebaseUser.getIdToken();
+      const response = await fetch('/api/farm/invite-staff', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ 
+          invitedEmail: emailToInvite,
+          inviterUid: user.uid,
+          inviterFarmId: user.farmId 
+        }),
+      });
 
-      // The following part is a placeholder for what a Cloud Function would do upon acceptance
-      // This client-side approach for updating other users is NOT secure for production
-      // and relies on overly permissive Firestore rules.
-      // We are keeping it for now to demonstrate the flow conceptually.
-      const usersRef = collection(db, "users");
-      const q = query(usersRef, where("email", "==", emailToInvite.toLowerCase()));
-      const querySnapshot = await getDocs(q);
-
-      if (querySnapshot.empty) {
-        return { success: false, message: `User with email ${emailToInvite} not found.` };
-      }
-
-      const invitedUserDoc = querySnapshot.docs[0];
-      const invitedUserData = invitedUserDoc.data();
-
-      if (invitedUserData.farmId === user.farmId) {
-        return { success: false, message: `${emailToInvite} is already part of your farm.`};
-      }
-      if (invitedUserData.isFarmOwner && invitedUserData.farmId !== user.farmId) {
-         return { success: false, message: `${emailToInvite} is an owner of another farm.`};
-      }
-
-      const batch = writeBatch(db);
-      // Update the invited user's document
-      batch.update(invitedUserDoc.ref, { farmId: user.farmId, isFarmOwner: false });
-      // Add the invited user's UID to the owner's farm document
-      const farmDocRef = doc(db, "farms", user.farmId);
-      batch.update(farmDocRef, { staffMembers: arrayUnion(invitedUserDoc.id) });
-      await batch.commit();
-
-      // Update local state for owner
-      setUser(prev => prev ? ({...prev, staffMembers: [...(prev.staffMembers || []), invitedUserDoc.id]}) : null);
-
-      return { success: true, message: `${emailToInvite} has been added to your farm staff. (Simulated: Real invite would require email confirmation)` };
+      const result = await response.json();
+      // Note: The actual addition to staffMembers array and user's farmId update
+      // would happen after the invited user accepts (via a separate mechanism not built here).
+      // This API route currently just logs a pending invitation conceptually.
+      // For immediate UI update for the owner (to see who they *tried* to invite), you might
+      // want to handle this differently or have the API return more info for the owner.
+      // For now, the message from API is displayed.
+      return result;
 
     } catch (error) {
-      console.error("Error inviting staff member:", error);
-      return { success: false, message: "Failed to invite staff member. Please try again."};
+      console.error("Client-side error inviting staff member:", error);
+      return { success: false, message: "Failed to send invitation request. Please try again."};
     }
   };
 
-
   const removeStaffMember = async (staffUidToRemove: string): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.isFarmOwner || !user.farmId) {
-      return { success: false, message: "Only farm owners can remove staff." };
+    if (!user || !user.isFarmOwner || !user.farmId || !firebaseUser) {
+      return { success: false, message: "Only authenticated farm owners can remove staff." };
     }
-    if (user.uid === staffUidToRemove) {
+     if (user.uid === staffUidToRemove) {
          return { success: false, message: "Owner cannot remove themselves as staff." };
     }
 
     try {
-      const batch = writeBatch(db);
-      const farmDocRef = doc(db, "farms", user.farmId);
-      batch.update(farmDocRef, {
-        staffMembers: arrayRemove(staffUidToRemove) 
+      const idToken = await firebaseUser.getIdToken();
+      const response = await fetch('/api/farm/remove-staff', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ 
+          staffUidToRemove,
+          ownerUid: user.uid,
+          ownerFarmId: user.farmId 
+        }),
       });
 
-      const removedStaffUserDocRef = doc(db, "users", staffUidToRemove);
-      
-      const staffUserSnap = await getDoc(removedStaffUserDocRef);
-      let staffNameForNewFarm = "User";
-      if (staffUserSnap.exists()) {
-        staffNameForNewFarm = staffUserSnap.data().name || "User";
+      const result = await response.json();
+      if (result.success) {
+        // Optimistically update the local state for the owner
+        setUser(prev => {
+          if (!prev || !prev.staffMembers) return prev;
+          return { ...prev, staffMembers: prev.staffMembers.filter(uid => uid !== staffUidToRemove) };
+        });
       }
-      
-      const newPersonalFarmId = doc(collection(db, "farms")).id; // Generate a new unique farm ID
-      const newPersonalFarmData = {
-        farmId: newPersonalFarmId,
-        farmName: `${staffNameForNewFarm}'s Personal Farm`, 
-        ownerId: staffUidToRemove,
-        staffMembers: [],
-        createdAt: serverTimestamp(),
-      };
-      const newPersonalFarmDocRef = doc(db, "farms", newPersonalFarmId);
-      batch.set(newPersonalFarmDocRef, newPersonalFarmData); 
-
-      batch.update(removedStaffUserDocRef, {
-        farmId: newPersonalFarmId,
-        isFarmOwner: true 
-      });
-
-      await batch.commit();
-      
-      setUser(prev => {
-        if (!prev || !prev.staffMembers) return prev;
-        return { ...prev, staffMembers: prev.staffMembers.filter(uid => uid !== staffUidToRemove) };
-      });
-
-      return { success: true, message: `${staffNameForNewFarm} has been removed from your farm and assigned to their own personal farm.`};
-    } catch (error) { // Added opening brace
-      console.error("Error removing staff member:", error);
-      let errorMessage = "Failed to remove staff member.";
-      if (error instanceof Error) {
-        errorMessage += ` Details: ${error.message}`;
-      }
-      return { success: false, message: errorMessage};
-    } // Added closing brace
+      return result;
+    } catch (error) {
+      console.error("Client-side error removing staff member:", error);
+      return { success: false, message: "Failed to send removal request. Please try again."};
+    }
   };
 
   const logoutUser = async () => {
     await firebaseSignOut(auth);
     setUser(null);
     setFirebaseUser(null);
-    // Forcing a hard reload to clear all states and redirect might be too aggressive.
-    // Next.js router should handle redirection if layout checks auth state.
     router.push('/login'); 
   };
 
@@ -322,5 +292,3 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
-
-    
