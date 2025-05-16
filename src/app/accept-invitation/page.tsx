@@ -16,99 +16,106 @@ function AcceptInvitationContent() {
   const router = useRouter();
   const { firebaseUser, isLoading: authLoading, refreshUserData } = useAuth();
   const { toast } = useToast();
-  const [status, setStatus] = useState<'loading' | 'processing' | 'success' | 'error' | 'prompt_login' | 'idle'>('loading');
+  
+  // More granular status for better UX
+  type InvitationStatus = 'initial_loading' | 'prompt_login' | 'processing_token' | 'success' | 'error';
+  const [status, setStatus] = useState<InvitationStatus>('initial_loading');
   const [message, setMessage] = useState<string | null>(null);
-  const [processed, setProcessed] = useState(false);
+  const [processedApiCall, setProcessedApiCall] = useState(false); // Tracks if the API call to process token has been made
 
   const token = searchParams.get('token');
 
   useEffect(() => {
-    if (processed || authLoading) {
+    if (authLoading) {
+      setStatus('initial_loading'); // Explicitly set to loading if auth state is still being determined
+      setMessage('Loading user session...');
       return;
     }
 
+    // Auth is loaded at this point
     if (!token) {
       setStatus('error');
       setMessage('Invitation token is missing or invalid.');
-      setProcessed(true);
+      setProcessedApiCall(true); // No token, so no API call to make
       return;
     }
 
     if (!firebaseUser) {
       setStatus('prompt_login');
-      setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, you should be automatically redirected to process the invitation.');
-      setProcessed(true); // Mark as processed to prevent re-triggering this block
+      setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, please return to this page or click the invitation link again if not redirected automatically.');
+      // No setProcessedApiCall here, as we want to process after login
       return;
     }
 
-    // If token and user are present, and not yet processed
-    setStatus('processing');
-    setMessage('Verifying your invitation...');
+    // User is logged in, token is present, auth is not loading
+    if (!processedApiCall) { // Only process if we haven't attempted it yet
+      setStatus('processing_token');
+      setMessage('Verifying your invitation...');
 
-    const processToken = async () => {
-      try {
-        const idToken = await firebaseUser.getIdToken();
-        const response = await fetch('/api/farm/invitations/process-token', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({ invitationToken: token }),
-        });
+      const processToken = async () => {
+        try {
+          const idToken = await firebaseUser.getIdToken();
+          const response = await fetch('/api/farm/invitations/process-token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ invitationToken: token }),
+          });
 
-        const result = await response.json();
+          const result = await response.json();
 
-        if (response.ok && result.success) {
-          setStatus('success');
-          setMessage(result.message || 'Invitation accepted successfully! You are now part of the farm.');
-          toast({ title: 'Success', description: result.message || 'Invitation accepted!' });
-          await refreshUserData(); 
-          router.push('/profile'); 
-        } else {
+          if (response.ok && result.success) {
+            setStatus('success');
+            setMessage(result.message || 'Invitation accepted successfully! You are now part of the farm.');
+            toast({ title: 'Success', description: result.message || 'Invitation accepted!' });
+            await refreshUserData(); 
+            router.push('/profile'); 
+          } else {
+            setStatus('error');
+            setMessage(result.message || 'Failed to process invitation. The token might be invalid, expired, already used, or you might not be authorized for this invitation.');
+            toast({ title: 'Error', description: result.message || 'Could not process invitation.', variant: 'destructive' });
+          }
+        } catch (err) {
+          console.error('Error processing invitation token:', err);
           setStatus('error');
-          setMessage(result.message || 'Failed to process invitation. The token might be invalid, expired, already used, or you might not be authorized for this invitation.');
-          toast({ title: 'Error', description: result.message || 'Could not process invitation.', variant: 'destructive' });
+          setMessage('An unexpected error occurred while processing your invitation. Please try again later or contact support.');
+          toast({ title: 'Error', description: 'An unexpected error occurred.', variant: 'destructive' });
+        } finally {
+          setProcessedApiCall(true); // Mark as processed regardless of outcome
         }
-      } catch (err) {
-        console.error('Error processing invitation token:', err);
-        setStatus('error');
-        setMessage('An unexpected error occurred while processing your invitation. Please try again later or contact support.');
-        toast({ title: 'Error', description: 'An unexpected error occurred.', variant: 'destructive' });
-      } finally {
-        setProcessed(true);
-      }
-    };
-
-    processToken();
-
-  }, [token, firebaseUser, authLoading, router, toast, refreshUserData, processed]);
+      };
+      processToken();
+    }
+  }, [token, firebaseUser, authLoading, router, toast, refreshUserData, processedApiCall]);
 
 
-  if (status === 'loading' || (status === 'processing' && !message)) {
+  const getRedirectUrl = () => {
+    if (typeof window !== "undefined") {
+      // Ensure the token is included in the redirect path
+      return encodeURIComponent(`/accept-invitation?token=${token}`);
+    }
+    return '';
+  };
+  
+  if (status === 'initial_loading') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[300px]">
         <Icons.Search className="h-12 w-12 text-primary animate-spin mb-4" />
-        <p className="text-muted-foreground">Loading invitation details...</p>
+        <p className="text-muted-foreground">{message || 'Loading user session...'}</p>
         <Skeleton className="h-4 w-3/4 mt-4" />
         <Skeleton className="h-4 w-1/2 mt-2" />
       </div>
     );
   }
 
-  const getRedirectUrl = () => {
-    if (typeof window !== "undefined") {
-      return encodeURIComponent(window.location.pathname + window.location.search);
-    }
-    return '';
-  };
-
   return (
     <div className="max-w-md mx-auto">
-      {status === 'processing' && message && (
+      {status === 'processing_token' && (
         <div className="flex flex-col items-center justify-center min-h-[200px]">
           <Icons.Search className="h-10 w-10 text-primary animate-spin mb-4" />
-          <p className="text-lg font-medium text-center">{message}</p>
+          <p className="text-lg font-medium text-center">{message || 'Verifying your invitation...'}</p>
         </div>
       )}
       {status === 'success' && (
@@ -187,3 +194,4 @@ export default function AcceptInvitationPage() {
     </div>
   );
 }
+
