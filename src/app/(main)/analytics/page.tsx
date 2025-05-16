@@ -10,7 +10,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { useAuth } from '@/contexts/auth-context';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { format, parseISO, getMonth, getYear } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { Skeleton } from '@/components/ui/skeleton';
 
 interface HarvestingLog {
@@ -36,14 +36,18 @@ interface MonthlyUsageData {
 interface FertilizerLog {
   id: string;
   dateApplied: string; // YYYY-MM-DD
-  amountApplied: number;
+  amountApplied: number; // Assuming this is the numeric value
+  // fertilizerType: string;
+  // amountUnit: string;
   farmId: string;
 }
 
 interface IrrigationLog {
   id: string;
   irrigationDate: string; // YYYY-MM-DD
-  amountApplied: number;
+  amountApplied: number; // Assuming this is the numeric value
+  // waterSource: string;
+  // amountUnit: string;
   farmId: string;
 }
 
@@ -142,6 +146,7 @@ export default function AnalyticsPage() {
             });
             setFertilizerChartData(monthNames.map(month => ({ month, usage: usageByMonth[month] || 0 })));
         } else {
+            // Ensure chart data is initialized to all zeros if no logs found
             setFertilizerChartData(monthNames.map(month => ({ month, usage: 0 })));
         }
       } catch (error) {
@@ -195,7 +200,7 @@ export default function AnalyticsPage() {
         <Icons.Info className="h-4 w-4" />
         <AlertTitle>Data Source Information</AlertTitle>
         <AlertDescription>
-          Charts below are generated from your farm's logged data in Firestore. Ensure you have logged sufficient data for meaningful trends.
+          Charts below are generated from your farm's logged data in Firestore. Ensure you have logged sufficient data for meaningful trends. Units for fertilizer and water usage are summed directly from logged amounts.
         </AlertDescription>
       </Alert>
 
