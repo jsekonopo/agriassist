@@ -1,3 +1,5 @@
+"use client";
+
 import Image from 'next/image';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
