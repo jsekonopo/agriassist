@@ -16,28 +16,30 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp, getDoc } from "firebase/firestore";
 
 interface HarvestingLog {
-  id: string; // Firestore document ID
+  id: string; 
   cropName: string;
-  harvestDate: string; // Stored as YYYY-MM-DD string
-  fieldId: string; // Firestore document ID of the field
-  fieldName?: string; // To store the field name after fetching
+  harvestDate: string; 
+  fieldId: string; 
+  fieldName?: string; 
   yieldAmount?: number;
   yieldUnit?: string;
   notes?: string;
-  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
-  farmId: string; // Added farmId
-  userId: string; // Keep for auditing if needed
+  createdAt?: Timestamp | Date; 
+  farmId: string; 
+  userId: string; 
 }
 
 interface HarvestingLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingLogTableProps) {
   const [logs, setLogs] = useState<HarvestingLog[]>([]);
@@ -59,7 +61,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
       try {
         const q = query(
           collection(db, "harvestingLogs"),
-          where("farmId", "==", user.farmId), // Query by farmId
+          where("farmId", "==", user.farmId), 
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -108,10 +110,12 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
     fetchHarvestingLogs();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
-      return;
+    if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete harvesting logs.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this harvesting log? This action cannot be undone.")) {
       try {
@@ -120,7 +124,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
           title: "Harvesting Log Deleted",
           description: "The harvesting log has been removed from Firestore.",
         });
-        onLogDeleted(); // Trigger refresh
+        onLogDeleted(); 
       } catch (e) {
         console.error("Failed to delete harvesting log from Firestore:", e);
         setError("Could not delete the harvesting log.");
@@ -182,7 +186,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
             <TableHead className="min-w-[150px]">Field</TableHead>
             <TableHead className="min-w-[120px]">Yield</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -193,11 +197,13 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
               <TableCell>{log.fieldName || log.fieldId}</TableCell>
               <TableCell>{log.yieldAmount !== undefined ? `${log.yieldAmount} ${log.yieldUnit || ''}`.trim() : "N/A"}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

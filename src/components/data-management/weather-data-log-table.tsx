@@ -16,13 +16,13 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
 interface WeatherLog {
-  id: string; // Firestore document ID
-  date: string; // Stored as YYYY-MM-DD string
+  id: string; 
+  date: string; 
   location: string;
   temperatureHigh?: number;
   temperatureLow?: number;
@@ -33,7 +33,7 @@ interface WeatherLog {
   conditions?: string;
   notes?: string;
   submittedAt?: string; 
-  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  createdAt?: Timestamp | Date; 
   farmId: string;
   userId: string;
 }
@@ -42,6 +42,8 @@ interface WeatherDataLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDataLogTableProps) {
   const [logs, setLogs] = useState<WeatherLog[]>([]);
@@ -63,7 +65,7 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
       try {
         const q = query(
           collection(db, "weatherLogs"),
-          where("farmId", "==", user.farmId), // Query by farmId
+          where("farmId", "==", user.farmId), 
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -88,10 +90,12 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
     fetchWeatherLogs();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-     if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
-      return;
+     if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete weather logs.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this weather log? This action cannot be undone.")) {
       try {
@@ -100,7 +104,7 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
           title: "Weather Log Deleted",
           description: "The weather log has been removed from Firestore.",
         });
-        onLogDeleted(); // Trigger refresh
+        onLogDeleted(); 
       } catch (e) {
         console.error("Failed to delete weather log from Firestore:", e);
         setError("Could not delete the weather log.");
@@ -164,7 +168,7 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
             <TableHead className="min-w-[120px]">Wind</TableHead>
             <TableHead className="min-w-[150px]">Conditions</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -183,11 +187,13 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
               </TableCell>
               <TableCell>{log.conditions || "N/A"}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

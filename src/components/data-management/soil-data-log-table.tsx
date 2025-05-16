@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -15,15 +16,15 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp, getDoc } from "firebase/firestore";
 
 interface SoilLog {
-  id: string; // Firestore document ID
-  fieldId: string; // Firestore document ID of the field
-  fieldName?: string; // To store the field name after fetching
-  sampleDate: string; // Stored as YYYY-MM-DD string
+  id: string; 
+  fieldId: string; 
+  fieldName?: string; 
+  sampleDate: string; 
   phLevel?: number;
   organicMatter?: string;
   nutrients?: {
@@ -33,7 +34,7 @@ interface SoilLog {
   };
   treatmentsApplied?: string;
   notes?: string;
-  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  createdAt?: Timestamp | Date; 
   farmId: string;
   userId: string;
 }
@@ -42,6 +43,8 @@ interface SoilDataLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTableProps) {
   const [logs, setLogs] = useState<SoilLog[]>([]);
@@ -63,7 +66,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
       try {
         const q = query(
           collection(db, "soilDataLogs"),
-          where("farmId", "==", user.farmId), // Query by farmId
+          where("farmId", "==", user.farmId), 
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -112,10 +115,12 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
     fetchSoilDataLogs();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
-      return;
+    if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete soil data logs.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this soil data log? This action cannot be undone.")) {
       try {
@@ -124,7 +129,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
           title: "Soil Data Log Deleted",
           description: "The soil data log has been removed from Firestore.",
         });
-        onLogDeleted(); // Trigger refresh
+        onLogDeleted(); 
       } catch (e) {
         console.error("Failed to delete soil data log from Firestore:", e);
         setError("Could not delete the soil data log.");
@@ -197,7 +202,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
             <TableHead className="min-w-[200px]">Nutrients (N,P,K)</TableHead>
             <TableHead className="min-w-[200px]">Treatments</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -210,11 +215,13 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
               <TableCell className="whitespace-nowrap overflow-hidden text-ellipsis">{displayNutrients(log.nutrients)}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.treatmentsApplied || "N/A"}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

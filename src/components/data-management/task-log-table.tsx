@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -16,18 +17,18 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
 interface TaskLog {
-  id: string; // Firestore document ID
+  id: string; 
   taskName: string;
   description?: string;
-  dueDate?: string | null; // Stored as YYYY-MM-DD string or null
+  dueDate?: string | null; 
   assignedTo?: string;
   status: "To Do" | "In Progress" | "Done";
-  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  createdAt?: Timestamp | Date; 
   farmId: string;
   userId: string;
 }
@@ -36,6 +37,8 @@ interface TaskLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps) {
   const [logs, setLogs] = useState<TaskLog[]>([]);
@@ -57,7 +60,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
       try {
         const q = query(
           collection(db, "taskLogs"),
-          where("farmId", "==", user.farmId), // Query by farmId
+          where("farmId", "==", user.farmId), 
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -82,10 +85,12 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
     fetchTasks();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
-      return;
+    if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete tasks.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this task? This action cannot be undone.")) {
       try {
@@ -94,7 +99,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
           title: "Task Deleted",
           description: "The task has been removed from Firestore.",
         });
-        onLogDeleted(); // Trigger refresh
+        onLogDeleted(); 
       } catch (e) {
         console.error("Failed to delete task from Firestore:", e);
         setError("Could not delete the task.");
@@ -169,7 +174,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
             <TableHead className="min-w-[150px]">Due Date</TableHead>
             <TableHead className="min-w-[150px]">Assigned To</TableHead>
             <TableHead className="min-w-[250px]">Description</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -184,11 +189,13 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
               <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.description ?? undefined}>
                 {log.description || "N/A"}
               </TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete task">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete task">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

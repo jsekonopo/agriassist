@@ -16,15 +16,15 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp, getDoc } from "firebase/firestore";
 
 interface IrrigationLog {
-  id: string; // Firestore document ID
+  id: string; 
   fieldId: string;
   fieldName?: string;
-  irrigationDate: string; // Stored as YYYY-MM-DD string
+  irrigationDate: string; 
   waterSource: string;
   amountApplied: number;
   amountUnit: string;
@@ -40,6 +40,8 @@ interface IrrigationLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function IrrigationLogTable({ refreshTrigger, onLogDeleted }: IrrigationLogTableProps) {
   const [logs, setLogs] = useState<IrrigationLog[]>([]);
@@ -109,10 +111,12 @@ export function IrrigationLogTable({ refreshTrigger, onLogDeleted }: IrrigationL
     fetchIrrigationLogs();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
-      return;
+    if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete irrigation logs.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this irrigation log? This action cannot be undone.")) {
       try {
@@ -185,7 +189,7 @@ export function IrrigationLogTable({ refreshTrigger, onLogDeleted }: IrrigationL
             <TableHead className="min-w-[100px]">Duration (hrs)</TableHead>
             <TableHead className="min-w-[120px]">Method</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -198,11 +202,13 @@ export function IrrigationLogTable({ refreshTrigger, onLogDeleted }: IrrigationL
               <TableCell>{log.durationHours !== undefined ? log.durationHours.toFixed(1) : "N/A"}</TableCell>
               <TableCell>{log.irrigationMethod || "N/A"}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>
@@ -210,5 +216,3 @@ export function IrrigationLogTable({ refreshTrigger, onLogDeleted }: IrrigationL
     </div>
   );
 }
-
-    

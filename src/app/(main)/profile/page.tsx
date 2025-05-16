@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useAuth, type PlanId, type User, type UserRole } from '@/contexts/auth-context'; // Import User type
+import { useAuth, type PlanId, type User, type UserRole } from '@/contexts/auth-context';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
@@ -37,7 +37,7 @@ const profileFormSchema = z.object({
   farmName: z.string().min(2, { message: "Farm name must be at least 2 characters." }),
 });
 
-const rolesForSelection: UserRole[] = ['admin', 'editor', 'viewer'];
+const rolesForSelection: Exclude<UserRole, PlanId | null >[] = ['admin', 'editor', 'viewer']; // Exclude PlanId and null
 
 const inviteStaffFormSchema = z.object({
   staffEmail: z.string().email({ message: "Please enter a valid email address." }),
@@ -110,7 +110,7 @@ export default function ProfilePage() {
     resolver: zodResolver(inviteStaffFormSchema),
     defaultValues: {
       staffEmail: "",
-      role: 'viewer', // Default role for new invites
+      role: 'viewer', 
     },
   });
 
@@ -129,13 +129,13 @@ export default function ProfilePage() {
       return;
     }
     setIsLoadingStaffDetails(true);
-    // staff in user context is now StaffMemberWithDetails which includes role, name, email
-    setStaffDetails(user.staff.filter(staffMember => staffMember.uid !== user.uid));
+    const ownerUid = user.uid;
+    setStaffDetails(user.staff.filter(staffMember => staffMember.uid !== ownerUid));
     setIsLoadingStaffDetails(false);
   }, [user]); 
 
   useEffect(() => {
-    if (user?.isFarmOwner) {
+    if (user?.isFarmOwner && user.staff) {
         fetchStaffDetails();
     } else {
         setStaffDetails([]);
@@ -151,26 +151,14 @@ export default function ProfilePage() {
     setIsLoadingMyInvitations(true);
     try {
       const invites: PendingInvitation[] = [];
-      
-      const qByUid = query(
-        collection(db, "pendingInvitations"),
-        where("invitedUserUid", "==", user.uid),
-        where("status", "==", "pending")
-      );
-      const uidSnapshot = await getDocs(qByUid);
-      uidSnapshot.docs.forEach(docSnap => invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation));
-
       const qByEmail = query(
         collection(db, "pendingInvitations"),
         where("invitedEmail", "==", user.email.toLowerCase()),
         where("status", "==", "pending")
       );
       const emailSnapshot = await getDocs(qByEmail);
-      const existingIds = new Set(invites.map(inv => inv.id));
       emailSnapshot.docs.forEach(docSnap => {
-        if (!existingIds.has(docSnap.id)) {
-          invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation);
-        }
+        invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation);
       });
       
       setMyPendingInvitations(invites.filter(invite => invite.tokenExpiresAt ? invite.tokenExpiresAt.toMillis() > Date.now() : true));
@@ -244,11 +232,12 @@ export default function ProfilePage() {
   }
 
   async function onInviteStaffSubmit(values: z.infer<typeof inviteStaffFormSchema>) {
-    if (!user || !user.isFarmOwner || !user.farmId || !firebaseUser) {
-      toast({ title: "Error", description: "Only farm owners can invite staff.", variant: "destructive" });
+    if (!user || !(user.isFarmOwner || user.roleOnCurrentFarm === 'admin') || !user.farmId || !firebaseUser) {
+      toast({ title: "Error", description: "Only farm owners or admins can invite staff.", variant: "destructive" });
       return;
     }
     setIsInvitingStaff(true);
+    // Ensure role is not null/undefined; it's required by schema now
     const result = await inviteStaffMemberByEmail(values.staffEmail, values.role);
     toast({
       title: result.success ? "Invitation Request Logged" : "Invitation Failed",
@@ -263,8 +252,8 @@ export default function ProfilePage() {
   }
   
   async function handleRemoveStaff(staffUid: string) {
-    if (!user || !user.isFarmOwner || !user.farmId || !firebaseUser) {
-      toast({ title: "Error", description: "Only farm owners can remove staff.", variant: "destructive" });
+    if (!user || !(user.isFarmOwner || user.roleOnCurrentFarm === 'admin') || !user.farmId || !firebaseUser) {
+      toast({ title: "Error", description: "Only farm owners or admins can remove staff.", variant: "destructive" });
       return;
     }
     const result = await removeStaffMember(staffUid);
@@ -290,7 +279,7 @@ export default function ProfilePage() {
     if (result.success) {
       await refreshUserData(); 
       fetchMyPendingInvitations(); 
-      if (user?.isFarmOwner) fetchFarmPendingInvitations(); 
+      if (user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin') fetchFarmPendingInvitations(); 
     }
   }
 
@@ -308,7 +297,7 @@ export default function ProfilePage() {
   }
 
   async function handleRevokeInvitation(invitationId: string) {
-    if (!firebaseUser || !user?.isFarmOwner) return;
+    if (!firebaseUser || !(user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin')) return;
     const result = await revokeInvitation(invitationId);
     toast({
       title: result.success ? "Invitation Revoked" : "Revoke Failed",
@@ -319,6 +308,13 @@ export default function ProfilePage() {
       fetchFarmPendingInvitations(); 
     }
   }
+
+  const userRoleDisplay = user?.roleOnCurrentFarm 
+    ? (planNames[user.roleOnCurrentFarm as PlanId] || user.roleOnCurrentFarm.charAt(0).toUpperCase() + user.roleOnCurrentFarm.slice(1))
+    : 'Not associated';
+
+  const canManageStaff = user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin';
+  const canManageBilling = user?.isFarmOwner;
 
 
   if (authIsLoading) {
@@ -369,8 +365,6 @@ export default function ProfilePage() {
     );
   }
   
-  const userRoleDisplay = user.roleOnCurrentFarm ? user.roleOnCurrentFarm.charAt(0).toUpperCase() + user.roleOnCurrentFarm.slice(1) : (user.isFarmOwner ? 'Owner' : 'Not associated');
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -462,74 +456,76 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
-      <Card className="shadow-lg">
-        <CardHeader>
-            <CardTitle>Subscription Plan</CardTitle>
-            <CardDescription>Manage your current AgriAssist subscription.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-            <div>
-                <h3 className="text-sm font-medium text-muted-foreground">Current Plan</h3>
-                <p className="text-lg font-semibold text-primary">{planNames[user.selectedPlanId] || 'Unknown Plan'}</p>
-            </div>
-             <div>
-                <h3 className="text-sm font-medium text-muted-foreground">Status</h3>
-                <p className="text-lg text-foreground capitalize">{user.subscriptionStatus}</p>
-            </div>
-            {user.selectedPlanId !== 'free' && user.subscriptionStatus === 'active' && (
-                <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                        <Button variant="outline">
-                            <Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription
-                        </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                        <AlertDialogHeader>
-                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This will cancel your current paid subscription. Your plan will revert to Free at the end of the current billing period (or immediately, based on Stripe settings).
-                        </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                        <AlertDialogCancel>No, Keep Plan</AlertDialogCancel>
-                        <AlertDialogAction
-                            onClick={async () => {
-                                if (!firebaseUser) return;
-                                const result = await cancelSubscription(); 
-                                toast({
-                                    title: result.success ? "Subscription Cancellation Requested" : "Cancellation Failed",
-                                    description: result.message,
-                                    variant: result.success ? "default" : "destructive",
-                                });
-                                if (result.success) {
-                                    refreshUserData();
-                                }
-                            }}
-                            className={buttonVariants({variant: "destructive"})}
-                        >
-                            Yes, Cancel Subscription
-                        </AlertDialogAction>
-                        </AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
-            )}
-            <Button asChild>
-                <Link href="/pricing">
-                    <Icons.Dollar className="mr-2 h-4 w-4" />
-                     {user.selectedPlanId === 'free' ? 'Upgrade Plan' : 'View Plans & Manage'}
-                </Link>
-            </Button>
-            { process.env.NODE_ENV === 'development' &&
-                <Alert variant="default">
-                    <Icons.Info className="h-4 w-4" />
-                    <AlertTitle>Stripe Integration Note</AlertTitle>
-                    <AlertDescription>
-                        Subscription management and payments are integrated with Stripe. Ensure your Stripe keys and webhooks are configured.
-                    </AlertDescription>
-                </Alert>
-            }
-        </CardContent>
-      </Card>
+      {canManageBilling && (
+        <Card className="shadow-lg">
+          <CardHeader>
+              <CardTitle>Subscription Plan</CardTitle>
+              <CardDescription>Manage your current AgriAssist subscription.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+              <div>
+                  <h3 className="text-sm font-medium text-muted-foreground">Current Plan</h3>
+                  <p className="text-lg font-semibold text-primary">{planNames[user.selectedPlanId] || 'Unknown Plan'}</p>
+              </div>
+              <div>
+                  <h3 className="text-sm font-medium text-muted-foreground">Status</h3>
+                  <p className="text-lg text-foreground capitalize">{user.subscriptionStatus}</p>
+              </div>
+              {user.selectedPlanId !== 'free' && user.subscriptionStatus === 'active' && (
+                  <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                          <Button variant="outline">
+                              <Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription
+                          </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                          <AlertDialogHeader>
+                          <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                              This will cancel your current paid subscription. Your plan will revert to Free at the end of the current billing period (or immediately, based on Stripe settings).
+                          </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                          <AlertDialogCancel>No, Keep Plan</AlertDialogCancel>
+                          <AlertDialogAction
+                              onClick={async () => {
+                                  if (!firebaseUser) return;
+                                  const result = await cancelSubscription(); 
+                                  toast({
+                                      title: result.success ? "Subscription Cancellation Requested" : "Cancellation Failed",
+                                      description: result.message,
+                                      variant: result.success ? "default" : "destructive",
+                                  });
+                                  if (result.success) {
+                                      refreshUserData();
+                                  }
+                              }}
+                              className={buttonVariants({variant: "destructive"})}
+                          >
+                              Yes, Cancel Subscription
+                          </AlertDialogAction>
+                          </AlertDialogFooter>
+                      </AlertDialogContent>
+                  </AlertDialog>
+              )}
+              <Button asChild>
+                  <Link href="/pricing">
+                      <Icons.Dollar className="mr-2 h-4 w-4" />
+                      {user.selectedPlanId === 'free' ? 'Upgrade Plan' : 'View Plans & Manage'}
+                  </Link>
+              </Button>
+              { process.env.NODE_ENV === 'development' &&
+                  <Alert variant="default">
+                      <Icons.Info className="h-4 w-4" />
+                      <AlertTitle>Stripe Integration Note</AlertTitle>
+                      <AlertDescription>
+                          Subscription management and payments are integrated with Stripe. Ensure your Stripe keys and webhooks are configured.
+                      </AlertDescription>
+                  </Alert>
+              }
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="shadow-lg">
         <CardHeader>
@@ -569,7 +565,7 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
-      {user.isFarmOwner && user.farmId && (
+      {canManageStaff && user.farmId && (
         <Card className="shadow-lg">
           <CardHeader>
             <CardTitle>Farm Management</CardTitle>
@@ -715,5 +711,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-
-    

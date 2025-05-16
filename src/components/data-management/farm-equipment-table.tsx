@@ -16,7 +16,7 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
@@ -27,10 +27,10 @@ interface FarmEquipmentLog {
   manufacturer?: string;
   model?: string;
   serialNumber?: string;
-  purchaseDate?: string | null; // Stored as YYYY-MM-DD string or null
+  purchaseDate?: string | null; 
   purchaseCost?: number;
-  lastMaintenanceDate?: string | null; // Stored as YYYY-MM-DD string or null
-  nextMaintenanceDate?: string | null; // Stored as YYYY-MM-DD string or null
+  lastMaintenanceDate?: string | null; 
+  nextMaintenanceDate?: string | null; 
   maintenanceDetails?: string;
   notes?: string;
   createdAt?: Timestamp | Date;
@@ -42,6 +42,8 @@ interface FarmEquipmentTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function FarmEquipmentTable({ refreshTrigger, onLogDeleted }: FarmEquipmentTableProps) {
   const [logs, setLogs] = useState<FarmEquipmentLog[]>([]);
@@ -91,10 +93,12 @@ export function FarmEquipmentTable({ refreshTrigger, onLogDeleted }: FarmEquipme
     fetchLogs();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
-      return;
+     if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete equipment logs.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this equipment log? This action cannot be undone.")) {
       try {
@@ -177,7 +181,7 @@ export function FarmEquipmentTable({ refreshTrigger, onLogDeleted }: FarmEquipme
             <TableHead className="min-w-[150px]">Last Maintenance</TableHead>
             <TableHead className="min-w-[150px]">Next Maintenance</TableHead>
             <TableHead className="min-w-[200px]">Maint. Details</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -191,11 +195,13 @@ export function FarmEquipmentTable({ refreshTrigger, onLogDeleted }: FarmEquipme
               <TableCell>{formatDate(log.lastMaintenanceDate)}</TableCell>
               <TableCell>{formatDate(log.nextMaintenanceDate)}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.maintenanceDetails}>{log.maintenanceDetails || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete equipment log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete equipment log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

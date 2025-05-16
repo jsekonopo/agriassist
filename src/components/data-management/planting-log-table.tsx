@@ -15,28 +15,30 @@ import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 
 interface PlantingLog {
-  id: string; // Firestore document ID
+  id: string; 
   cropName: string;
-  plantingDate: string; // Stored as YYYY-MM-DD string
-  fieldId: string; // Firestore document ID of the field
-  fieldName?: string; // To store the field name after fetching
+  plantingDate: string; 
+  fieldId: string; 
+  fieldName?: string; 
   seedsUsed?: string;
   notes?: string;
-  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
-  farmId: string; // Added farmId
-  userId: string; // Keep for auditing if needed
+  createdAt?: Timestamp | Date; 
+  farmId: string; 
+  userId: string; 
 }
 
 interface PlantingLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTableProps) {
   const [logs, setLogs] = useState<PlantingLog[]>([]);
@@ -46,7 +48,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!user || !user.farmId) { // Check for user and farmId
+    if (!user || !user.farmId) { 
       setIsLoading(false);
       setLogs([]);
       return;
@@ -58,7 +60,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
       try {
         const q = query(
           collection(db, "plantingLogs"),
-          where("farmId", "==", user.farmId), // Query by farmId
+          where("farmId", "==", user.farmId), 
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -69,11 +71,10 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
             try {
               const fieldDocRef = doc(db, "fields", data.fieldId);
               const fieldDocSnap = await getDoc(fieldDocRef);
-              // Ensure the field also belongs to the same farm for consistency
               if (fieldDocSnap.exists() && fieldDocSnap.data().farmId === user.farmId) {
                 fieldName = fieldDocSnap.data().fieldName || "Unknown Field";
               } else if (fieldDocSnap.exists()) {
-                fieldName = "Field (Different Farm)"; // Should not happen if form logic is correct
+                fieldName = "Field (Different Farm)"; 
               }
               else {
                 fieldName = "Deleted/Unknown Field";
@@ -107,14 +108,15 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
       }
     };
     fetchPlantingLogs();
-  }, [user?.farmId, refreshTrigger, toast]); // Depend on user.farmId
+  }, [user?.farmId, refreshTrigger, toast]); 
+
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
 
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
+    if (!canUserDelete) {
+      toast({ title: "Permission Denied", description: "You do not have permission to delete planting logs.", variant: "destructive" });
       return;
     }
-    // Add security check here in future (e.g., Firestore rules should enforce this)
     if (window.confirm("Are you sure you want to delete this planting log? This action cannot be undone.")) {
       try {
         await deleteDoc(doc(db, "plantingLogs", logId));
@@ -122,7 +124,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
           title: "Planting Log Deleted",
           description: "The planting log has been removed from Firestore.",
         });
-        onLogDeleted(); // Trigger refresh
+        onLogDeleted(); 
       } catch (e) {
         console.error("Failed to delete planting log from Firestore:", e);
         setError("Could not delete the planting log.");
@@ -184,7 +186,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
             <TableHead className="min-w-[150px]">Field</TableHead>
             <TableHead className="min-w-[150px]">Seeds Used</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -195,11 +197,13 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
               <TableCell>{log.fieldName || log.fieldId}</TableCell>
               <TableCell>{log.seedsUsed || "N/A"}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

@@ -15,7 +15,7 @@ import { IrrigationLogForm } from "./forms/irrigation-log-form";
 import { FarmInputLogForm } from "./forms/farm-input-log-form";
 import { FarmEquipmentForm } from "./forms/farm-equipment-form";
 import { ExpenseLogForm } from "./forms/expense-log-form";
-import { RevenueLogForm } from "./forms/revenue-log-form"; // Added
+import { RevenueLogForm } from "./forms/revenue-log-form";
 import { Icons } from "./icons"; 
 import type { LucideIcon } from "lucide-react";
 import { PlantingLogTable } from "./data-management/planting-log-table";
@@ -29,8 +29,10 @@ import { IrrigationLogTable } from "./data-management/irrigation-log-table";
 import { FarmInputLogTable } from "./data-management/farm-input-log-table";
 import { FarmEquipmentTable } from "./data-management/farm-equipment-table";
 import { ExpenseLogTable } from "./data-management/expense-log-table";
-import { RevenueLogTable } from "./data-management/revenue-log-table"; // Added
+import { RevenueLogTable } from "./data-management/revenue-log-table";
 import { Separator } from "@/components/ui/separator";
+import { useAuth } from "@/contexts/auth-context"; // Import useAuth
+import type { UserRole } from "@/contexts/auth-context"; // Import UserRole
 
 interface DataTab {
   value: string;
@@ -39,6 +41,7 @@ interface DataTab {
   description: string;
   formComponent: React.ElementType<{ onLogSaved?: () => void }>;
   tableComponent?: React.ElementType<{ refreshTrigger: number, onLogDeleted: () => void }>;
+  requiredRolesForAdd?: UserRole[]; // Roles that can add/use the form
 }
 
 const dataTabs: DataTab[] = [
@@ -49,6 +52,7 @@ const dataTabs: DataTab[] = [
     description: "Define and manage your farm fields.",
     formComponent: FieldDefinitionForm,
     tableComponent: FieldDefinitionTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "planting",
@@ -57,6 +61,7 @@ const dataTabs: DataTab[] = [
     description: "Record and view details about your planting activities.",
     formComponent: PlantingLogForm,
     tableComponent: PlantingLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "harvesting",
@@ -65,6 +70,7 @@ const dataTabs: DataTab[] = [
     description: "Keep track of your harvest yields and observations.",
     formComponent: HarvestingLogForm,
     tableComponent: HarvestingLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "inputs",
@@ -73,6 +79,7 @@ const dataTabs: DataTab[] = [
     description: "Manage your inventory of farm inputs like seeds, fertilizers, and pesticides.",
     formComponent: FarmInputLogForm,
     tableComponent: FarmInputLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "equipment",
@@ -81,6 +88,7 @@ const dataTabs: DataTab[] = [
     description: "Log and track your farm machinery and basic maintenance.",
     formComponent: FarmEquipmentForm,
     tableComponent: FarmEquipmentTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "fertilizer",
@@ -89,6 +97,7 @@ const dataTabs: DataTab[] = [
     description: "Log fertilizer applications and details.",
     formComponent: FertilizerLogForm,
     tableComponent: FertilizerLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "irrigation", 
@@ -97,6 +106,7 @@ const dataTabs: DataTab[] = [
     description: "Log water usage and irrigation activities.",
     formComponent: IrrigationLogForm,
     tableComponent: IrrigationLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "soil",
@@ -105,6 +115,7 @@ const dataTabs: DataTab[] = [
     description: "Manage soil test results and treatments.",
     formComponent: SoilDataForm,
     tableComponent: SoilDataLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "weather",
@@ -113,6 +124,7 @@ const dataTabs: DataTab[] = [
     description: "Log local weather conditions and observations.",
     formComponent: WeatherDataForm,
     tableComponent: WeatherDataLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "tasks",
@@ -121,6 +133,7 @@ const dataTabs: DataTab[] = [
     description: "Manage and track farm tasks and activities.",
     formComponent: TaskLogForm,
     tableComponent: TaskLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
     value: "expenses",
@@ -129,19 +142,22 @@ const dataTabs: DataTab[] = [
     description: "Log and track your farm expenses.",
     formComponent: ExpenseLogForm,
     tableComponent: ExpenseLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
   {
-    value: "revenue", // Added Revenue tab
+    value: "revenue",
     label: "Revenue",
     icon: Icons.Dollar,
     description: "Log and track your farm revenue.",
     formComponent: RevenueLogForm,
     tableComponent: RevenueLogTable,
+    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
   },
 ];
 
 export function DataManagementContent() {
   const [logRefreshTrigger, setLogRefreshTrigger] = useState(0);
+  const { user } = useAuth(); // Get current user and their role
 
   const handleLogSaved = () => {
     setLogRefreshTrigger(prev => prev + 1);
@@ -152,10 +168,14 @@ export function DataManagementContent() {
     if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
     if (count <= 4) return "grid-cols-2 md:grid-cols-4";
     if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"; 
-    // For more than 6, let's aim for a good balance, up to 4 on medium, up to 6 on large/xl
     return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6";
   };
 
+  const canUserAdd = (tab: DataTab): boolean => {
+    if (!user || !user.roleOnCurrentFarm) return false;
+    if (!tab.requiredRolesForAdd) return true; // If no roles defined, allow all
+    return tab.requiredRolesForAdd.includes(user.roleOnCurrentFarm);
+  };
 
   return (
     <Tabs defaultValue="fields" className="w-full">
@@ -178,7 +198,11 @@ export function DataManagementContent() {
               <CardDescription className="text-sm md:text-base">{tab.description}</CardDescription>
             </CardHeader>
             <CardContent>
-              <tab.formComponent onLogSaved={handleLogSaved} />
+              {canUserAdd(tab) ? (
+                <tab.formComponent onLogSaved={handleLogSaved} />
+              ) : (
+                <p className="text-muted-foreground">You do not have permission to add new {tab.label.toLowerCase()} records.</p>
+              )}
               {tab.tableComponent && (
                 <>
                   <Separator className="my-8" />

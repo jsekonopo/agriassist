@@ -16,7 +16,7 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
@@ -26,7 +26,7 @@ interface FarmInputLog {
   inputType: string;
   quantity: number;
   quantityUnit: string;
-  purchaseDate: string; // Stored as YYYY-MM-DD string
+  purchaseDate: string; 
   purchaseCost?: number;
   supplier?: string;
   notes?: string;
@@ -39,6 +39,8 @@ interface FarmInputLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function FarmInputLogTable({ refreshTrigger, onLogDeleted }: FarmInputLogTableProps) {
   const [logs, setLogs] = useState<FarmInputLog[]>([]);
@@ -89,10 +91,12 @@ export function FarmInputLogTable({ refreshTrigger, onLogDeleted }: FarmInputLog
     fetchLogs();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
-      return;
+     if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete farm input logs.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this input log? This action cannot be undone.")) {
       try {
@@ -165,7 +169,7 @@ export function FarmInputLogTable({ refreshTrigger, onLogDeleted }: FarmInputLog
             <TableHead className="min-w-[100px]">Cost</TableHead>
             <TableHead className="min-w-[120px]">Supplier</TableHead>
             <TableHead className="min-w-[150px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -178,11 +182,13 @@ export function FarmInputLogTable({ refreshTrigger, onLogDeleted }: FarmInputLog
               <TableCell>{log.purchaseCost !== undefined ? `$${log.purchaseCost.toFixed(2)}` : "N/A"}</TableCell>
               <TableCell>{log.supplier || "N/A"}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

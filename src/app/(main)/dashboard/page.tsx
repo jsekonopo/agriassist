@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAuth } from '@/contexts/auth-context';
+import { useAuth, type UserRole } from '@/contexts/auth-context'; // Import UserRole
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
@@ -35,7 +35,7 @@ interface Field {
 interface PlantingLog {
   id: string;
   cropName: string;
-  plantingDate: string; // YYYY-MM-DD
+  plantingDate: string; 
   farmId: string;
   userId: string;
 }
@@ -52,7 +52,7 @@ interface HarvestingLog {
 interface TaskLog {
   id: string;
   taskName: string;
-  dueDate?: string | null; // YYYY-MM-DD or null
+  dueDate?: string | null; 
   status: "To Do" | "In Progress" | "Done";
   farmId: string;
   userId: string;
@@ -86,6 +86,7 @@ const sampleResourceData = [
 ];
 const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))'];
 
+const rolesThatCanAddData: UserRole[] = ['free', 'pro', 'agribusiness', 'admin', 'editor'];
 
 export default function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
@@ -101,12 +102,14 @@ export default function DashboardPage() {
   const [upcomingTasks, setUpcomingTasks] = useState<TaskLog[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
 
+  const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
+
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
-      let lat = 45.4215; // Default Ottawa latitude
-      let lon = -75.6972; // Default Ottawa longitude
-      let locationName = "Ottawa";
+      let lat = 45.4215; 
+      let lon = -75.6972; 
+      let locationName = "Ottawa"; // Default
 
       if (user?.farmId) {
         try {
@@ -114,14 +117,16 @@ export default function DashboardPage() {
           const farmDocSnap = await getDoc(farmDocRef);
           if (farmDocSnap.exists()) {
             const farmData = farmDocSnap.data();
+            locationName = farmData?.farmName || "Your Farm"; // Use farm name if no specific coords
             if (farmData && typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
               lat = farmData.latitude;
               lon = farmData.longitude;
-              locationName = farmData.farmName || "Your Farm Location";
+              locationName = farmData.farmName ? `${farmData.farmName} (Custom Location)` : "Your Farm (Custom Location)";
             }
           }
         } catch (error) {
           console.warn("Could not fetch farm specific location, defaulting to Ottawa:", error);
+          locationName = "Ottawa (Default)";
         }
       }
       setWeatherLocationDisplay(locationName);
@@ -147,10 +152,10 @@ export default function DashboardPage() {
         setWeatherLoading(false);
       }
     }
-    if (user !== undefined) { // Fetch weather once user state is determined (null or User object)
+    if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user?.farmId]); // Re-fetch if farmId changes
+  }, [user?.farmId]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -172,8 +177,8 @@ export default function DashboardPage() {
         const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
         let acreage = 0;
-        fieldsSnapshot.docs.forEach(doc => {
-          const field = doc.data() as Field;
+        fieldsSnapshot.docs.forEach(docSnap => { // Corrected variable name
+          const field = docSnap.data() as Field;
           if (field.fieldSize && field.fieldSize > 0) {
             if (!field.fieldSizeUnit || field.fieldSizeUnit.toLowerCase().includes('acre')) {
               acreage += field.fieldSize;
@@ -186,14 +191,14 @@ export default function DashboardPage() {
 
         const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
-        const pLogs = plantingLogsSnapshot.docs.map(doc => doc.data() as PlantingLog);
+        const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog); // Corrected variable name
         const uniqueCrops = new Set(pLogs.map(log => log.cropName));
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
 
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
-        const hLogs = harvestingLogsSnapshot.docs.map(doc => doc.data() as HarvestingLog);
+        const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog); // Corrected variable name
         const yields: { [key: string]: { total: number; unit?: string } } = {};
         hLogs.forEach(log => {
           if (log.cropName && typeof log.yieldAmount === 'number') {
@@ -206,7 +211,7 @@ export default function DashboardPage() {
 
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
-        setUpcomingTasks(tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TaskLog)));
+        setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog))); // Corrected variable name
 
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
@@ -250,7 +255,7 @@ export default function DashboardPage() {
          <Card className="shadow-lg hover:shadow-xl transition-shadow duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Weather ({weatherLocationDisplay})
+              {weatherLocationDisplay}
             </CardTitle>
             <Icons.Weather className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
@@ -377,7 +382,7 @@ export default function DashboardPage() {
                 <Link href="/data-management?tab=tasks">View all tasks</Link>
              </Button>
           )}
-           {upcomingTasks.length === 0 && !dataLoading && !authLoading && (
+           {(upcomingTasks.length === 0 && !dataLoading && !authLoading && canUserAddData) && (
              <Button variant="link" className="mt-4 px-0" asChild>
                 <Link href="/data-management?tab=tasks">Add a new task</Link>
              </Button>
@@ -391,25 +396,31 @@ export default function DashboardPage() {
                 <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-4">
-                <Button variant="outline" asChild className="h-auto py-3">
-                    <Link href="/data-management?tab=planting" className="flex flex-col items-center gap-1">
-                        <Icons.PlusCircle className="w-6 h-6"/>
-                        <span>New Planting Log</span>
-                    </Link>
-                </Button>
-                <Button variant="outline" asChild className="h-auto py-3">
-                    <Link href="/data-management?tab=harvesting" className="flex flex-col items-center gap-1">
-                        <Icons.PlusCircle className="w-6 h-6"/>
-                        <span>New Harvest Log</span>
-                    </Link>
-                </Button>
-                 <Button variant="outline" asChild className="h-auto py-3">
-                    <Link href="/data-management?tab=soil" className="flex flex-col items-center gap-1">
-                        <Icons.PlusCircle className="w-6 h-6"/>
-                        <span>Add Soil Data</span>
-                    </Link>
-                </Button>
-                <Button variant="outline" asChild className="h-auto py-3">
+              {canUserAddData ? (
+                <>
+                  <Button variant="outline" asChild className="h-auto py-3">
+                      <Link href="/data-management?tab=planting" className="flex flex-col items-center gap-1">
+                          <Icons.PlusCircle className="w-6 h-6"/>
+                          <span>New Planting Log</span>
+                      </Link>
+                  </Button>
+                  <Button variant="outline" asChild className="h-auto py-3">
+                      <Link href="/data-management?tab=harvesting" className="flex flex-col items-center gap-1">
+                          <Icons.PlusCircle className="w-6 h-6"/>
+                          <span>New Harvest Log</span>
+                      </Link>
+                  </Button>
+                  <Button variant="outline" asChild className="h-auto py-3">
+                      <Link href="/data-management?tab=soil" className="flex flex-col items-center gap-1">
+                          <Icons.PlusCircle className="w-6 h-6"/>
+                          <span>Add Soil Data</span>
+                      </Link>
+                  </Button>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground col-span-2 text-center">Data entry actions are restricted for your role.</p>
+              )}
+               <Button variant="outline" asChild className="h-auto py-3">
                     <Link href="/ai-expert" className="flex flex-col items-center gap-1">
                         <Icons.Help className="w-6 h-6"/>
                         <span>Ask AI Expert</span>

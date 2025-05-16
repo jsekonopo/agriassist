@@ -16,12 +16,12 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
 interface RevenueLog {
-  id: string; // Firestore document ID
+  id: string; 
   date: string; 
   source: string;
   description?: string;
@@ -36,6 +36,8 @@ interface RevenueLogTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
 }
+
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
 
 export function RevenueLogTable({ refreshTrigger, onLogDeleted }: RevenueLogTableProps) {
   const [logs, setLogs] = useState<RevenueLog[]>([]);
@@ -86,10 +88,12 @@ export function RevenueLogTable({ refreshTrigger, onLogDeleted }: RevenueLogTabl
     fetchLogs();
   }, [user?.farmId, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user || !user.farmId) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
-      return;
+    if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete revenue logs.", variant: "destructive" });
+        return;
     }
     if (window.confirm("Are you sure you want to delete this revenue log? This action cannot be undone.")) {
       try {
@@ -160,7 +164,7 @@ export function RevenueLogTable({ refreshTrigger, onLogDeleted }: RevenueLogTabl
             <TableHead className="min-w-[200px]">Description</TableHead>
             <TableHead className="min-w-[100px] text-right">Amount ($)</TableHead>
             <TableHead className="min-w-[150px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -171,11 +175,13 @@ export function RevenueLogTable({ refreshTrigger, onLogDeleted }: RevenueLogTabl
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.description}>{log.description || "N/A"}</TableCell>
               <TableCell className="text-right">{log.amount.toFixed(2)}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete revenue log">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete revenue log">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

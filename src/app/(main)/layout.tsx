@@ -29,7 +29,9 @@ export default function AppLayout({
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      if (pathname !== '/login' && pathname !== '/register' && pathname !== '/') {
+      const publicPaths = ['/login', '/register', '/', '/accept-invitation', '/pricing'];
+      const isPublicPath = publicPaths.some(p => pathname.startsWith(p));
+      if (!isPublicPath) {
          router.push('/login');
       }
     }
@@ -45,15 +47,18 @@ export default function AppLayout({
             <Skeleton className="h-8 w-3/4 mx-auto" />
             <Skeleton className="h-6 w-1/2 mx-auto" />
             <div className="flex justify-center pt-4">
-                 <Icons.Search className="h-8 w-8 text-muted-foreground animate-spin" /> {/* Using Search as a generic loading spinner */}
+                 <Icons.Search className="h-8 w-8 text-muted-foreground animate-spin" /> 
             </div>
             <p className="text-center text-muted-foreground">Loading AgriAssist...</p>
         </div>
       </div>
     );
   }
+  
+  const publicPaths = ['/login', '/register', '/', '/accept-invitation', '/pricing'];
+  const isPublicPath = publicPaths.some(p => pathname.startsWith(p));
 
-  if (!isAuthenticated && !['/login', '/register', '/'].includes(pathname)) {
+  if (!isAuthenticated && !isPublicPath) {
      return (
       <div className="flex min-h-screen items-center justify-center">
         <p>Redirecting to login...</p>
@@ -61,7 +66,7 @@ export default function AppLayout({
     );
   }
 
-  if (!isAuthenticated && (pathname === '/login' || pathname === '/register' || pathname === '/')) {
+  if (!isAuthenticated && isPublicPath) {
      return <>{children}</>; 
   }
 
@@ -81,7 +86,7 @@ export default function AppLayout({
               </SidebarTrigger>
             </div>
             <div className="flex-1">
-              {/* Placeholder for breadcrumbs or page title if needed */}
+              
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -113,6 +118,13 @@ export default function AppLayout({
                     <span>Profile</span>
                   </Link>
                 </DropdownMenuItem>
+                 <DropdownMenuItem asChild>
+                  <Link href="/settings">
+                    <Icons.Settings className="mr-2 h-4 w-4" />
+                    <span>Settings</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={logoutUser}>
                   <Icons.LogOut className="mr-2 h-4 w-4" />
                   <span>Log out</span>

@@ -15,17 +15,17 @@ import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
 interface FieldDefinitionLog {
-  id: string; // Firestore document ID
+  id: string; 
   fieldName: string;
   fieldSize?: number;
   fieldSizeUnit?: string;
   notes?: string;
-  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  createdAt?: Timestamp | Date; 
   farmId: string;
   userId: string;
 }
@@ -35,6 +35,8 @@ interface FieldDefinitionTableProps {
   onLogDeleted: () => void;
 }
 
+const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
+
 export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefinitionTableProps) {
   const [logs, setLogs] = useState<FieldDefinitionLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -43,7 +45,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user || !user.farmId) { // Ensure user and farmId are available
+    if (!user || !user.farmId) { 
       setIsLoading(false);
       setLogs([]); 
       return;
@@ -55,7 +57,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
       try {
         const q = query(
           collection(db, "fields"),
-          where("farmId", "==", user.farmId), // Fetch fields for the user's farm
+          where("farmId", "==", user.farmId), 
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -80,14 +82,13 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     fetchFieldDefinitions();
   }, [user, refreshTrigger, toast]);
 
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+
   const handleDeleteLog = async (logId: string) => {
-    if (!user) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
-      return;
+    if (!canUserDelete) {
+        toast({ title: "Permission Denied", description: "You do not have permission to delete fields.", variant: "destructive" });
+        return;
     }
-    // Additional check: Only owner should be able to delete, or implement specific staff permissions.
-    // For now, any authenticated user associated with the farm can delete if they can see it.
-    // This needs to be secured by Firestore rules.
     if (window.confirm("Are you sure you want to delete this field definition? This action cannot be undone.")) {
       try {
         await deleteDoc(doc(db, "fields", logId));
@@ -95,7 +96,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
           title: "Field Deleted",
           description: "The field definition has been removed from Firestore.",
         });
-        onLogDeleted(); // Trigger refresh
+        onLogDeleted(); 
       } catch (e) {
         console.error("Failed to delete field definition from Firestore:", e);
         setError("Could not delete the field definition.");
@@ -156,7 +157,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
             <TableHead className="min-w-[100px]">Size</TableHead>
             <TableHead className="min-w-[100px]">Unit</TableHead>
             <TableHead className="min-w-[250px]">Notes</TableHead>
-            <TableHead className="text-right w-[100px]">Actions</TableHead>
+            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -166,11 +167,13 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
               <TableCell>{log.fieldSize !== undefined ? log.fieldSize : "N/A"}</TableCell>
               <TableCell>{log.fieldSizeUnit || "N/A"}</TableCell>
               <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
-              <TableCell className="text-right">
-                <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete field">
-                  <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
+              {canUserDelete && (
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete field">
+                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>
@@ -178,5 +181,3 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     </div>
   );
 }
-
-    
