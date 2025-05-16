@@ -15,15 +15,16 @@ import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
+import { useAuth, type UserRole } from "@/contexts/auth-context"; 
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
+import { PreferredAreaUnit } from "@/contexts/auth-context";
 
 interface FieldDefinitionLog {
   id: string; 
   fieldName: string;
   fieldSize?: number;
-  fieldSizeUnit?: string;
+  fieldSizeUnit?: string; // Unit as stored in DB, e.g., 'acres', 'hectares'
   notes?: string;
   createdAt?: Timestamp | Date; 
   farmId: string;
@@ -35,7 +36,11 @@ interface FieldDefinitionTableProps {
   onLogDeleted: () => void;
 }
 
-const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
+const ACRES_TO_HECTARES = 0.404686;
+const HECTARES_TO_ACRES = 1 / ACRES_TO_HECTARES;
+
+const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
+const rolesThatCanDelete: UserRole[] = [...ownerRoles, 'admin'];
 
 export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefinitionTableProps) {
   const [logs, setLogs] = useState<FieldDefinitionLog[]>([]);
@@ -43,6 +48,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
+  const preferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
   useEffect(() => {
     if (!user || !user.farmId) { 
@@ -80,7 +86,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
       }
     };
     fetchFieldDefinitions();
-  }, [user, refreshTrigger, toast]);
+  }, [user?.farmId, refreshTrigger, toast]);
 
   const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
 
@@ -107,6 +113,30 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
         });
       }
     }
+  };
+
+  const formatFieldSize = (size?: number, unit?: string, targetUnit?: PreferredAreaUnit): string => {
+    if (size === undefined || size === null) return "N/A";
+    
+    const originalUnit = unit?.toLowerCase() || "acres"; // Assume acres if not specified
+    const displayUnit = targetUnit || "acres";
+
+    if (originalUnit === displayUnit) {
+      return `${size.toFixed(1)} ${displayUnit}`;
+    }
+
+    let sizeInAcres: number;
+    if (originalUnit.includes("hectare")) {
+      sizeInAcres = size * HECTARES_TO_ACRES;
+    } else { // Assume acres
+      sizeInAcres = size;
+    }
+
+    if (displayUnit === "hectares") {
+      return `${(sizeInAcres * ACRES_TO_HECTARES).toFixed(2)} ${displayUnit}`;
+    }
+    // Default to acres if targetUnit is acres or unknown
+    return `${sizeInAcres.toFixed(1)} ${displayUnit}`;
   };
   
   if (isLoading) {
@@ -154,8 +184,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[200px]">Field Name</TableHead>
-            <TableHead className="min-w-[100px]">Size</TableHead>
-            <TableHead className="min-w-[100px]">Unit</TableHead>
+            <TableHead className="min-w-[150px]">Size ({preferredAreaUnit})</TableHead>
             <TableHead className="min-w-[250px]">Notes</TableHead>
             {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
@@ -164,8 +193,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
           {logs.map((log) => (
             <TableRow key={log.id}>
               <TableCell className="font-medium">{log.fieldName}</TableCell>
-              <TableCell>{log.fieldSize !== undefined ? log.fieldSize : "N/A"}</TableCell>
-              <TableCell>{log.fieldSizeUnit || "N/A"}</TableCell>
+              <TableCell>{formatFieldSize(log.fieldSize, log.fieldSizeUnit, preferredAreaUnit)}</TableCell>
               <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
               {canUserDelete && (
                 <TableCell className="text-right">

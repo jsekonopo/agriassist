@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAuth, type UserRole } from '@/contexts/auth-context'; // Import UserRole
+import { useAuth, type UserRole, type PreferredAreaUnit } from '@/contexts/auth-context'; 
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
@@ -27,7 +27,7 @@ interface Field {
   id: string;
   fieldName: string;
   fieldSize?: number;
-  fieldSizeUnit?: string;
+  fieldSizeUnit?: string; // e.g. "acres", "hectares"
   farmId: string;
   userId: string;
 }
@@ -78,7 +78,8 @@ const getWeatherDescription = (code: number): string => {
   return descriptions[code] || 'Unknown';
 };
 
-const HECTARE_TO_ACRE = 2.47105;
+const ACRES_TO_HECTARES = 0.404686;
+const HECTARES_TO_ACRES = 1 / ACRES_TO_HECTARES;
 
 const sampleResourceData = [
   { name: 'Water (Sample)', value: 65 },
@@ -86,7 +87,8 @@ const sampleResourceData = [
 ];
 const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))'];
 
-const rolesThatCanAddData: UserRole[] = ['free', 'pro', 'agribusiness', 'admin', 'editor'];
+const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
+const rolesThatCanAddData: UserRole[] = [...ownerRoles, 'admin', 'editor'];
 
 export default function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
@@ -103,31 +105,22 @@ export default function DashboardPage() {
   const [dataLoading, setDataLoading] = useState(true);
 
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
+  const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
+
 
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
       let lat = 45.4215; 
       let lon = -75.6972; 
-      let locationName = "Ottawa"; // Default
+      let locationName = "Ottawa (Default)"; 
 
-      if (user?.farmId) {
-        try {
-          const farmDocRef = doc(db, "farms", user.farmId);
-          const farmDocSnap = await getDoc(farmDocRef);
-          if (farmDocSnap.exists()) {
-            const farmData = farmDocSnap.data();
-            locationName = farmData?.farmName || "Your Farm"; // Use farm name if no specific coords
-            if (farmData && typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
-              lat = farmData.latitude;
-              lon = farmData.longitude;
-              locationName = farmData.farmName ? `${farmData.farmName} (Custom Location)` : "Your Farm (Custom Location)";
-            }
-          }
-        } catch (error) {
-          console.warn("Could not fetch farm specific location, defaulting to Ottawa:", error);
-          locationName = "Ottawa (Default)";
-        }
+      if (user?.farmId && user.farmLatitude && user.farmLongitude) {
+        lat = user.farmLatitude;
+        lon = user.farmLongitude;
+        locationName = `${user.farmName || 'Your Farm'} (Custom Location)`;
+      } else if (user?.farmName) {
+        locationName = `${user.farmName} (Defaulting to Ottawa)`;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -155,7 +148,7 @@ export default function DashboardPage() {
     if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user?.farmId]); 
+  }, [user?.farmId, user?.farmName, user?.farmLatitude, user?.farmLongitude]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -176,29 +169,36 @@ export default function DashboardPage() {
       try {
         const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
-        let acreage = 0;
-        fieldsSnapshot.docs.forEach(docSnap => { // Corrected variable name
+        let acreageInAcres = 0;
+        fieldsSnapshot.docs.forEach(docSnap => {
           const field = docSnap.data() as Field;
-          if (field.fieldSize && field.fieldSize > 0) {
-            if (!field.fieldSizeUnit || field.fieldSizeUnit.toLowerCase().includes('acre')) {
-              acreage += field.fieldSize;
-            } else if (field.fieldSizeUnit.toLowerCase().includes('hectare')) {
-              acreage += field.fieldSize * HECTARE_TO_ACRE;
+          if (field.fieldSize && typeof field.fieldSize === 'number' && field.fieldSize > 0) {
+            const unit = field.fieldSizeUnit?.toLowerCase() || "acres";
+            if (unit.includes("hectare")) {
+              acreageInAcres += field.fieldSize * HECTARES_TO_ACRES;
+            } else { // assume acres
+              acreageInAcres += field.fieldSize;
             }
           }
         });
-        setTotalAcreage(acreage > 0 ? parseFloat(acreage.toFixed(1)) : 0);
+
+        if (preferredAreaUnit === "hectares") {
+            setTotalAcreage(acreageInAcres > 0 ? parseFloat((acreageInAcres * ACRES_TO_HECTARES).toFixed(2)) : 0);
+        } else {
+            setTotalAcreage(acreageInAcres > 0 ? parseFloat(acreageInAcres.toFixed(1)) : 0);
+        }
+
 
         const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
-        const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog); // Corrected variable name
+        const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog);
         const uniqueCrops = new Set(pLogs.map(log => log.cropName));
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
 
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
-        const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog); // Corrected variable name
+        const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog);
         const yields: { [key: string]: { total: number; unit?: string } } = {};
         hLogs.forEach(log => {
           if (log.cropName && typeof log.yieldAmount === 'number') {
@@ -211,7 +211,7 @@ export default function DashboardPage() {
 
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
-        setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog))); // Corrected variable name
+        setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog)));
 
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
@@ -220,7 +220,7 @@ export default function DashboardPage() {
       }
     };
     fetchData();
-  }, [user, authLoading]);
+  }, [user, authLoading, preferredAreaUnit]);
 
 
   return (
@@ -235,7 +235,7 @@ export default function DashboardPage() {
         <DashboardStatsCard
           title="Total Acreage"
           value={dataLoading || authLoading ? undefined : (totalAcreage !== undefined ? totalAcreage : "N/A")}
-          unit={totalAcreage !== undefined && totalAcreage > 0 ? "acres" : ""}
+          unit={totalAcreage !== undefined && totalAcreage > 0 ? preferredAreaUnit : ""}
           icon={Icons.Location}
           isLoading={dataLoading || authLoading}
         />
