@@ -16,7 +16,7 @@ import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { Icons } from "../icons";
-import { useAuth } from "@/contexts/auth-context";
+import { useAuth, type PreferredWeightUnit } from "@/contexts/auth-context"; // Import PreferredWeightUnit
 import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy, Timestamp } from "firebase/firestore";
 
@@ -25,7 +25,7 @@ interface AnimalOption {
   animalIdTag: string;
 }
 
-const weightUnits = ["kg", "lbs"] as const;
+const weightUnits: PreferredWeightUnit[] = ["kg", "lbs"];
 
 const addWeightLogSchema = z.object({
   animalDocId: z.string().min(1, "Animal selection is required."),
@@ -48,20 +48,25 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
   const { user } = useAuth();
   const [animals, setAnimals] = useState<AnimalOption[]>([]);
   const [isLoadingAnimals, setIsLoadingAnimals] = useState(true);
+  
+  // Get preferred weight unit from context, default to 'kg'
   const preferredWeightUnit = user?.settings?.preferredWeightUnit || "kg";
-
 
   const form = useForm<z.infer<typeof addWeightLogSchema>>({
     resolver: zodResolver(addWeightLogSchema),
     defaultValues: {
       animalDocId: "",
-      weightUnit: preferredWeightUnit,
+      weightUnit: preferredWeightUnit, // Set default from context
       notes: "",
     },
   });
 
+  // Effect to update form's default weightUnit if user's preference changes
   useEffect(() => {
-    form.reset({ weightUnit: preferredWeightUnit, animalDocId: "", notes: "" });
+    form.reset({ 
+        ...form.getValues(), // keep other form values
+        weightUnit: preferredWeightUnit 
+    });
   }, [preferredWeightUnit, form]);
 
   useEffect(() => {
@@ -112,7 +117,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
         userId: user.uid,
         farmId: user.farmId,
         animalDocId: values.animalDocId,
-        animalIdTag: selectedAnimal.animalIdTag, // Denormalize for easier display
+        animalIdTag: selectedAnimal.animalIdTag, 
         logDate: format(values.logDate, "yyyy-MM-dd"),
         weight: values.weight,
         weightUnit: values.weightUnit,
@@ -128,7 +133,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
         animalDocId: "",
         logDate: undefined,
         weight: undefined,
-        weightUnit: preferredWeightUnit,
+        weightUnit: preferredWeightUnit, // Reset to preferred unit
         notes: "",
       });
       if (onLogSaved) {
@@ -215,7 +220,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Weight</FormLabel>
-                  <FormControl><Input type="number" placeholder="e.g., 500" {...field} value={field.value ?? ""} /></FormControl>
+                  <FormControl><Input type="number" step="any" placeholder="e.g., 500" {...field} value={field.value ?? ""} /></FormControl>
                   <FormMessage />
                 </FormItem>
               )}
@@ -226,7 +231,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Unit</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value}> {/* Ensure value is bound for controlled component */}
                       <FormControl>
                           <SelectTrigger>
                               <SelectValue placeholder="Select unit"/>

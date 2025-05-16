@@ -16,7 +16,7 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth, type UserRole } from "@/contexts/auth-context";
+import { useAuth, type UserRole, type PreferredWeightUnit } from "@/contexts/auth-context";
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
@@ -26,7 +26,7 @@ interface WeightLog {
   animalDocId: string;
   logDate: string; 
   weight: number;
-  weightUnit: string;
+  weightUnit: string; // Unit as stored in DB
   notes?: string;
   createdAt?: Timestamp | Date;
   farmId: string;
@@ -38,6 +38,9 @@ interface WeightLogTableProps {
   onLogDeleted: () => void;
 }
 
+const KG_TO_LBS_FACTOR = 2.20462;
+const LBS_TO_KG_FACTOR = 1 / KG_TO_LBS_FACTOR;
+
 const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
 const rolesThatCanDelete: UserRole[] = [...ownerRoles, 'admin'];
 
@@ -47,6 +50,7 @@ export function WeightLogTable({ refreshTrigger, onLogDeleted }: WeightLogTableP
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
+  const preferredWeightUnit = user?.settings?.preferredWeightUnit || "kg";
 
   useEffect(() => {
     if (!user || !user.farmId) {
@@ -126,6 +130,23 @@ export function WeightLogTable({ refreshTrigger, onLogDeleted }: WeightLogTableP
     }
   };
 
+  const formatWeightForDisplay = (weight: number, storedUnit: string, targetUnit: PreferredWeightUnit): string => {
+    let displayWeight = weight;
+    const actualStoredUnit = storedUnit.toLowerCase();
+    const actualTargetUnit = targetUnit.toLowerCase();
+
+    if (actualStoredUnit === actualTargetUnit) {
+      displayWeight = weight;
+    } else if (actualStoredUnit === 'kg' && actualTargetUnit === 'lbs') {
+      displayWeight = weight * KG_TO_LBS_FACTOR;
+    } else if (actualStoredUnit === 'lbs' && actualTargetUnit === 'kg') {
+      displayWeight = weight * LBS_TO_KG_FACTOR;
+    }
+    // If units are somehow different but not kg/lbs, display as stored.
+    return `${displayWeight.toFixed(1)} ${actualTargetUnit}`;
+  };
+
+
   if (isLoading) {
     return <p className="text-center text-muted-foreground py-4">Loading weight logs...</p>;
   }
@@ -167,12 +188,12 @@ export function WeightLogTable({ refreshTrigger, onLogDeleted }: WeightLogTableP
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your farm's animal weight logs.</TableCaption>
+        <TableCaption>A list of your farm's animal weight logs. Displayed in your preferred unit: {preferredWeightUnit.toUpperCase()}.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[120px]">Date</TableHead>
             <TableHead className="min-w-[150px]">Animal ID/Tag</TableHead>
-            <TableHead className="min-w-[100px] text-right">Weight</TableHead>
+            <TableHead className="min-w-[100px] text-right">Weight ({preferredWeightUnit.toUpperCase()})</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
             {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
@@ -182,7 +203,7 @@ export function WeightLogTable({ refreshTrigger, onLogDeleted }: WeightLogTableP
             <TableRow key={log.id}>
               <TableCell>{formatDateSafe(log.logDate)}</TableCell>
               <TableCell className="font-medium">{log.animalIdTag}</TableCell>
-              <TableCell className="text-right">{log.weight} {log.weightUnit.toUpperCase()}</TableCell>
+              <TableCell className="text-right">{formatWeightForDisplay(log.weight, log.weightUnit, preferredWeightUnit)}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
               {canUserDelete && (
                 <TableCell className="text-right">
