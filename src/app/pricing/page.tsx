@@ -10,7 +10,8 @@ import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import type { PlanId } from '@/contexts/auth-context';
 import { useToast } from '@/hooks/use-toast';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { loadStripe } from '@stripe/stripe-js'; // Import loadStripe
 
 interface PricingPlan {
   id: PlanId;
@@ -20,10 +21,11 @@ interface PricingPlan {
   description: string;
   features: string[];
   actionLabel: string;
-  isCurrentPlan?: boolean; // To be determined dynamically
+  isCurrentPlan?: boolean; 
+  stripePriceIdEnvVar?: 'STRIPE_PRICE_ID_PRO' | 'STRIPE_PRICE_ID_AGRIBUSINESS'; // To map to env var
 }
 
-const plans: Omit<PricingPlan, 'isCurrentPlan' | 'actionLabel'>[] = [
+const plansData: Omit<PricingPlan, 'isCurrentPlan' | 'actionLabel'>[] = [
   {
     id: "free",
     name: "Hobbyist Farmer",
@@ -32,9 +34,7 @@ const plans: Omit<PricingPlan, 'isCurrentPlan' | 'actionLabel'>[] = [
     description: "Get started with the basics for small-scale farming.",
     features: [
       "Up to 2 Fields",
-      "Max 50 Logs/month (conceptual)",
       "Basic AI Expert Access",
-      "No Staff Accounts",
       "Community Support",
     ],
   },
@@ -46,12 +46,12 @@ const plans: Omit<PricingPlan, 'isCurrentPlan' | 'actionLabel'>[] = [
     description: "For growing farms needing more features and capacity.",
     features: [
       "Up to 10 Fields",
-      "Unlimited Logs",
       "Full AI Expert Access",
       "Up to 2 Staff Accounts",
       "Basic Reporting Tools",
       "Email Support",
     ],
+    stripePriceIdEnvVar: 'STRIPE_PRICE_ID_PRO',
   },
   {
     id: "agribusiness",
@@ -61,60 +61,93 @@ const plans: Omit<PricingPlan, 'isCurrentPlan' | 'actionLabel'>[] = [
     description: "Comprehensive solution for larger agricultural operations.",
     features: [
       "Unlimited Fields",
-      "Unlimited Logs",
-      "Priority AI Expert Access (Conceptual)",
+      "Priority AI Expert Access",
       "Up to 10 Staff Accounts",
-      "Advanced Reporting & Data Export (Conceptual)",
-      "Dedicated Support (Conceptual)",
+      "Advanced Reporting & Data Export",
+      "Dedicated Support",
     ],
+    stripePriceIdEnvVar: 'STRIPE_PRICE_ID_AGRIBUSINESS',
   },
 ];
 
+// Initialize Stripe.js with your publishable key
+const stripePromise = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+  ? loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+  : null;
+
+
 export default function PricingPage() {
-  const { user, isAuthenticated, updateUserPlan } = useAuth();
+  const { user, isAuthenticated, updateUserPlan, refreshUserData } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
   const [isLoadingPlanChange, setIsLoadingPlanChange] = useState<PlanId | null>(null);
 
+  useEffect(() => {
+    // Check to see if this is a redirect back from Checkout
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("session_id")) {
+      toast({
+        title: "Subscription Processing",
+        description: "Your subscription is being processed. Your plan details will update shortly.",
+      });
+      refreshUserData(); // Refresh user data to get latest subscription status from webhook update
+      // Optionally, redirect to a specific success page or remove query params
+      // router.replace('/profile', undefined); // Clear query params
+    }
+  }, [toast, refreshUserData, router]);
+
+
   const handleSelectPlan = async (planId: PlanId) => {
     if (!isAuthenticated) {
-      // Redirect to login, potentially with a redirect back to pricing
-      // For now, just prompt to log in.
-      toast({ title: "Login Required", description: "Please log in or register to select a plan.", variant: "default" });
+      toast({ title: "Login Required", description: "Please log in or register to select a plan." });
       router.push(`/login?redirect=/pricing`);
       return;
     }
-    if (user?.selectedPlanId === planId) {
-      toast({ title: "Already on this Plan", description: "You are currently on this plan.", variant: "default" });
+    if (user?.selectedPlanId === planId && user?.subscriptionStatus === 'active') {
+      toast({ title: "Already on this Plan", description: "You are currently subscribed to this plan." });
+      return;
+    }
+    if (!stripePromise && planId !== 'free') {
+      toast({ title: "Stripe Not Configured", description: "Stripe is not configured. Please add your publishable key.", variant: "destructive" });
       return;
     }
 
     setIsLoadingPlanChange(planId);
-    // Simulate payment and subscription update
-    // In a real app, this would redirect to a payment gateway (e.g., Stripe Checkout)
-    // and then handle the webhook/callback to update the user's subscription.
-    toast({
-      title: "Simulating Plan Change...",
-      description: `Attempting to switch to ${planId} plan. No payment will be processed.`,
-    });
 
-    // Simulate a delay for API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    const result = await updateUserPlan(planId); // This now calls the API endpoint
 
-    const result = await updateUserPlan(planId);
-    if (result.success) {
-        // Toast is handled within updateUserPlan
-    } else {
-        // Toast is handled within updateUserPlan
+    if (result.success && result.sessionId) {
+      // Redirect to Stripe Checkout
+      const stripe = await stripePromise;
+      if (stripe) {
+        const { error } = await stripe.redirectToCheckout({ sessionId: result.sessionId });
+        if (error) {
+          console.error("Stripe redirectToCheckout error:", error);
+          toast({ title: "Checkout Error", description: error.message || "Could not redirect to Stripe Checkout.", variant: "destructive" });
+        }
+      } else {
+         toast({ title: "Stripe Error", description: "Stripe.js failed to load.", variant: "destructive" });
+      }
+    } else if (result.success && planId === 'free') { // Handle direct "downgrade" to free via cancel
+        toast({ title: "Plan Changed", description: result.message });
+        // refreshUserData() is called within cancelSubscription which is called by updateUserPlan for 'free'
+    } else if (!result.success) {
+      toast({ title: "Plan Change Failed", description: result.message || result.error, variant: "destructive" });
     }
     setIsLoadingPlanChange(null);
   };
 
-  const displayPlans: PricingPlan[] = plans.map(p => ({
+  const displayPlans: PricingPlan[] = plansData.map(p => ({
     ...p,
-    isCurrentPlan: user?.selectedPlanId === p.id,
-    actionLabel: user?.selectedPlanId === p.id ? "Current Plan" : (p.id === "free" && user?.selectedPlanId !== "free" ? "Downgrade to Free (Simulated)" : "Select Plan (Simulated)"),
+    isCurrentPlan: user?.selectedPlanId === p.id && user?.subscriptionStatus === 'active',
+    actionLabel: user?.selectedPlanId === p.id && user?.subscriptionStatus === 'active' 
+      ? "Current Plan" 
+      : (p.id === "free" && user?.selectedPlanId !== "free" ? "Downgrade to Free" : "Select Plan"),
   }));
+
+  if (!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) {
+     console.warn("Stripe Publishable Key is not set. Payment features will be affected.");
+  }
 
   return (
     <div className="space-y-8 py-12 md:py-16">
@@ -151,7 +184,7 @@ export default function PricingPage() {
                   size="lg"
                   className="w-full"
                   onClick={() => handleSelectPlan(plan.id)}
-                  disabled={plan.isCurrentPlan || isLoadingPlanChange === plan.id}
+                  disabled={isLoadingPlanChange === plan.id || (plan.isCurrentPlan ?? false) || (!stripePromise && plan.id !== 'free')}
                   variant={plan.isCurrentPlan ? "outline" : "default"}
                 >
                   {isLoadingPlanChange === plan.id ? (
@@ -160,11 +193,9 @@ export default function PricingPage() {
                     plan.actionLabel
                    )}
                 </Button>
-                {plan.id !== "free" && (
-                  <p className="text-xs text-center text-muted-foreground mt-3">
-                    This is a simulated upgrade. No real payment will be processed.
-                  </p>
-                )}
+                {plan.id !== "free" && !stripePromise &&
+                    <p className="text-xs text-destructive text-center mt-2">Stripe not configured for paid plans.</p>
+                }
               </div>
             </Card>
           ))}
@@ -173,9 +204,11 @@ export default function PricingPage() {
           <p className="text-muted-foreground">
             All prices are in USD. For custom enterprise solutions or questions, please contact us.
           </p>
-          <p className="text-xs text-muted-foreground mt-2">
-            Note: This pricing page and plan selection are for demonstration purposes. Actual billing integration requires a payment provider.
-          </p>
+           {process.env.NODE_ENV === 'development' && !process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY && (
+             <p className="text-destructive text-sm mt-2">
+               Warning: Stripe Publishable Key is missing. Payment features may not work correctly.
+             </p>
+           )}
         </div>
       </section>
     </div>
