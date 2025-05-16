@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Icons } from "@/components/icons";
 import { useAuth } from "@/contexts/auth-context";
+import { FirebaseError } from "firebase/app";
 
 const formSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters." }),
@@ -27,8 +28,7 @@ export function RegisterForm() {
   const { toast } = useToast();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
-
+  const { registerUser } = useAuth();
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -42,18 +42,39 @@ export function RegisterForm() {
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     setIsLoading(true);
-    // Simulate API call for registration
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    // Mock registration & login logic
-    login({ email: values.email, name: values.name }); // Mock user data
-    toast({
-      title: "Registration Successful",
-      description: "Your account has been created. Welcome!",
-    });
-    router.push("/dashboard"); // Redirect to dashboard after successful registration
-
-    setIsLoading(false);
+    try {
+      await registerUser(values.name, values.email, values.password);
+      toast({
+        title: "Registration Successful",
+        description: "Your account has been created. Welcome!",
+      });
+      router.push("/dashboard"); 
+    } catch (error) {
+      console.error("Registration error:", error);
+      let description = "An unexpected error occurred. Please try again.";
+      if (error instanceof FirebaseError) {
+        switch (error.code) {
+          case "auth/email-already-in-use":
+            description = "This email address is already in use.";
+            break;
+          case "auth/invalid-email":
+            description = "The email address is not valid.";
+            break;
+          case "auth/weak-password":
+            description = "The password is too weak.";
+            break;
+          default:
+            description = "Registration failed. Please try again.";
+        }
+      }
+      toast({
+        title: "Registration Failed",
+        description: description,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (

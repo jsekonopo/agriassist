@@ -8,7 +8,7 @@ import { Icons } from '@/components/icons';
 import { useAuth } from '@/contexts/auth-context';
 
 export default function LandingPage() {
-  const { isAuthenticated, logout, user } = useAuth();
+  const { isAuthenticated, logoutUser, user } = useAuth(); // Updated to logoutUser
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -19,23 +19,16 @@ export default function LandingPage() {
         </Link>
         <nav className="ml-auto flex gap-4 sm:gap-6 items-center">
           <Link
-            href="/dashboard#features" // Assuming features are on dashboard or a section there
+            href="/dashboard#features" 
             className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
             prefetch={false}
           >
             Features
           </Link>
-          {/* <Link
-            href="/pricing" // Placeholder for pricing page
-            className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
-            prefetch={false}
-          >
-            Pricing
-          </Link> */}
           {isAuthenticated ? (
             <>
               <span className="text-sm text-muted-foreground hidden sm:inline">Welcome, {user?.name || 'Farmer'}!</span>
-              <Button variant="outline" size="sm" onClick={logout}>
+              <Button variant="outline" size="sm" onClick={logoutUser}> {/* Updated to logoutUser */}
                 Logout
               </Button>
               <Button asChild size="sm">

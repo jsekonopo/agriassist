@@ -6,22 +6,20 @@ import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { useAuth } from '@/contexts/auth-context';
 import { useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation'; // Import useRouter
-import { Skeleton } from '@/components/ui/skeleton'; // For loading state
+import { useRouter, usePathname } from 'next/navigation'; 
+import { Skeleton } from '@/components/ui/skeleton'; 
 
 export default function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading, user, logout } = useAuth();
+  const { isAuthenticated, isLoading, user, logoutUser } = useAuth(); // Updated to logoutUser
   const router = useRouter();
   const pathname = usePathname();
 
-
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      // Redirect to login if not authenticated and not already on auth pages
       if (pathname !== '/login' && pathname !== '/register' && pathname !== '/') {
          router.push('/login');
       }
@@ -46,16 +44,17 @@ export default function AppLayout({
     );
   }
 
-  if (!isAuthenticated) {
-    // This case should ideally be handled by the useEffect redirect,
-    // but as a fallback or if the redirect hasn't happened yet.
-    // Or, you might return null if redirection is fully handled by useEffect.
-    // For now, let's show a minimal loading/redirecting message.
+  if (!isAuthenticated && !['/login', '/register', '/'].includes(pathname)) {
      return (
       <div className="flex min-h-screen items-center justify-center">
         <p>Redirecting to login...</p>
       </div>
     );
+  }
+
+  // If authenticated or on a public page, render layout or children
+  if (!isAuthenticated && (pathname === '/login' || pathname === '/register' || pathname === '/')) {
+     return <>{children}</>; // Render login/register/landing pages directly
   }
 
 
@@ -80,7 +79,7 @@ export default function AppLayout({
                 <span className="text-sm text-muted-foreground hidden sm:inline">
                     {user?.name || 'Farmer'}
                 </span>
-                <Button variant="ghost" size="sm" onClick={logout}>
+                <Button variant="ghost" size="sm" onClick={logoutUser}> {/* Updated to logoutUser */}
                     <Icons.LogOut className="mr-2 h-4 w-4" />
                     Logout
                 </Button>
