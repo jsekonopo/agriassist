@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { Icons } from "@/components/icons";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/contexts/auth-context"; // Import useAuth
 
 const formSchema = z.object({
   question: z.string().min(10, { message: "Question must be at least 10 characters." }).max(500, {message: "Question must be 500 characters or less."}),
@@ -20,6 +21,7 @@ export function AiAskForm() {
   const [result, setResult] = useState<AskAIFarmExpertOutput | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth(); // Get user from AuthContext
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -30,7 +32,11 @@ export function AiAskForm() {
     setIsLoading(true);
     setResult(null);
     try {
-      const output = await askAIFarmExpert({ question: values.question });
+      const inputForAI = {
+        question: values.question,
+        farmId: user?.farmId || undefined, // Pass farmId if available
+      };
+      const output = await askAIFarmExpert(inputForAI);
       setResult(output);
       toast({
         title: "AI Expert Responded",
@@ -104,6 +110,7 @@ export function AiAskForm() {
         <Card className="mt-6 shadow-md animate-in fade-in-50 duration-500">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Icons.CheckCircle2 className="h-5 w-5 text-green-500"/>AI Farm Expert&apos;s Answer</CardTitle>
+            {result.farmContextUsed && <CardDescription className="text-xs italic">{result.farmContextUsed}</CardDescription>}
           </CardHeader>
           <CardContent>
             <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{result.answer}</p>
