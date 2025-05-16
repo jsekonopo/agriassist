@@ -1,3 +1,4 @@
+
 import {
   Sprout,
   Leaf,
@@ -32,8 +33,11 @@ import {
   Droplets,
   Thermometer,
   Tractor,
-  Camera, // Added Camera icon
-  ScanSearch, // Potentially useful alternative
+  Camera,
+  ScanSearch,
+  ClipboardList, // Added ClipboardList
+  Recycle, // Added Recycle
+  FlaskConical, // Added FlaskConical
 } from 'lucide-react';
 
 export const Icons = {
@@ -70,8 +74,11 @@ export const Icons = {
   Water: Droplets,
   Temperature: Thermometer,
   Tractor,
-  Camera, // Export Camera
-  ScanSearch, // Export ScanSearch
+  Camera,
+  ScanSearch,
+  ClipboardList, // Export ClipboardList
+  Recycle, // Export Recycle
+  FlaskConical, // Export FlaskConical
 };
 
 export type IconName = keyof typeof Icons;

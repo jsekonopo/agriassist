@@ -8,14 +8,16 @@ import { PlantingLogForm } from "./forms/planting-log-form";
 import { HarvestingLogForm } from "./forms/harvesting-log-form";
 import { SoilDataForm } from "./forms/soil-data-form";
 import { WeatherDataForm } from "./forms/weather-data-form";
-import { FieldDefinitionForm } from "./forms/field-definition-form"; // Added
+import { FieldDefinitionForm } from "./forms/field-definition-form";
+import { TaskLogForm } from "./forms/task-log-form"; // Added TaskLogForm
 import { Icons } from "./icons"; 
 import type { LucideIcon } from "lucide-react";
 import { PlantingLogTable } from "./data-management/planting-log-table";
 import { HarvestingLogTable } from "./data-management/harvesting-log-table";
 import { SoilDataLogTable } from "./data-management/soil-data-log-table";
 import { WeatherDataLogTable } from "./data-management/weather-data-log-table";
-import { FieldDefinitionTable } from "./data-management/field-definition-table"; // Added
+import { FieldDefinitionTable } from "./data-management/field-definition-table";
+import { TaskLogTable } from "./data-management/task-log-table"; // Added TaskLogTable
 import { Separator } from "@/components/ui/separator";
 
 interface DataTab {
@@ -31,14 +33,14 @@ const dataTabs: DataTab[] = [
    {
     value: "fields",
     label: "Fields",
-    icon: Icons.Location, // Using MapPin via Icons.Location
+    icon: Icons.Location,
     description: "Define and manage your farm fields.",
     formComponent: FieldDefinitionForm,
     tableComponent: FieldDefinitionTable,
   },
   {
     value: "planting",
-    label: "Planting Logs",
+    label: "Planting", // Shortened label
     icon: Icons.Planting,
     description: "Record and view details about your planting activities.",
     formComponent: PlantingLogForm,
@@ -46,7 +48,7 @@ const dataTabs: DataTab[] = [
   },
   {
     value: "harvesting",
-    label: "Harvesting Logs",
+    label: "Harvesting", // Shortened label
     icon: Icons.Harvesting,
     description: "Keep track of your harvest yields and observations.",
     formComponent: HarvestingLogForm,
@@ -54,7 +56,7 @@ const dataTabs: DataTab[] = [
   },
   {
     value: "soil",
-    label: "Soil Data",
+    label: "Soil", // Shortened label
     icon: Icons.Soil,
     description: "Manage soil test results and treatments.",
     formComponent: SoilDataForm,
@@ -62,11 +64,19 @@ const dataTabs: DataTab[] = [
   },
   {
     value: "weather",
-    label: "Weather Logs",
+    label: "Weather", // Shortened label
     icon: Icons.Weather,
     description: "Log local weather conditions and observations.",
     formComponent: WeatherDataForm,
     tableComponent: WeatherDataLogTable,
+  },
+  {
+    value: "tasks",
+    label: "Tasks",
+    icon: Icons.ClipboardList, // Using ClipboardList icon
+    description: "Manage and track farm tasks and activities.",
+    formComponent: TaskLogForm,
+    tableComponent: TaskLogTable,
   },
 ];
 
@@ -78,8 +88,8 @@ export function DataManagementContent() {
   };
 
   return (
-    <Tabs defaultValue="fields" className="w-full"> {/* Default to fields tab */}
-      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5 mb-6"> {/* Adjusted for 5 tabs */}
+    <Tabs defaultValue="fields" className="w-full">
+      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-6 mb-6"> {/* Adjusted for 6 tabs */}
         {dataTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value} className="flex items-center gap-2 text-xs sm:text-sm">
             <tab.icon className="h-4 w-4" />
