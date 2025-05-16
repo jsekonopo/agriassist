@@ -8,13 +8,22 @@ import { useAuth } from '@/contexts/auth-context';
 import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation'; 
 import { Skeleton } from '@/components/ui/skeleton'; 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import Link from 'next/link';
 
 export default function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading, user, logoutUser } = useAuth(); // Updated to logoutUser
+  const { isAuthenticated, isLoading, user, logoutUser } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -36,7 +45,7 @@ export default function AppLayout({
             <Skeleton className="h-8 w-3/4 mx-auto" />
             <Skeleton className="h-6 w-1/2 mx-auto" />
             <div className="flex justify-center pt-4">
-                 <Icons.Search className="h-8 w-8 text-muted-foreground animate-spin" />
+                 <Icons.Search className="h-8 w-8 text-muted-foreground animate-spin" /> {/* Using Search as a generic loading spinner */}
             </div>
             <p className="text-center text-muted-foreground">Loading AgriAssist...</p>
         </div>
@@ -52,9 +61,8 @@ export default function AppLayout({
     );
   }
 
-  // If authenticated or on a public page, render layout or children
   if (!isAuthenticated && (pathname === '/login' || pathname === '/register' || pathname === '/')) {
-     return <>{children}</>; // Render login/register/landing pages directly
+     return <>{children}</>; 
   }
 
 
@@ -75,15 +83,42 @@ export default function AppLayout({
             <div className="flex-1">
               {/* Placeholder for breadcrumbs or page title if needed */}
             </div>
-            <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground hidden sm:inline">
-                    {user?.name || 'Farmer'}
-                </span>
-                <Button variant="ghost" size="sm" onClick={logoutUser}> {/* Updated to logoutUser */}
-                    <Icons.LogOut className="mr-2 h-4 w-4" />
-                    Logout
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="relative h-8 w-auto px-2 sm:px-3">
+                  <div className="flex items-center gap-2">
+                    <Icons.UserCircle className="h-5 w-5 sm:h-6 sm:w-6" />
+                    <span className="hidden sm:inline text-sm text-muted-foreground">
+                      {user?.name || user?.email || 'Farmer'}
+                    </span>
+                    <Icons.ChevronDown className="h-4 w-4 opacity-50 hidden sm:inline" />
+                  </div>
                 </Button>
-            </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56" align="end" forceMount>
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium leading-none">
+                      {user?.name || 'AgriAssist User'}
+                    </p>
+                    <p className="text-xs leading-none text-muted-foreground">
+                      {user?.email}
+                    </p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/profile">
+                    <Icons.User className="mr-2 h-4 w-4" />
+                    <span>Profile</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={logoutUser}>
+                  <Icons.LogOut className="mr-2 h-4 w-4" />
+                  <span>Log out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </header>
           <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto">
             {children}

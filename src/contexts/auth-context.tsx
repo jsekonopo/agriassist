@@ -19,6 +19,7 @@ interface User { // This can be your app-specific user type
   uid: string;
   email: string | null;
   name: string | null;
+  farmName?: string | null; // Added farmName
   // Add other user properties as needed from Firestore
 }
 
@@ -28,7 +29,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   loginUser: (email: string, password: string) => Promise<FirebaseUserCredential>;
-  registerUser: (name: string, email: string, password: string) => Promise<FirebaseUserCredential>;
+  registerUser: (name: string, farmName: string, email: string, password: string) => Promise<FirebaseUserCredential>;
   logoutUser: () => Promise<void>;
 }
 
@@ -50,7 +51,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       setFirebaseUser(fbUser);
       if (fbUser) {
-        // Fetch additional user data from Firestore if needed
         const userDocRef = doc(db, "users", fbUser.uid);
         const userDocSnap = await getDoc(userDocRef);
         if (userDocSnap.exists()) {
@@ -58,12 +58,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setUser({
             uid: fbUser.uid,
             email: fbUser.email,
-            name: appUser.name || fbUser.displayName, // Prioritize Firestore name
-            ...appUser // spread other potential fields from Firestore doc
+            name: appUser.name || fbUser.displayName,
+            farmName: appUser.farmName, // Retrieve farmName
+            ...appUser 
           });
         } else {
-          // If no doc, use basic info from Firebase Auth (e.g., during registration)
-           setUser({ uid: fbUser.uid, email: fbUser.email, name: fbUser.displayName });
+           setUser({ uid: fbUser.uid, email: fbUser.email, name: fbUser.displayName, farmName: null });
         }
       } else {
         setUser(null);
@@ -78,30 +78,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return signInWithEmailAndPassword(auth, email, password);
   };
 
-  const registerUser = async (name: string, email: string, password: string): Promise<FirebaseUserCredential> => {
+  const registerUser = async (name: string, farmName: string, email: string, password: string): Promise<FirebaseUserCredential> => {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const fbUser = userCredential.user;
-    // Update Firebase Auth profile
     await updateProfile(fbUser, { displayName: name });
-    // Create a user document in Firestore
+    
     const userDocRef = doc(db, "users", fbUser.uid);
     await setDoc(userDocRef, {
       uid: fbUser.uid,
       email: fbUser.email,
       name: name,
-      createdAt: new Date().toISOString(), // Optional: timestamp
+      farmName: farmName, // Save farmName
+      createdAt: new Date().toISOString(),
     });
-    // Refresh user state with new info
-     setUser({ uid: fbUser.uid, email: fbUser.email, name: name });
+    
+    setUser({ uid: fbUser.uid, email: fbUser.email, name: name, farmName: farmName });
     return userCredential;
   };
 
   const logoutUser = async () => {
     await firebaseSignOut(auth);
-    router.push('/login');
+    router.push('/login'); // Redirect to login after logout
   };
 
-  const isAuthenticated = !!user && !!firebaseUser; // Ensure both user objects are present
+  const isAuthenticated = !!user && !!firebaseUser; 
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !['/login', '/register', '/'].includes(pathname)) {

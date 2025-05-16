@@ -16,6 +16,7 @@ import { FirebaseError } from "firebase/app";
 
 const formSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters." }),
+  farmName: z.string().min(2, { message: "Farm name must be at least 2 characters." }),
   email: z.string().email({ message: "Please enter a valid email address." }),
   password: z.string().min(6, { message: "Password must be at least 6 characters." }),
   confirmPassword: z.string(),
@@ -34,6 +35,7 @@ export function RegisterForm() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: "",
+      farmName: "",
       email: "",
       password: "",
       confirmPassword: "",
@@ -43,7 +45,7 @@ export function RegisterForm() {
   async function onSubmit(values: z.infer<typeof formSchema>) {
     setIsLoading(true);
     try {
-      await registerUser(values.name, values.email, values.password);
+      await registerUser(values.name, values.farmName, values.email, values.password);
       toast({
         title: "Registration Successful",
         description: "Your account has been created. Welcome!",
@@ -88,6 +90,19 @@ export function RegisterForm() {
               <FormLabel>Full Name</FormLabel>
               <FormControl>
                 <Input placeholder="John Doe" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="farmName"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Farm Name</FormLabel>
+              <FormControl>
+                <Input placeholder="Sunny Acres Farm" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>

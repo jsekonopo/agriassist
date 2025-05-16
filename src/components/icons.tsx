@@ -38,7 +38,8 @@ import {
   ClipboardList,
   Recycle,
   FlaskConical,
-  FileText, // Added FileText
+  FileText, 
+  UserCircle, // Added UserCircle
 } from 'lucide-react';
 
 export const Icons = {
@@ -80,7 +81,8 @@ export const Icons = {
   ClipboardList,
   Recycle,
   FlaskConical,
-  Reporting: FileText, // Export FileText as Reporting
+  Reporting: FileText,
+  UserCircle, // Export UserCircle
 };
 
 export type IconName = keyof typeof Icons;
