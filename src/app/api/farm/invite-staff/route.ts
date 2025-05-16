@@ -4,7 +4,8 @@ import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { Resend } from 'resend';
 import StaffInvitationEmail from '@/emails/staff-invitation-email';
-import crypto from 'crypto'; // For token generation
+import crypto from 'crypto';
+import type { UserRole } from '@/contexts/auth-context'; // Import UserRole
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
@@ -12,15 +13,20 @@ const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { invitedEmail } = body;
+    const { invitedEmail, role } = body; // Expect role from client
     const idToken = request.headers.get('Authorization')?.split('Bearer ')[1];
 
     if (!idToken) {
       return NextResponse.json({ success: false, message: 'Unauthorized: No token provided' }, { status: 401 });
     }
-    if (!invitedEmail) {
-      return NextResponse.json({ success: false, message: 'Missing required field: invitedEmail' }, { status: 400 });
+    if (!invitedEmail || !role) { // Check for role
+      return NextResponse.json({ success: false, message: 'Missing required fields: invitedEmail and role' }, { status: 400 });
     }
+    const validRoles: UserRole[] = ['admin', 'editor', 'viewer'];
+    if (!validRoles.includes(role)) {
+      return NextResponse.json({ success: false, message: 'Invalid role provided.' }, { status: 400 });
+    }
+
 
     let decodedToken;
     try {
@@ -68,8 +74,13 @@ export async function POST(request: NextRequest) {
       const invitedUserDocSnap = await invitedUserDocRef.get();
       if (invitedUserDocSnap.exists()) {
         const invitedUserData = invitedUserDocSnap.data();
-        if (invitedUserData?.farmId === inviterFarmId) {
-          return NextResponse.json({ success: false, message: `${invitedEmail} is already a member of this farm.` }, { status: 400 });
+        // Check if user is part of the farm's staff array
+        const farmStaff = (farmData?.staff || []) as {uid: string, role: string}[];
+        if (farmStaff.some(staff => staff.uid === invitedUserRecord.uid)) {
+           return NextResponse.json({ success: false, message: `${invitedEmail} is already a member of this farm.` }, { status: 400 });
+        }
+        if (invitedUserData?.isFarmOwner && invitedUserData?.farmId !== inviterFarmId) {
+          return NextResponse.json({ success: false, message: `${invitedEmail} is an owner of another farm. They cannot be invited as staff.` }, { status: 400 });
         }
       }
     } catch (error: any) {
@@ -77,7 +88,6 @@ export async function POST(request: NextRequest) {
         console.error('Error fetching user by email:', error);
         return NextResponse.json({ success: false, message: 'Error finding user to invite.' }, { status: 500 });
       }
-      // User doesn't exist, invitedUserUidFromAuth remains null
     }
     
     const pendingInvitesQuery = adminDb.collection('pendingInvitations')
@@ -91,7 +101,7 @@ export async function POST(request: NextRequest) {
     }
 
     const invitationToken = crypto.randomBytes(32).toString('hex');
-    const tokenExpiresAt = Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000); // Token expires in 7 days
+    const tokenExpiresAt = Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000); 
 
     const pendingInvitationRef = adminDb.collection('pendingInvitations').doc();
     await pendingInvitationRef.set({
@@ -100,7 +110,8 @@ export async function POST(request: NextRequest) {
       inviterName: inviterName,
       farmName: farmData?.farmName || 'Unnamed Farm',
       invitedEmail: invitedEmail.toLowerCase(),
-      invitedUserUid: invitedUserUidFromAuth, // Store UID if user exists at time of invite
+      invitedUserUid: invitedUserUidFromAuth,
+      invitedRole: role, // Store the role for the invitation
       status: 'pending',
       invitationToken: invitationToken,
       tokenExpiresAt: tokenExpiresAt,
@@ -114,20 +125,21 @@ export async function POST(request: NextRequest) {
         await resend.emails.send({
           from: process.env.RESEND_FROM_EMAIL,
           to: [invitedEmail],
-          subject: `You're invited to join ${farmData?.farmName || 'a farm'} on AgriAssist!`,
+          subject: `You're invited to join ${farmData?.farmName || 'a farm'} on AgriAssist as a ${role}!`,
           react: StaffInvitationEmail({ 
             invitedUserEmail: invitedEmail,
             inviterName: inviterName,
             farmName: farmData?.farmName || 'Unnamed Farm',
             appName: 'AgriAssist',
-            invitationLink: invitationLink 
+            invitationLink: invitationLink,
+            role: role // Pass role to email template
           }) as React.ReactElement,
         });
       } catch (emailError) {
         console.error('Resend API Error (invitation email):', emailError);
         return NextResponse.json({ 
             success: true, 
-            message: `Invitation request for ${invitedEmail} has been logged. However, there was an issue sending the invitation email.`,
+            message: `Invitation request for ${invitedEmail} (as ${role}) has been logged. However, there was an issue sending the invitation email.`,
             invitationId: pendingInvitationRef.id
         });
       }
@@ -137,7 +149,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ 
         success: true, 
-        message: `Invitation request for ${invitedEmail} to farm ${farmData?.farmName || inviterFarmId} has been logged and an email sent.`,
+        message: `Invitation request for ${invitedEmail} (as ${role}) to farm ${farmData?.farmName || inviterFarmId} has been logged and an email sent.`,
         invitationId: pendingInvitationRef.id
     });
 

@@ -14,6 +14,7 @@ import {
   Link,
 } from '@react-email/components';
 import * as React from 'react';
+import type { UserRole } from '@/contexts/auth-context'; // Import UserRole
 
 interface StaffInvitationEmailProps {
   invitedUserEmail?: string;
@@ -21,6 +22,7 @@ interface StaffInvitationEmailProps {
   farmName?: string;
   appName?: string;
   invitationLink?: string; 
+  role?: UserRole; // Add role
 }
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
@@ -31,8 +33,9 @@ export const StaffInvitationEmail = ({
   farmName = 'a farm',
   appName = 'AgriAssist',
   invitationLink = `${baseUrl}/profile`, 
+  role = 'member' // Default role text if not provided
 }: StaffInvitationEmailProps) => {
-  const previewText = `You've been invited to join ${farmName} on ${appName}!`;
+  const previewText = `You've been invited to join ${farmName} on ${appName} as a ${role}!`;
 
   return (
     <Html>
@@ -71,7 +74,7 @@ export const StaffInvitationEmail = ({
               Hello {invitedUserEmail ? invitedUserEmail.split('@')[0] : 'there'},
             </Text>
             <Text className="text-black text-[14px] leading-[24px]">
-              {inviterName} has invited you to join their farm, **{farmName}**, on {appName}.
+              {inviterName} has invited you to join their farm, **{farmName}**, on {appName} with the role of **{role}**.
             </Text>
             <Text className="text-black text-[14px] leading-[24px]">
               {appName} helps farmers manage their operations, track resources, and gain valuable insights. By accepting this invitation, you&apos;ll be able to collaborate with {inviterName} on {farmName}.
@@ -79,7 +82,7 @@ export const StaffInvitationEmail = ({
             <Section className="text-center mt-[32px] mb-[32px]">
               <Button
                 className="bg-primary rounded text-white text-[12px] font-semibold no-underline text-center px-5 py-3"
-                href={invitationLink} // Use the dynamic invitationLink
+                href={invitationLink}
               >
                 Accept Invitation
               </Button>

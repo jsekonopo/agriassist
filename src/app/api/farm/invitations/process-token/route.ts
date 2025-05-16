@@ -2,6 +2,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import type { UserRole, StaffMemberInFarmDoc } from '@/contexts/auth-context'; // Import UserRole
 
 export async function POST(request: NextRequest) {
   try {
@@ -41,23 +42,16 @@ export async function POST(request: NextRequest) {
     const invitationData = invitationDoc.data();
     const invitationId = invitationDoc.id;
 
-    // Check token expiry
     if (invitationData.tokenExpiresAt && invitationData.tokenExpiresAt.toMillis() < Timestamp.now().toMillis()) {
       await invitationDoc.ref.update({ status: 'expired', updatedAt: FieldValue.serverTimestamp() });
       return NextResponse.json({ success: false, message: 'Invitation has expired.' }, { status: 400 });
     }
 
-    // Verify if the invitation is for the authenticated user
-    // Check if invitedUserUid was set OR if invitedEmail matches
-    if (invitationData.invitedUserUid && invitationData.invitedUserUid !== acceptingUserUid) {
-         return NextResponse.json({ success: false, message: 'This invitation is intended for a different user account.' }, { status: 403 });
-    }
-    if (!invitationData.invitedUserUid && invitationData.invitedEmail.toLowerCase() !== acceptingUserEmail?.toLowerCase()){
-        return NextResponse.json({ success: false, message: 'This invitation is intended for a different email address.' }, { status: 403 });
+    if ( (invitationData.invitedUserUid && invitationData.invitedUserUid !== acceptingUserUid) ||
+         (!invitationData.invitedUserUid && invitationData.invitedEmail.toLowerCase() !== acceptingUserEmail?.toLowerCase()) ){
+        return NextResponse.json({ success: false, message: 'This invitation is intended for a different user.' }, { status: 403 });
     }
 
-
-    // Proceed with acceptance logic (similar to accept/route.ts)
     const batch = adminDb.batch();
     const userRef = adminDb.collection('users').doc(acceptingUserUid);
     const farmRef = adminDb.collection('farms').doc(invitationData.inviterFarmId);
@@ -68,50 +62,48 @@ export async function POST(request: NextRequest) {
       await batch.commit();
       return NextResponse.json({ success: false, message: 'Farm associated with this invitation no longer exists.' }, { status: 404 });
     }
+    const farmData = farmSnap.data();
     
     const acceptingUserDocSnap = await userRef.get();
     if (acceptingUserDocSnap.exists()) {
         const acceptingUserData = acceptingUserDocSnap.data();
         if (acceptingUserData?.farmId === invitationData.inviterFarmId) {
-            // User is already part of this farm (maybe owner or already staff)
-            // Mark invitation as accepted if it wasn't for some reason
             batch.update(invitationDoc.ref, { status: 'accepted', acceptedAt: FieldValue.serverTimestamp(), acceptedByUid: acceptingUserUid });
             await batch.commit();
             return NextResponse.json({ success: true, message: `You are already a member of ${invitationData.farmName}.` });
         }
         if (acceptingUserData?.isFarmOwner && acceptingUserData?.farmId !== invitationData.inviterFarmId) {
-             // User is an owner of another farm. Prevent joining as staff.
             return NextResponse.json({ success: false, message: 'You are currently an owner of another farm. You cannot join a different farm as staff without addressing your current farm ownership.' }, { status: 400 });
         }
     }
 
+    const invitedRole = invitationData.invitedRole as UserRole || 'viewer'; // Default to 'viewer' if not set
 
-    // Update invitation status
     batch.update(invitationDoc.ref, { 
         status: 'accepted', 
         acceptedAt: FieldValue.serverTimestamp(),
         acceptedByUid: acceptingUserUid,
-        // If invitedUserUid was null, set it now that the user has authenticated
         ...(invitationData.invitedUserUid === null && { invitedUserUid: acceptingUserUid })
     });
 
-    // Update user's document
     batch.update(userRef, {
       farmId: invitationData.inviterFarmId,
-      farmName: invitationData.farmName, // Store farmName on user for easier access if needed
+      farmName: invitationData.farmName,
       isFarmOwner: false,
+      roleOnCurrentFarm: invitedRole, // Set the user's role on this farm
       updatedAt: FieldValue.serverTimestamp()
     });
 
-    // Add user to farm's staffMembers array
+    // Add user to farm's staff array as an object { uid, role }
+    const newStaffMember: StaffMemberInFarmDoc = { uid: acceptingUserUid, role: invitedRole };
     batch.update(farmRef, {
-      staffMembers: FieldValue.arrayUnion(acceptingUserUid),
+      staff: FieldValue.arrayUnion(newStaffMember),
       updatedAt: FieldValue.serverTimestamp()
     });
     
     await batch.commit();
 
-    return NextResponse.json({ success: true, message: `Invitation to join farm "${invitationData.farmName}" accepted successfully!` });
+    return NextResponse.json({ success: true, message: `Invitation to join farm "${invitationData.farmName}" as a ${invitedRole} accepted successfully!` });
 
   } catch (error) {
     console.error('Error in /api/farm/invitations/process-token:', error);
