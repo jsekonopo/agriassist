@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview AI flow to interpret soil health test results.
@@ -9,8 +10,12 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
+import { adminDb } from '@/lib/firebase-admin';
+import { doc, getDoc } from 'firebase/firestore';
 
 const InterpretSoilHealthInputSchema = z.object({
+  farmId: z.string().describe("The ID of the farm to which this soil data belongs."),
+  fieldId: z.string().optional().describe("The ID of the specific field if applicable. This helps in providing context."),
   phLevel: z.number().describe('Soil pH level (e.g., 6.5).'),
   organicMatterPercent: z.number().describe('Soil organic matter percentage (e.g., 3.5).'),
   nitrogenPPM: z.number().describe('Soil Nitrogen level in PPM (e.g., 120).'),
@@ -22,6 +27,7 @@ const InterpretSoilHealthInputSchema = z.object({
 export type InterpretSoilHealthInput = z.infer<typeof InterpretSoilHealthInputSchema>;
 
 const InterpretSoilHealthOutputSchema = z.object({
+  fieldName: z.string().optional().describe("The name of the field if one was specified in the input."),
   overallAssessment: z.string().describe('A general summary of the soil health based on the provided values.'),
   phInterpretation: z.string().describe('Interpretation of the pH level and its implications for nutrient availability. Suggests if adjustment is needed.'),
   organicMatterInterpretation: z.string().describe('Interpretation of the organic matter percentage and its importance. Suggests ways to improve if low.'),
@@ -36,10 +42,10 @@ export async function interpretSoilHealth(input: InterpretSoilHealthInput): Prom
 
 const prompt = ai.definePrompt({
   name: 'interpretSoilHealthPrompt',
-  input: {schema: InterpretSoilHealthInputSchema},
-  output: {schema: InterpretSoilHealthOutputSchema},
+  input: {schema: InterpretSoilHealthInputSchema.extend({ fieldName: z.string().optional() })},
+  output: {schema: InterpretSoilHealthOutputSchema.omit({fieldName: true})}, // fieldName is for context, not AI output directly from this prompt
   prompt: `You are an expert soil scientist and agronomist.
-A farmer has provided the following soil test results:
+A farmer has provided the following soil test results{{#if fieldName}} for their field named "{{fieldName}}"{{/if}}:
 
 - pH Level: {{{phLevel}}}
 - Organic Matter: {{{organicMatterPercent}}}%
@@ -66,8 +72,34 @@ const interpretSoilHealthFlow = ai.defineFlow(
     inputSchema: InterpretSoilHealthInputSchema,
     outputSchema: InterpretSoilHealthOutputSchema,
   },
-  async input => {
-    const {output} = await prompt(input);
-    return output!;
+  async (input) => {
+    let fieldName: string | undefined = undefined;
+    if (input.fieldId && input.farmId) {
+      try {
+        const fieldDocRef = doc(adminDb, "farms", input.farmId, "fields", input.fieldId); // Assuming fields is a subcollection of farms
+        // If fields is a top-level collection: const fieldDocRef = doc(adminDb, "fields", input.fieldId);
+        // And add a check: if (fieldDocSnap.data()?.farmId !== input.farmId) throw new Error("Field does not belong to the specified farm.");
+        const fieldDocSnap = await getDoc(fieldDocRef);
+        if (fieldDocSnap.exists()) {
+          fieldName = fieldDocSnap.data()?.fieldName;
+        }
+      } catch (error) {
+        console.error("Error fetching field name for soil interpretation:", error);
+        // Proceed without fieldName if it fails
+      }
+    }
+    
+    const promptInput = {
+        ...input,
+        fieldName: fieldName,
+    };
+
+    const {output} = await prompt(promptInput);
+    
+    // Add fieldName to the final output if it was determined
+    return {
+        ...output!,
+        fieldName: fieldName,
+    };
   }
 );

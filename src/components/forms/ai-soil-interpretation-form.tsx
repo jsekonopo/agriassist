@@ -1,25 +1,35 @@
+
 "use client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { interpretSoilHealth, type InterpretSoilHealthOutput } from "@/ai/flows/interpret-soil-health";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Icons } from "@/components/icons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, query, where, getDocs, orderBy } from "firebase/firestore";
+
+interface FieldOption {
+  id: string;
+  fieldName: string;
+}
 
 const numberPositive = (name: string) => z.preprocess(
-    (val) => Number(val), 
-    z.number({required_error: `${name} is required.`, invalid_type_error: `${name} must be a number.`}).positive(`${name} must be positive.`)
+    (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)), 
+    z.number({required_error: `${name} is required.`, invalid_type_error: `${name} must be a number.`}).gte(0, `${name} must be non-negative.`) // Allow 0 for some soil metrics
 );
 
 const formSchema = z.object({
+  fieldId: z.string().optional(),
   phLevel: numberPositive("pH Level"),
   organicMatterPercent: numberPositive("Organic Matter %"),
   nitrogenPPM: numberPositive("Nitrogen PPM"),
@@ -33,20 +43,56 @@ export function AiSoilInterpretationForm() {
   const [result, setResult] = useState<InterpretSoilHealthOutput | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const [farmFields, setFarmFields] = useState<FieldOption[]>([]);
+  const [isLoadingFields, setIsLoadingFields] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: { 
         cropType: "",
-        soilTexture: ""
+        soilTexture: "",
+        fieldId: undefined,
     },
   });
 
+  useEffect(() => {
+    if (user?.farmId) {
+      setIsLoadingFields(true);
+      const fieldsQuery = query(
+        collection(db, "fields"),
+        where("farmId", "==", user.farmId),
+        orderBy("fieldName", "asc")
+      );
+      getDocs(fieldsQuery)
+        .then((snapshot) => {
+          const fields = snapshot.docs.map(doc => ({ id: doc.id, fieldName: doc.data().fieldName } as FieldOption));
+          setFarmFields(fields);
+        })
+        .catch(error => {
+          console.error("Error fetching farm fields:", error);
+          toast({ title: "Error", description: "Could not load farm fields.", variant: "destructive" });
+        })
+        .finally(() => setIsLoadingFields(false));
+    } else {
+      setFarmFields([]);
+    }
+  }, [user?.farmId, toast]);
+
+
   async function onSubmit(values: z.infer<typeof formSchema>) {
+    if (!user || !user.farmId) {
+      toast({ title: "Error", description: "You must be associated with a farm.", variant: "destructive" });
+      return;
+    }
     setIsLoading(true);
     setResult(null);
     try {
-      const output = await interpretSoilHealth(values);
+      const inputForAI = {
+        ...values,
+        farmId: user.farmId,
+      };
+      const output = await interpretSoilHealth(inputForAI);
       setResult(output);
       toast({
         title: "Soil Health Interpretation Complete",
@@ -68,6 +114,32 @@ export function AiSoilInterpretationForm() {
     <div className="space-y-6">
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <FormField
+            control={form.control}
+            name="fieldId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-base">Select Field (Optional)</FormLabel>
+                <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isLoadingFields || farmFields.length === 0}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (farmFields.length === 0 ? "No fields defined" : "Select a field for context")} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {farmFields.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.fieldName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormDescription>Selecting a field can provide more context to the AI.</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <FormField
               control={form.control}
@@ -163,7 +235,7 @@ export function AiSoilInterpretationForm() {
                 )}
               />
           </div>
-          <Button type="submit" disabled={isLoading} size="lg">
+          <Button type="submit" disabled={isLoading || !user?.farmId} size="lg">
             {isLoading ? (
               <>
                 <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
@@ -176,6 +248,9 @@ export function AiSoilInterpretationForm() {
               </>
             )}
           </Button>
+           {!user?.farmId && (
+            <p className="text-sm text-destructive">You need to be associated with a farm to use this feature.</p>
+          )}
         </form>
       </Form>
 
@@ -198,7 +273,7 @@ export function AiSoilInterpretationForm() {
       {result && (
         <Card className="mt-6 shadow-md animate-in fade-in-50 duration-500">
           <CardHeader>
-             <CardTitle className="flex items-center gap-2"><Icons.CheckCircle2 className="h-5 w-5 text-green-500"/>Soil Health Interpretation</CardTitle>
+             <CardTitle className="flex items-center gap-2"><Icons.CheckCircle2 className="h-5 w-5 text-green-500"/>Soil Health Interpretation {result.fieldName ? `for ${result.fieldName}` : ''}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
