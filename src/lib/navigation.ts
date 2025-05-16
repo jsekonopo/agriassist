@@ -38,7 +38,7 @@ export const mainNavItems: NavItem[] = [
     icon: Icons.Reporting, 
   },
   {
-    title: 'Pricing', // New Pricing Nav Item
+    title: 'Pricing', 
     href: '/pricing',
     icon: Icons.Dollar, 
   },
@@ -48,5 +48,6 @@ export const settingsNavItem: NavItem = {
   title: 'Settings',
   href: '/settings', 
   icon: Settings,
-  disabled: true, 
+  disabled: false, // Enabled the settings link
 };
+
