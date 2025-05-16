@@ -15,50 +15,9 @@ import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { Icons } from "../icons";
-
-interface WeatherLogData {
-  id: string;
-  date: string; // Stored as YYYY-MM-DD string
-  location: string;
-  temperatureHigh?: number;
-  temperatureLow?: number;
-  precipitation?: number;
-  precipitationUnit?: string;
-  windSpeed?: number;
-  windSpeedUnit?: string;
-  conditions?: string;
-  notes?: string;
-  submittedAt: string; // ISO string
-}
-
-const mockWeatherLogService = {
-  save: async (logData: Omit<WeatherLogData, 'id' | 'submittedAt' | 'date'> & {date: Date}): Promise<WeatherLogData> => {
-    console.log("Mock service: Attempting to save weather log:", logData);
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        try {
-          const existingLogsString = localStorage.getItem('weatherLogs');
-          const existingLogs: WeatherLogData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
-          
-          const newLog: WeatherLogData = { 
-            ...logData, 
-            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
-            submittedAt: new Date().toISOString(),
-            date: format(logData.date, "yyyy-MM-dd"),
-          };
-          existingLogs.push(newLog);
-          localStorage.setItem('weatherLogs', JSON.stringify(existingLogs));
-          console.log("Mock service: Weather log saved to localStorage:", newLog);
-          resolve(newLog);
-        } catch (error) {
-          console.error("Mock service: Error saving weather log to localStorage:", error);
-          reject(error);
-        }
-      }, 500);
-    });
-  }
-};
-
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const weatherDataSchema = z.object({
   date: z.date({ required_error: "Date is required." }),
@@ -92,6 +51,8 @@ interface WeatherDataFormProps {
 export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { user } = useAuth();
+
   const form = useForm<z.infer<typeof weatherDataSchema>>({
     resolver: zodResolver(weatherDataSchema),
     defaultValues: {
@@ -108,12 +69,27 @@ export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
   });
 
   async function onSubmit(values: z.infer<typeof weatherDataSchema>) {
+    if (!user) {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to save a weather log.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      await mockWeatherLogService.save(values);
+      const logData = {
+        ...values,
+        userId: user.uid,
+        date: format(values.date, "yyyy-MM-dd"), // Format date before saving
+        submittedAt: new Date().toISOString(), // Keep for potential consistency, though createdAt is primary
+        createdAt: serverTimestamp(),
+      };
+      await addDoc(collection(db, "weatherLogs"), logData);
       toast({
         title: "Weather Log Saved",
-        description: `Weather for ${format(values.date, "PPP")} at ${values.location} saved.`,
+        description: `Weather for ${format(values.date, "PPP")} at ${values.location} saved to Firestore.`,
       });
       form.reset({
         date: undefined,
@@ -131,10 +107,10 @@ export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
         onLogSaved();
       }
     } catch (error) {
-       console.error("Error saving weather log:", error);
+       console.error("Error saving weather log to Firestore:", error);
       toast({
         title: "Error Saving Log",
-        description: "Could not save the weather log.",
+        description: "Could not save the weather log to Firestore.",
         variant: "destructive",
       });
     } finally {
@@ -313,16 +289,17 @@ export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" disabled={isSubmitting || !user}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> {/* Using User as placeholder */}
               Saving...
             </>
           ) : (
             "Save Weather Log"
           )}
         </Button>
+        {!user && <p className="text-sm text-destructive">Please log in to save weather logs.</p>}
       </form>
     </Form>
   );
