@@ -1,3 +1,4 @@
+
 "use client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -133,7 +134,7 @@ export function AiSoilInterpretationForm() {
                     ))}
                   </SelectContent>
                 </Select>
-                <FormDescription>Selecting a field allows the AI to consider its historical soil data.</FormDescription>
+                <FormDescription>Selecting a field allows the AI to consider its historical soil data and trends.</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -257,7 +258,7 @@ export function AiSoilInterpretationForm() {
          <Card className="mt-6 shadow-md">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Icons.BrainCircuit className="h-5 w-5 text-primary"/> AI Analyzing Soil Data...</CardTitle>
-            <CardDescription>Please wait while we interpret your soil test results.</CardDescription>
+            <CardDescription>Please wait while we interpret your soil test results and historical trends.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Skeleton className="h-4 w-full" />
