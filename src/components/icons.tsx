@@ -41,7 +41,8 @@ import {
   FileText, 
   UserCircle,
   Archive, 
-  Package, // Added for Inputs Inventory
+  Package,
+  CreditCard, // Added for Expenses
 } from 'lucide-react';
 
 export const Icons = {
@@ -86,7 +87,9 @@ export const Icons = {
   Reporting: FileText,
   UserCircle,
   FertilizerLog: Archive,
-  InputsInventory: Package, // Added new icon mapping
+  InputsInventory: Package,
+  Expenses: CreditCard, // Added new icon mapping
 };
 
 export type IconName = keyof typeof Icons;
+
