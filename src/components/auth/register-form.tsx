@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation"; // Import useSearchParams
 import { useState } from "react";
 import { Icons } from "@/components/icons";
 import { useAuth } from "@/contexts/auth-context";
@@ -28,6 +28,7 @@ const formSchema = z.object({
 export function RegisterForm() {
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams(); // Get search params
   const [isLoading, setIsLoading] = useState(false);
   const { registerUser } = useAuth();
 
@@ -45,12 +46,25 @@ export function RegisterForm() {
   async function onSubmit(values: z.infer<typeof formSchema>) {
     setIsLoading(true);
     try {
-      await registerUser(values.name, values.farmName, values.email, values.password);
-      toast({
-        title: "Registration Successful",
-        description: "Your account has been created. Welcome!",
-      });
-      router.push("/dashboard"); 
+      // registerUser in AuthContext now handles the redirect if an invite is found
+      const potentialRedirect = await registerUser(values.name, values.farmName, values.email, values.password);
+
+      if (potentialRedirect && potentialRedirect.startsWith('/accept-invitation')) {
+        // The redirect to accept-invitation is handled by registerUser itself
+        // No further action needed here for that specific case.
+      } else {
+        toast({
+          title: "Registration Successful",
+          description: "Your account has been created. Welcome!",
+        });
+        const redirectUrl = searchParams.get("redirect");
+        // If registerUser didn't redirect to accept-invitation, and there's another redirect param
+        if (redirectUrl && redirectUrl.startsWith('/') && !redirectUrl.startsWith('/accept-invitation')) {
+          router.push(redirectUrl);
+        } else if (!potentialRedirect) { // Only redirect to dashboard if no other redirect happened
+          router.push("/dashboard"); 
+        }
+      }
     } catch (error) {
       console.error("Registration error:", error);
       let description = "An unexpected error occurred. Please try again.";

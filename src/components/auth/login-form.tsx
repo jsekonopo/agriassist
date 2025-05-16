@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation"; // Import useSearchParams
 import { useState } from "react";
 import { Icons } from "@/components/icons";
 import { useAuth } from "@/contexts/auth-context";
@@ -22,6 +22,7 @@ const formSchema = z.object({
 export function LoginForm() {
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams(); // Get search params
   const [isLoading, setIsLoading] = useState(false);
   const { loginUser } = useAuth();
 
@@ -41,7 +42,12 @@ export function LoginForm() {
         title: "Login Successful",
         description: "Welcome back!",
       });
-      router.push("/dashboard");
+      const redirectUrl = searchParams.get("redirect");
+      if (redirectUrl && redirectUrl.startsWith('/')) { // Basic validation for internal redirect
+        router.push(redirectUrl);
+      } else {
+        router.push("/dashboard");
+      }
     } catch (error) {
       console.error("Login error:", error);
       let description = "An unexpected error occurred. Please try again.";

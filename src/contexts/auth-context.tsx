@@ -60,7 +60,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   loginUser: (email: string, password: string) => Promise<void>;
-  registerUser: (name: string, farmNameFromInput: string, email: string, password: string) => Promise<void>;
+  registerUser: (name: string, farmNameFromInput: string, email: string, password: string) => Promise<string | void>; // Can return redirect path
   logoutUser: () => Promise<void>;
   updateUserProfile: (nameUpdate: string, newFarmName: string) => Promise<void>;
   changeUserPassword: (currentPassword: string, newPassword: string) => Promise<void>;
@@ -85,28 +85,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
-
-  // Apply theme effect
-  useEffect(() => {
-    if (user && user.settings && user.settings.theme) {
-      const currentTheme = user.settings.theme;
-      const root = window.document.documentElement;
-      root.classList.remove("light", "dark");
-
-      if (currentTheme === "system") {
-        const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        root.classList.add(systemTheme);
-      } else {
-        root.classList.add(currentTheme);
-      }
-    } else { // Default to system if no preference stored or user not loaded
-        const root = window.document.documentElement;
-        root.classList.remove("light", "dark");
-        const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        root.classList.add(systemTheme);
-    }
-  }, [user?.settings?.theme]);
-
 
   const makeApiRequest = useCallback(async (endpoint: string, body: any, method: 'POST' | 'GET' | 'PUT' | 'DELETE' = 'POST') => {
     const currentFbUser = auth.currentUser;
@@ -201,8 +179,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const currentFbUser = auth.currentUser; 
     if (currentFbUser) {
       try {
-        // Optional: Force refresh ID token if concerned about staleness, though Firebase usually handles this.
-        // await currentFbUser.getIdToken(true); 
         const appUserData = await fetchAppUserDataFromDb(currentFbUser);
         setUser(appUserData); 
         setFirebaseUser(currentFbUser);
@@ -221,7 +197,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const unsubscribe = onAuthStateChanged(auth, async (fbUserInstance) => {
       setIsLoading(true);
       if (fbUserInstance) {
-        setFirebaseUser(fbUserInstance);
+        // setFirebaseUser(fbUserInstance); // refreshUserData will set this
         await refreshUserData();
       } else {
         setUser(null);
@@ -232,13 +208,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => unsubscribe();
   }, [refreshUserData]);
 
-
   const loginUser = useCallback(async (email: string, password: string): Promise<void> => {
     await signInWithEmailAndPassword(auth, email, password);
     // onAuthStateChanged will trigger refreshUserData
   }, []);
 
-  const registerUser = useCallback(async (name: string, farmNameFromInput: string, email: string, password: string): Promise<void> => {
+  const registerUser = useCallback(async (name: string, farmNameFromInput: string, email: string, password: string): Promise<string | void> => {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const fbUser = userCredential.user;
     await firebaseUpdateProfile(fbUser, { displayName: name });
@@ -293,8 +268,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const invitationToken = invitationDoc.data().invitationToken;
         if (invitationToken) {
           toast({ title: "Invitation Found!", description: "We found a pending invitation for you. Redirecting to accept..." });
-          router.push(`/accept-invitation?token=${invitationToken}`);
-          return; 
+          // router.push(`/accept-invitation?token=${invitationToken}`); // router.push cannot be used here
+          await refreshUserData(); // Ensure user data is up-to-date before potential redirect
+          return `/accept-invitation?token=${invitationToken}`; // Return path for form to handle
         }
       }
     } catch (error) {
@@ -302,9 +278,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     
     await refreshUserData(); 
-    router.push("/dashboard"); 
-  }, [toast, router, refreshUserData]);
+    // No specific redirect here, form will handle default if no invite found.
+  }, [toast, refreshUserData]); // Removed router from dependencies as it's not directly used for push
   
+  const logoutUser = useCallback(async () => {
+    try {
+        await firebaseSignOut(auth);
+    } catch (error) {
+        console.error("Error signing out: ", error);
+    } finally {
+        setUser(null);
+        setFirebaseUser(null);
+        const publicPaths = ['/login', '/register', '/', '/accept-invitation', '/pricing'];
+        const isPublicPath = publicPaths.some(p => pathname.startsWith(p));
+        if (!isPublicPath) {
+           router.push('/login');
+        }
+    }
+  }, [router, pathname]); 
+
   const updateUserProfile = useCallback(async (nameUpdate: string, newFarmName: string): Promise<void> => {
     const currentFbUser = auth.currentUser;
     if (!currentFbUser || !user) throw new Error("User not authenticated.");
@@ -356,7 +348,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     const result = await makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite });
     if (result.success) {
-      // Potentially refresh farm's pending invitations list if displayed on profile
+      // No need to refresh here, profile page will re-fetch pending invites.
     }
     return result;
   }, [user, makeApiRequest]);
@@ -368,7 +360,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (user.uid === staffUidToRemove) {
          return { success: false, message: "Owner cannot remove themselves as staff via this method." };
     }
-    const result = await makeApiRequest('/api/farm/remove-staff', { staffUidToRemove });
+    const result = await makeApiRequest('/api/farm/remove-staff', { staffUidToRemove }); // Assuming ownerUid and ownerFarmId are derived server-side
     if (result.success) await refreshUserData(); 
     return result;
   }, [user, makeApiRequest, refreshUserData]);
@@ -391,7 +383,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!user || !firebaseUser) {
         return { success: false, message: "User not authenticated." };
     }
-    // Logic for downgrading to free if no Stripe ID (or if already free)
     if (!user.stripeSubscriptionId && user.selectedPlanId === 'free') {
          return { success: true, message: "You are already on the Free plan." };
     }
@@ -437,7 +428,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     if (planId === 'free') { 
       if (user.selectedPlanId !== 'free') {
-        return cancelSubscription();
+        return cancelSubscription(); // cancelSubscription is now stable and defined above
       } else {
         return { success: true, message: "You are already on the Free plan." };
       }
@@ -454,7 +445,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const message = error instanceof Error ? error.message : "Could not initiate plan change.";
       return { success: false, message, error: message };
     }
-  }, [user, makeApiRequest, cancelSubscription]); 
+  }, [user, makeApiRequest, cancelSubscription]); // Added cancelSubscription
 
   const updateUserSettings = useCallback(async (newSettings: Partial<UserSettings>): Promise<{success: boolean; message: string}> => {
     if (!user || !firebaseUser) {
@@ -463,21 +454,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const userDocRef = doc(db, "users", user.uid);
       const currentSettings = user.settings || {};
-      
-      // Merge deeply for notificationPreferences
       const notificationPreferences = {
         ...(currentSettings.notificationPreferences || {}),
         ...(newSettings.notificationPreferences || {}),
       };
-      
-      const updatedSettings = {
+      const updatedSettingsData = {
         ...currentSettings,
-        ...newSettings, // This will overwrite top-level keys like preferredAreaUnit, theme
-        notificationPreferences, // Ensure notificationPreferences is merged correctly
+        ...newSettings, 
+        notificationPreferences,
       };
 
       await updateDoc(userDocRef, {
-        settings: updatedSettings,
+        settings: updatedSettingsData,
         updatedAt: serverTimestamp(),
       });
       await refreshUserData(); 
@@ -489,22 +477,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [user, firebaseUser, refreshUserData]);
 
+  // Apply theme effect
+  useEffect(() => {
+    if (user?.settings?.theme) {
+      const currentTheme = user.settings.theme;
+      const root = window.document.documentElement;
+      root.classList.remove("light", "dark");
 
-  const logoutUser = useCallback(async () => {
-    try {
-        await firebaseSignOut(auth);
-    } catch (error) {
-        console.error("Error signing out: ", error);
-    } finally {
-        setUser(null);
-        setFirebaseUser(null);
-        const publicPaths = ['/login', '/register', '/', '/accept-invitation', '/pricing'];
-        const isPublicPath = publicPaths.some(p => pathname.startsWith(p));
-        if (!isPublicPath) {
-           router.push('/login');
-        }
+      if (currentTheme === "system") {
+        const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        root.classList.add(systemTheme);
+      } else {
+        root.classList.add(currentTheme);
+      }
+    } else { 
+        const root = window.document.documentElement;
+        root.classList.remove("light", "dark");
+        const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        root.classList.add(systemTheme);
     }
-  }, [router, pathname]); 
+  }, [user?.settings?.theme]);
+
 
   const contextValue = React.useMemo(() => ({
     user, 

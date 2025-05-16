@@ -36,8 +36,8 @@ function AcceptInvitationContent() {
 
     if (!firebaseUser) {
       setStatus('prompt_login');
-      setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, try this link again if not automatically processed.');
-      setProcessed(true);
+      setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, you should be automatically redirected to process the invitation.');
+      setProcessed(true); // Mark as processed to prevent re-triggering this block
       return;
     }
 
@@ -67,7 +67,7 @@ function AcceptInvitationContent() {
           router.push('/profile'); 
         } else {
           setStatus('error');
-          setMessage(result.message || 'Failed to process invitation. The token might be invalid, expired, or already used.');
+          setMessage(result.message || 'Failed to process invitation. The token might be invalid, expired, already used, or you might not be authorized for this invitation.');
           toast({ title: 'Error', description: result.message || 'Could not process invitation.', variant: 'destructive' });
         }
       } catch (err) {
@@ -95,6 +95,13 @@ function AcceptInvitationContent() {
       </div>
     );
   }
+
+  const getRedirectUrl = () => {
+    if (typeof window !== "undefined") {
+      return encodeURIComponent(window.location.pathname + window.location.search);
+    }
+    return '';
+  };
 
   return (
     <div className="max-w-md mx-auto">
@@ -148,14 +155,14 @@ function AcceptInvitationContent() {
             <p className="text-muted-foreground">{message}</p>
             <div className="flex flex-col sm:flex-row gap-2">
               <Button asChild className="flex-1">
-                <Link href={`/login?redirect=/accept-invitation?token=${encodeURIComponent(token || '')}`}>Login</Link>
+                <Link href={`/login?redirect=${getRedirectUrl()}`}>Login</Link>
               </Button>
               <Button asChild variant="outline" className="flex-1">
-                <Link href={`/register?redirect=/accept-invitation?token=${encodeURIComponent(token || '')}`}>Register</Link>
+                <Link href={`/register?redirect=${getRedirectUrl()}`}>Register</Link>
               </Button>
             </div>
             <p className="text-xs text-muted-foreground text-center pt-2">
-                After logging in or registering, you might need to click the invitation link from your email again if not automatically redirected.
+                After logging in or registering, you should be automatically redirected to process the invitation. If not, please click the link from your email again.
             </p>
           </CardContent>
         </Card>
