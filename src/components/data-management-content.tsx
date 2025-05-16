@@ -14,7 +14,8 @@ import { FertilizerLogForm } from "./forms/fertilizer-log-form";
 import { IrrigationLogForm } from "./forms/irrigation-log-form";
 import { FarmInputLogForm } from "./forms/farm-input-log-form";
 import { FarmEquipmentForm } from "./forms/farm-equipment-form";
-import { ExpenseLogForm } from "./forms/expense-log-form"; // Added
+import { ExpenseLogForm } from "./forms/expense-log-form";
+import { RevenueLogForm } from "./forms/revenue-log-form"; // Added
 import { Icons } from "./icons"; 
 import type { LucideIcon } from "lucide-react";
 import { PlantingLogTable } from "./data-management/planting-log-table";
@@ -27,7 +28,8 @@ import { FertilizerLogTable } from "./data-management/fertilizer-log-table";
 import { IrrigationLogTable } from "./data-management/irrigation-log-table";
 import { FarmInputLogTable } from "./data-management/farm-input-log-table";
 import { FarmEquipmentTable } from "./data-management/farm-equipment-table";
-import { ExpenseLogTable } from "./data-management/expense-log-table"; // Added
+import { ExpenseLogTable } from "./data-management/expense-log-table";
+import { RevenueLogTable } from "./data-management/revenue-log-table"; // Added
 import { Separator } from "@/components/ui/separator";
 
 interface DataTab {
@@ -121,12 +123,20 @@ const dataTabs: DataTab[] = [
     tableComponent: TaskLogTable,
   },
   {
-    value: "expenses", // Added Expenses tab
+    value: "expenses",
     label: "Expenses",
     icon: Icons.Expenses,
     description: "Log and track your farm expenses.",
     formComponent: ExpenseLogForm,
     tableComponent: ExpenseLogTable,
+  },
+  {
+    value: "revenue", // Added Revenue tab
+    label: "Revenue",
+    icon: Icons.Dollar,
+    description: "Log and track your farm revenue.",
+    formComponent: RevenueLogForm,
+    tableComponent: RevenueLogTable,
   },
 ];
 
@@ -139,12 +149,11 @@ export function DataManagementContent() {
   
   const gridColsClass = () => {
     const count = dataTabs.length;
-    // Adjust based on how many you want per row at different breakpoints
-    // Example: up to 2 on smallest, up to 3 on sm, up to 4 on md, up to 6 on lg
     if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
     if (count <= 4) return "grid-cols-2 md:grid-cols-4";
-    if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"; // Adjust for more tabs
-    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"; // Default for many
+    if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"; 
+    // For more than 6, let's aim for a good balance, up to 4 on medium, up to 6 on large/xl
+    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6";
   };
 
 
