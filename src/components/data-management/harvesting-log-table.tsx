@@ -16,21 +16,25 @@ import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp, getDoc } from "firebase/firestore";
 
 interface HarvestingLog {
-  id: string;
+  id: string; // Firestore document ID
   cropName: string;
   harvestDate: string; // Stored as YYYY-MM-DD string
-  fieldId: string;
+  fieldId: string; // Firestore document ID of the field
+  fieldName?: string; // To store the field name after fetching
   yieldAmount?: number;
   yieldUnit?: string;
   notes?: string;
-  submittedAt: string; // ISO string
+  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
 }
 
 interface HarvestingLogTableProps {
-  refreshTrigger: number; // Used to trigger re-fetch
-  onLogDeleted: () => void; // Callback to trigger refresh from parent
+  refreshTrigger: number;
+  onLogDeleted: () => void;
 }
 
 export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingLogTableProps) {
@@ -38,49 +42,87 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) {
+      setIsLoading(false);
+      setLogs([]);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
-    try {
-      const storedLogs = localStorage.getItem("harvestingLogs");
-      if (storedLogs) {
-        const parsedLogs = JSON.parse(storedLogs) as HarvestingLog[];
-        parsedLogs.sort((a, b) => parseISO(b.submittedAt).getTime() - parseISO(a.submittedAt).getTime());
-        setLogs(parsedLogs);
-      } else {
-        setLogs([]);
-      }
-    } catch (e) {
-      console.error("Failed to load harvesting logs:", e);
-      setError("Could not load harvesting logs. Data might be corrupted.");
-      toast({
-        title: "Error Loading Logs",
-        description: "Failed to load harvesting logs from local storage.",
-        variant: "destructive"
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [refreshTrigger, toast]);
-
-  const handleDeleteLog = (logId: string) => {
-    if (window.confirm("Are you sure you want to delete this log? This action cannot be undone.")) {
+    const fetchHarvestingLogs = async () => {
       try {
-        const updatedLogs = logs.filter(log => log.id !== logId);
-        localStorage.setItem("harvestingLogs", JSON.stringify(updatedLogs));
-        setLogs(updatedLogs); // Optimistic update
-        toast({
-          title: "Log Deleted",
-          description: "The harvesting log has been removed.",
+        const q = query(
+          collection(db, "harvestingLogs"),
+          where("userId", "==", user.uid),
+          orderBy("createdAt", "desc")
+        );
+        const querySnapshot = await getDocs(q);
+        const fetchedLogsPromises = querySnapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data();
+          let fieldName = "N/A";
+          if (data.fieldId) {
+            try {
+              const fieldDocRef = doc(db, "fields", data.fieldId);
+              const fieldDocSnap = await getDoc(fieldDocRef);
+              if (fieldDocSnap.exists()) {
+                fieldName = fieldDocSnap.data().fieldName || "Unknown Field";
+              } else {
+                 fieldName = "Deleted/Unknown Field";
+              }
+            } catch (fieldError) {
+              console.error("Error fetching field name for harvesting log:", docSnapshot.id, fieldError);
+              fieldName = "Error fetching field";
+            }
+          }
+          
+          return {
+            id: docSnapshot.id,
+            ...data,
+            fieldName,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : undefined,
+          } as HarvestingLog;
         });
-        onLogDeleted(); // Trigger refresh in parent
+        
+        const fetchedLogs = await Promise.all(fetchedLogsPromises);
+        setLogs(fetchedLogs);
       } catch (e) {
-        console.error("Failed to delete log:", e);
-        setError("Could not delete the log.");
+        console.error("Failed to load harvesting logs from Firestore:", e);
+        setError("Could not load harvesting logs. Please try again.");
+        toast({
+          title: "Error Loading Logs",
+          description: "Failed to load harvesting logs from Firestore.",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchHarvestingLogs();
+  }, [user, refreshTrigger, toast]);
+
+  const handleDeleteLog = async (logId: string) => {
+    if (!user) {
+      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+      return;
+    }
+    if (window.confirm("Are you sure you want to delete this harvesting log? This action cannot be undone.")) {
+      try {
+        await deleteDoc(doc(db, "harvestingLogs", logId));
+        toast({
+          title: "Harvesting Log Deleted",
+          description: "The harvesting log has been removed from Firestore.",
+        });
+        onLogDeleted(); // Trigger refresh
+      } catch (e) {
+        console.error("Failed to delete harvesting log from Firestore:", e);
+        setError("Could not delete the harvesting log.");
         toast({
           title: "Error Deleting Log",
-          description: "Failed to delete the harvesting log.",
+          description: "Failed to delete the harvesting log from Firestore.",
           variant: "destructive"
         });
       }
@@ -100,8 +142,20 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
       </Alert>
     );
   }
+  
+  if (!user && !isLoading) {
+     return (
+      <Alert className="mt-4">
+        <Icons.Info className="h-4 w-4" />
+        <AlertTitle>Please Log In</AlertTitle>
+        <AlertDescription>
+          Log in to view and manage your harvesting logs.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
-  if (logs.length === 0) {
+  if (logs.length === 0 && user) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
@@ -116,12 +170,12 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your recent harvesting logs. Data is stored locally in your browser.</TableCaption>
+        <TableCaption>A list of your recent harvesting logs. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[150px]">Crop Name</TableHead>
             <TableHead className="min-w-[150px]">Harvest Date</TableHead>
-            <TableHead className="min-w-[120px]">Field ID</TableHead>
+            <TableHead className="min-w-[150px]">Field</TableHead>
             <TableHead className="min-w-[120px]">Yield</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
             <TableHead className="text-right w-[100px]">Actions</TableHead>
@@ -132,7 +186,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
             <TableRow key={log.id}>
               <TableCell className="font-medium">{log.cropName}</TableCell>
               <TableCell>{format(parseISO(log.harvestDate), "MMM dd, yyyy")}</TableCell>
-              <TableCell>{log.fieldId}</TableCell>
+              <TableCell>{log.fieldName || log.fieldId}</TableCell>
               <TableCell>{log.yieldAmount !== undefined ? `${log.yieldAmount} ${log.yieldUnit || ''}`.trim() : "N/A"}</TableCell>
               <TableCell className="max-w-xs truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
               <TableCell className="text-right">
