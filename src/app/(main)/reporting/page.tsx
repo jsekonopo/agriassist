@@ -10,10 +10,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Button } from '@/components/ui/button';
+import { CalendarIcon } from 'lucide-react';
+import { Calendar } from '@/components/ui/calendar';
+import { format, parseISO, startOfDay, endOfDay } from 'date-fns';
 
 interface HarvestingLog {
   id: string;
@@ -46,12 +51,14 @@ interface TaskStatusSummary {
 
 interface RevenueLog {
     id: string;
+    date: string; // YYYY-MM-DD
     amount: number;
     farmId: string;
 }
 
 interface ExpenseLog {
     id: string;
+    date: string; // YYYY-MM-DD
     amount: number;
     farmId: string;
 }
@@ -75,6 +82,9 @@ export default function ReportingPage() {
   const [selectedTaskStatusFilter, setSelectedTaskStatusFilter] = useState<TaskStatusFilter>("All Tasks");
   
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
+  const [financialStartDate, setFinancialStartDate] = useState<Date | undefined>(undefined);
+  const [financialEndDate, setFinancialEndDate] = useState<Date | undefined>(undefined);
+  
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
@@ -96,7 +106,7 @@ export default function ReportingPage() {
 
     const fetchReportData = async () => {
       try {
-        // Fetch Harvesting Logs
+        // Fetch Harvesting Logs (already existing)
         const harvestingQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId), orderBy("cropName", "asc"));
         const harvestingSnapshot = await getDocs(harvestingQuery);
         const harvestingLogs: HarvestingLog[] = harvestingSnapshot.docs.map(doc => doc.data() as HarvestingLog);
@@ -108,7 +118,7 @@ export default function ReportingPage() {
           if (log.cropName && typeof log.yieldAmount === 'number') {
             const existing = yieldMap.get(log.cropName) || { total: 0, unit: log.yieldUnit || 'units', count: 0 };
             existing.total += log.yieldAmount;
-            if (!existing.unit && log.yieldUnit) existing.unit = log.yieldUnit; // Prefer first unit found for a crop
+            if (!existing.unit && log.yieldUnit) existing.unit = log.yieldUnit;
             existing.count++;
             yieldMap.set(log.cropName, existing);
           }
@@ -119,23 +129,37 @@ export default function ReportingPage() {
           unit: data.unit,
         }));
         setAllCropYields(yields);
-        setFilteredCropYields(yields); // Initially show all
+        setFilteredCropYields(yields);
         setUniqueCropNames(["All Crops", ...Array.from(cropNames).sort()]);
 
-        // Fetch Task Logs
+        // Fetch Task Logs (already existing)
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId));
         const tasksSnapshot = await getDocs(tasksQuery);
         const fetchedTasks: TaskLog[] = tasksSnapshot.docs.map(doc => doc.data() as TaskLog);
         setAllTasks(fetchedTasks);
 
-        // Fetch Revenue Logs
-        const revenueQuery = query(collection(db, "revenueLogs"), where("farmId", "==", user.farmId));
+        // Fetch Revenue Logs with Date Filtering
+        let revenueQueryConstraints = [where("farmId", "==", user.farmId)];
+        if (financialStartDate) {
+          revenueQueryConstraints.push(where("date", ">=", format(startOfDay(financialStartDate), "yyyy-MM-dd")));
+        }
+        if (financialEndDate) {
+          revenueQueryConstraints.push(where("date", "<=", format(endOfDay(financialEndDate), "yyyy-MM-dd")));
+        }
+        const revenueQuery = query(collection(db, "revenueLogs"), ...revenueQueryConstraints);
         const revenueSnapshot = await getDocs(revenueQuery);
         const revenueLogs: RevenueLog[] = revenueSnapshot.docs.map(doc => doc.data() as RevenueLog);
         const totalRevenue = revenueLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
 
-        // Fetch Expense Logs
-        const expenseQuery = query(collection(db, "expenseLogs"), where("farmId", "==", user.farmId));
+        // Fetch Expense Logs with Date Filtering
+        let expenseQueryConstraints = [where("farmId", "==", user.farmId)];
+        if (financialStartDate) {
+          expenseQueryConstraints.push(where("date", ">=", format(startOfDay(financialStartDate), "yyyy-MM-dd")));
+        }
+        if (financialEndDate) {
+          expenseQueryConstraints.push(where("date", "<=", format(endOfDay(financialEndDate), "yyyy-MM-dd")));
+        }
+        const expenseQuery = query(collection(db, "expenseLogs"), ...expenseQueryConstraints);
         const expenseSnapshot = await getDocs(expenseQuery);
         const expenseLogs: ExpenseLog[] = expenseSnapshot.docs.map(doc => doc.data() as ExpenseLog);
         const totalExpenses = expenseLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
@@ -155,9 +179,8 @@ export default function ReportingPage() {
     };
 
     fetchReportData();
-  }, [user]);
+  }, [user, financialStartDate, financialEndDate]); // Re-fetch when date filters change
 
-  // Effect to filter crop yields
   useEffect(() => {
     if (selectedCropFilter === "All Crops") {
       setFilteredCropYields(allCropYields);
@@ -166,7 +189,6 @@ export default function ReportingPage() {
     }
   }, [selectedCropFilter, allCropYields]);
 
-  // Effect to calculate task summary based on filter
   useEffect(() => {
     const filteredTasks = selectedTaskStatusFilter === "All Tasks" 
       ? allTasks 
@@ -178,12 +200,12 @@ export default function ReportingPage() {
       else if (log.status === "In Progress") summary.inProgress++;
       else if (log.status === "Done") summary.done++;
     });
-    summary.total = filteredTasks.length; // Total of filtered tasks
-    if (selectedTaskStatusFilter !== "All Tasks") { // Adjust counts if specific status is filtered
+    summary.total = filteredTasks.length;
+    if (selectedTaskStatusFilter !== "All Tasks") {
         if (selectedTaskStatusFilter === "To Do") { summary.inProgress = 0; summary.done = 0; }
         else if (selectedTaskStatusFilter === "In Progress") { summary.toDo = 0; summary.done = 0; }
         else if (selectedTaskStatusFilter === "Done") { summary.toDo = 0; summary.inProgress = 0; }
-    } else { // Recalculate all for "All Tasks"
+    } else {
         summary.toDo = allTasks.filter(t => t.status === "To Do").length;
         summary.inProgress = allTasks.filter(t => t.status === "In Progress").length;
         summary.done = allTasks.filter(t => t.status === "Done").length;
@@ -192,6 +214,10 @@ export default function ReportingPage() {
     setTaskSummary(summary);
   }, [selectedTaskStatusFilter, allTasks]);
 
+  const clearFinancialDateFilters = () => {
+    setFinancialStartDate(undefined);
+    setFinancialEndDate(undefined);
+  };
 
   if (!user && !isLoading) {
     return (
@@ -201,13 +227,7 @@ export default function ReportingPage() {
                 description="Summary of your farm's activities and performance."
                 icon={Icons.Reporting}
             />
-            <Alert>
-                <Icons.Info className="h-4 w-4" />
-                <AlertTitle>Please Log In</AlertTitle>
-                <AlertDescription>
-                Log in to view your farm reports.
-                </AlertDescription>
-            </Alert>
+            <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>Please Log In</AlertTitle> <AlertDescription> Log in to view your farm reports. </AlertDescription> </Alert>
         </div>
     );
   }
@@ -220,13 +240,7 @@ export default function ReportingPage() {
                 description="Summary of your farm's activities and performance."
                 icon={Icons.Reporting}
             />
-            <Alert>
-                <Icons.Info className="h-4 w-4" />
-                <AlertTitle>Farm Association Needed</AlertTitle>
-                <AlertDescription>
-                Your account needs to be associated with a farm to view reports. Please check your profile or contact support.
-                </AlertDescription>
-            </Alert>
+            <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>Farm Association Needed</AlertTitle> <AlertDescription> Your account needs to be associated with a farm to view reports. Please check your profile or contact support. </AlertDescription> </Alert>
         </div>
     );
   }
@@ -234,73 +248,72 @@ export default function ReportingPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <PageHeader
-          title="Farm Reports"
-          description="Summary of your farm's activities and performance."
-          icon={Icons.Reporting}
-        />
-        <Alert variant="destructive">
-          <Icons.AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error Generating Reports</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <PageHeader title="Farm Reports" description="Summary of your farm's activities and performance." icon={Icons.Reporting} />
+        <Alert variant="destructive"> <Icons.AlertCircle className="h-4 w-4" /> <AlertTitle>Error Generating Reports</AlertTitle> <AlertDescription>{error}</AlertDescription> </Alert>
       </div>
     );
   }
 
   const formatCurrency = (value: number) => {
-    return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }); // Adjust currency as needed
+    return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }); 
   };
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Farm Reports"
-        description="Summary of your farm's activities and performance based on your Firestore data."
-        icon={Icons.Reporting}
-      />
+      <PageHeader title="Farm Reports" description="Summary of your farm's activities and performance based on your Firestore data." icon={Icons.Reporting} />
 
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle>Financial Overview</CardTitle>
-          <CardDescription>Summary of your farm's logged revenue and expenses.</CardDescription>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <CardTitle>Financial Overview</CardTitle>
+              <CardDescription>
+                Summary of logged revenue and expenses. 
+                {financialStartDate || financialEndDate ? 
+                  ` Showing data for: ${financialStartDate ? format(financialStartDate, 'MMM dd, yyyy') : 'Start'} - ${financialEndDate ? format(financialEndDate, 'MMM dd, yyyy') : 'End'}` 
+                  : "Showing all-time data."}
+              </CardDescription>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-center">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant={"outline"} className={cn("w-full justify-start text-left font-normal", !financialStartDate && "text-muted-foreground")}>
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {financialStartDate ? format(financialStartDate, "PPP") : <span>Start Date</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar mode="single" selected={financialStartDate} onSelect={setFinancialStartDate} initialFocus />
+                </PopoverContent>
+              </Popover>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant={"outline"} className={cn("w-full justify-start text-left font-normal", !financialEndDate && "text-muted-foreground")}>
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {financialEndDate ? format(financialEndDate, "PPP") : <span>End Date</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar mode="single" selected={financialEndDate} onSelect={setFinancialEndDate} initialFocus disabled={(date) => financialStartDate ? date < financialStartDate : false} />
+                </PopoverContent>
+              </Popover>
+              {(financialStartDate || financialEndDate) && (
+                <Button variant="ghost" onClick={clearFinancialDateFilters} size="sm" className="w-full sm:w-auto">Clear</Button>
+              )}
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-6 w-1/2" />
-              <Skeleton className="h-6 w-1/3" />
-              <Skeleton className="h-6 w-1/4" />
-            </div>
+            <div className="space-y-2"> <Skeleton className="h-6 w-1/2" /> <Skeleton className="h-6 w-1/3" /> <Skeleton className="h-6 w-1/4" /> </div>
           ) : financialSummary ? (
             <ul className="space-y-3 text-base">
-              <li className="flex justify-between items-center py-2 border-b">
-                <span className="text-muted-foreground">Total Revenue:</span>
-                <span className="font-semibold text-green-600">{formatCurrency(financialSummary.totalRevenue)}</span>
-              </li>
-              <li className="flex justify-between items-center py-2 border-b">
-                <span className="text-muted-foreground">Total Expenses:</span>
-                <span className="font-semibold text-red-600">{formatCurrency(financialSummary.totalExpenses)}</span>
-              </li>
-              <li className="flex justify-between items-center py-3 mt-2">
-                <span className="text-lg font-bold text-foreground">Net Profit / Loss:</span>
-                <span className={cn(
-                    "text-lg font-bold",
-                    financialSummary.netProfit >= 0 ? "text-green-700" : "text-red-700"
-                  )}
-                >
-                  {formatCurrency(financialSummary.netProfit)}
-                </span>
-              </li>
+              <li className="flex justify-between items-center py-2 border-b"> <span className="text-muted-foreground">Total Revenue:</span> <span className="font-semibold text-green-600">{formatCurrency(financialSummary.totalRevenue)}</span> </li>
+              <li className="flex justify-between items-center py-2 border-b"> <span className="text-muted-foreground">Total Expenses:</span> <span className="font-semibold text-red-600">{formatCurrency(financialSummary.totalExpenses)}</span> </li>
+              <li className="flex justify-between items-center py-3 mt-2"> <span className="text-lg font-bold text-foreground">Net Profit / Loss:</span> <span className={cn("text-lg font-bold", financialSummary.netProfit >= 0 ? "text-green-700" : "text-red-700")}> {formatCurrency(financialSummary.netProfit)} </span> </li>
             </ul>
           ) : (
-            <Alert>
-              <Icons.Info className="h-4 w-4" />
-              <AlertTitle>No Financial Data</AlertTitle>
-              <AlertDescription>
-                No revenue or expense logs found in Firestore for this farm to generate this summary.
-              </AlertDescription>
-            </Alert>
+            <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>No Financial Data</AlertTitle> <AlertDescription> No revenue or expense logs found in Firestore for this farm {financialStartDate || financialEndDate ? 'in the selected date range' : ''}. </AlertDescription> </Alert>
           )}
         </CardContent>
       </Card>
@@ -308,62 +321,21 @@ export default function ReportingPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <CardTitle>Crop Yield Summary</CardTitle>
-              <CardDescription>Total harvested yield per crop for your farm.</CardDescription>
-            </div>
-            <div className="w-full sm:w-auto sm:min-w-[200px]">
-              <Label htmlFor="crop-filter" className="sr-only">Filter by Crop</Label>
-              <Select value={selectedCropFilter} onValueChange={(value) => setSelectedCropFilter(value)}>
-                <SelectTrigger id="crop-filter" aria-label="Filter by Crop">
-                  <SelectValue placeholder="Filter by Crop" />
-                </SelectTrigger>
-                <SelectContent>
-                  {uniqueCropNames.map(cropName => (
-                    <SelectItem key={cropName} value={cropName}>{cropName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <div> <CardTitle>Crop Yield Summary</CardTitle> <CardDescription>Total harvested yield per crop for your farm.</CardDescription> </div>
+            <div className="w-full sm:w-auto sm:min-w-[200px]"> <Label htmlFor="crop-filter" className="sr-only">Filter by Crop</Label> <Select value={selectedCropFilter} onValueChange={(value) => setSelectedCropFilter(value)}> <SelectTrigger id="crop-filter" aria-label="Filter by Crop"> <SelectValue placeholder="Filter by Crop" /> </SelectTrigger> <SelectContent> {uniqueCropNames.map(cropName => ( <SelectItem key={cropName} value={cropName}>{cropName}</SelectItem> ))} </SelectContent> </Select> </div>
           </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-3/4" />
-            </div>
+            <div className="space-y-2"> <Skeleton className="h-8 w-full" /> <Skeleton className="h-8 w-full" /> <Skeleton className="h-8 w-3/4" /> </div>
           ) : filteredCropYields.length > 0 ? (
             <Table>
               <TableCaption>Data derived from your farm's harvesting logs. Filtered by: {selectedCropFilter}.</TableCaption>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[200px]">Crop Name</TableHead>
-                  <TableHead className="text-right">Total Yield</TableHead>
-                  <TableHead>Unit</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCropYields.map((crop) => (
-                  <TableRow key={crop.cropName}>
-                    <TableCell className="font-medium">{crop.cropName}</TableCell>
-                    <TableCell className="text-right">{crop.totalYield.toLocaleString()}</TableCell>
-                    <TableCell>{crop.unit}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
+              <TableHeader> <TableRow> <TableHead className="w-[200px]">Crop Name</TableHead> <TableHead className="text-right">Total Yield</TableHead> <TableHead>Unit</TableHead> </TableRow> </TableHeader>
+              <TableBody> {filteredCropYields.map((crop) => ( <TableRow key={crop.cropName}> <TableCell className="font-medium">{crop.cropName}</TableCell> <TableCell className="text-right">{crop.totalYield.toLocaleString()}</TableCell> <TableCell>{crop.unit}</TableCell> </TableRow> ))} </TableBody>
             </Table>
           ) : (
-            <Alert>
-              <Icons.Info className="h-4 w-4" />
-              <AlertTitle>No Yield Data</AlertTitle>
-              <AlertDescription>
-                {selectedCropFilter === "All Crops" 
-                  ? "No harvesting logs with yield information found in Firestore for this farm."
-                  : `No harvesting logs with yield information found for "${selectedCropFilter}".`}
-              </AlertDescription>
-            </Alert>
+            <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>No Yield Data</AlertTitle> <AlertDescription> {selectedCropFilter === "All Crops" ? "No harvesting logs with yield information found in Firestore for this farm." : `No harvesting logs with yield information found for "${selectedCropFilter}".`} </AlertDescription> </Alert>
           )}
         </CardContent>
       </Card>
@@ -371,66 +343,26 @@ export default function ReportingPage() {
       <Card className="shadow-lg">
         <CardHeader>
            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <CardTitle>Task Status Overview</CardTitle>
-              <CardDescription>Summary of your farm's tasks by their current status.</CardDescription>
-            </div>
-            <div className="w-full sm:w-auto sm:min-w-[200px]">
-              <Label htmlFor="task-status-filter" className="sr-only">Filter by Task Status</Label>
-              <Select value={selectedTaskStatusFilter} onValueChange={(value) => setSelectedTaskStatusFilter(value as TaskStatusFilter)}>
-                <SelectTrigger id="task-status-filter" aria-label="Filter by Task Status">
-                  <SelectValue placeholder="Filter by Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="All Tasks">All Tasks</SelectItem>
-                  <SelectItem value="To Do">To Do</SelectItem>
-                  <SelectItem value="In Progress">In Progress</SelectItem>
-                  <SelectItem value="Done">Done</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <div> <CardTitle>Task Status Overview</CardTitle> <CardDescription>Summary of your farm's tasks by their current status.</CardDescription> </div>
+            <div className="w-full sm:w-auto sm:min-w-[200px]"> <Label htmlFor="task-status-filter" className="sr-only">Filter by Task Status</Label> <Select value={selectedTaskStatusFilter} onValueChange={(value) => setSelectedTaskStatusFilter(value as TaskStatusFilter)}> <SelectTrigger id="task-status-filter" aria-label="Filter by Task Status"> <SelectValue placeholder="Filter by Status" /> </SelectTrigger> <SelectContent> <SelectItem value="All Tasks">All Tasks</SelectItem> <SelectItem value="To Do">To Do</SelectItem> <SelectItem value="In Progress">In Progress</SelectItem> <SelectItem value="Done">Done</SelectItem> </SelectContent> </Select> </div>
           </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-             <div className="space-y-2">
-              <Skeleton className="h-6 w-1/2" />
-              <Skeleton className="h-6 w-1/3" />
-              <Skeleton className="h-6 w-1/4" />
-            </div>
+             <div className="space-y-2"> <Skeleton className="h-6 w-1/2" /> <Skeleton className="h-6 w-1/3" /> <Skeleton className="h-6 w-1/4" /> </div>
           ) : taskSummary && (taskSummary.total > 0 || selectedTaskStatusFilter !== "All Tasks") ? (
             <ul className="space-y-2 text-sm">
-              {selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "To Do" ? 
-                <li className="flex justify-between"><span>To Do:</span> <span className="font-medium">{taskSummary.toDo}</span></li> : null}
-              {selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "In Progress" ? 
-                <li className="flex justify-between"><span>In Progress:</span> <span className="font-medium">{taskSummary.inProgress}</span></li> : null}
-              {selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "Done" ? 
-                <li className="flex justify-between"><span>Done:</span> <span className="font-medium">{taskSummary.done}</span></li> : null}
-              <li className="flex justify-between border-t pt-2 mt-2 font-semibold">
-                <span>Total {selectedTaskStatusFilter !== "All Tasks" ? selectedTaskStatusFilter : ""} Tasks:</span> 
-                <span>
-                    {selectedTaskStatusFilter === "To Do" ? taskSummary.toDo :
-                     selectedTaskStatusFilter === "In Progress" ? taskSummary.inProgress :
-                     selectedTaskStatusFilter === "Done" ? taskSummary.done :
-                     taskSummary.total}
-                </span>
-              </li>
+              {selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "To Do" ? <li className="flex justify-between"><span>To Do:</span> <span className="font-medium">{taskSummary.toDo}</span></li> : null}
+              {selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "In Progress" ? <li className="flex justify-between"><span>In Progress:</span> <span className="font-medium">{taskSummary.inProgress}</span></li> : null}
+              {selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "Done" ? <li className="flex justify-between"><span>Done:</span> <span className="font-medium">{taskSummary.done}</span></li> : null}
+              <li className="flex justify-between border-t pt-2 mt-2 font-semibold"> <span>Total {selectedTaskStatusFilter !== "All Tasks" ? selectedTaskStatusFilter : ""} Tasks:</span> <span> {selectedTaskStatusFilter === "To Do" ? taskSummary.toDo : selectedTaskStatusFilter === "In Progress" ? taskSummary.inProgress : selectedTaskStatusFilter === "Done" ? taskSummary.done : taskSummary.total} </span> </li>
             </ul>
           ) : (
-             <Alert>
-                <Icons.Info className="h-4 w-4" />
-                <AlertTitle>No Task Data</AlertTitle>
-                <AlertDescription>
-                  {selectedTaskStatusFilter === "All Tasks" 
-                    ? "No tasks found in Firestore for this farm."
-                    : `No tasks found with status "${selectedTaskStatusFilter}".`}
-                </AlertDescription>
-              </Alert>
+             <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>No Task Data</AlertTitle> <AlertDescription> {selectedTaskStatusFilter === "All Tasks" ? "No tasks found in Firestore for this farm." : `No tasks found with status "${selectedTaskStatusFilter}".`} </AlertDescription> </Alert>
           )}
         </CardContent>
       </Card>
     </div>
   );
 }
-
     

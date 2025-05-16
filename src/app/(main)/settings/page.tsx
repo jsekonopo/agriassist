@@ -1,3 +1,4 @@
+
 "use client";
 
 import { PageHeader } from '@/components/layout/page-header';
@@ -20,16 +21,17 @@ export default function SettingsPage() {
   const { user, updateUserSettings, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
+  // Local component state for settings to provide immediate UI feedback before Firestore save completes
   const [currentSettings, setCurrentSettings] = useState<UserSettings | undefined>(undefined);
   const [isSavingPrefs, setIsSavingPrefs] = useState(false);
 
   useEffect(() => {
     if (user?.settings) {
       setCurrentSettings(user.settings);
-    } else if (user && !user.settings) { // User loaded but has no settings object yet
+    } else if (user && !user.settings) { 
       const defaultPrefs: UserSettings = {
         notificationPreferences: {
-          taskRemindersEmail: false, weatherAlertsEmail: false, aiSuggestionsInApp: false, staffActivityEmail: false,
+          taskRemindersEmail: false, weatherAlertsEmail: false, aiSuggestionsInApp: true, staffActivityEmail: false,
         },
         preferredAreaUnit: "acres",
         preferredWeightUnit: "kg",
@@ -40,24 +42,21 @@ export default function SettingsPage() {
   }, [user]);
 
   const handleSettingChange = async (updatedPart: Partial<UserSettings>) => {
-    if (!user || !currentSettings) return; // Ensure user and currentSettings are available
+    if (!user || !currentSettings) return;
 
-    // Create a new settings object by merging
-    const newSettings = { 
-        ...currentSettings, // Start with existing settings
-        ...updatedPart, // Apply the specific change
-        // Deep merge notificationPreferences if that's what changed
-        ...(updatedPart.notificationPreferences && {
-            notificationPreferences: {
-                ...(currentSettings.notificationPreferences || {}),
-                ...updatedPart.notificationPreferences,
-            }
-        })
+    // Optimistically update local state for immediate UI feedback
+    const newLocalSettings: UserSettings = {
+      ...currentSettings,
+      ...updatedPart,
+      notificationPreferences: {
+        ...(currentSettings.notificationPreferences || {}),
+        ...(updatedPart.notificationPreferences || {}),
+      },
     };
+    setCurrentSettings(newLocalSettings);
     
-    setCurrentSettings(newSettings); // Optimistic UI update
     setIsSavingPrefs(true);
-    const result = await updateUserSettings(newSettings); 
+    const result = await updateUserSettings(newLocalSettings); // Pass the full merged object
     
     if (result.success) {
       toast({ title: "Preferences Updated", description: result.message });
@@ -91,7 +90,7 @@ export default function SettingsPage() {
     );
   }
   
-  if (!currentSettings && !authLoading) { // Handle case where user is loaded but currentSettings is not yet initialized
+  if (!currentSettings && !authLoading && user) { 
      return (
       <div className="space-y-8">
         <PageHeader
@@ -106,9 +105,13 @@ export default function SettingsPage() {
       </div>
     );
   }
-  // Ensure currentSettings is defined before trying to access its properties
+  if (!user) {
+    return (
+      <div className="text-center p-8">Please log in to view settings.</div>
+    )
+  }
   if (!currentSettings) {
-      return <div className="text-center p-8">Loading settings...</div>; // Or a more sophisticated loader
+      return <div className="text-center p-8">Loading settings...</div>; 
   }
 
 
@@ -149,7 +152,7 @@ export default function SettingsPage() {
             <Icons.Info className="h-4 w-4" />
             <AlertTitle>Notification Delivery</AlertTitle>
             <AlertDescription>
-              Your preferences are saved to Firestore. Actual notification delivery (emails, in-app messages) requires further backend service implementation.
+              Your preferences are saved. Actual notification delivery (emails, in-app messages) requires further backend service implementation.
             </AlertDescription>
           </Alert>
           <div className="space-y-4">
@@ -179,14 +182,14 @@ export default function SettingsPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Measurement Units</CardTitle>
-          <CardDescription>Choose your preferred default units for display and input. (Note: Display conversion is not yet implemented app-wide)</CardDescription>
+          <CardDescription>Choose your preferred default units for display and input.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <Alert variant="default">
             <Icons.Info className="h-4 w-4" />
-            <AlertTitle>Unit Display</AlertTitle>
+            <AlertTitle>Unit Display & Input</AlertTitle>
             <AlertDescription>
-              These preferences are saved to Firestore. Implementing unit conversion and consistent display logic throughout the app based on these settings is a future enhancement.
+              These preferences are saved. Area and weight units are used for display and form defaults where implemented. Full app-wide usage is an ongoing enhancement.
             </AlertDescription>
           </Alert>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
