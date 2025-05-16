@@ -15,7 +15,7 @@ import { useAuth, type UserRole, type PreferredAreaUnit } from '@/contexts/auth-
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
-import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
+import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow"; // Corrected import
 import { useToast } from "@/hooks/use-toast";
 
 interface WeatherData {
@@ -32,6 +32,8 @@ interface Field {
   fieldSizeUnit?: string; 
   farmId: string;
   userId: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 interface PlantingLog {
@@ -98,7 +100,7 @@ export default function DashboardPage() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState<string | null>(null);
-  const [weatherLocationDisplay, setWeatherLocationDisplay] = useState("Ottawa");
+  const [weatherLocationDisplay, setWeatherLocationDisplay] = useState("Ottawa (Default)");
 
   const [totalAcreage, setTotalAcreage] = useState<number | undefined>(undefined);
   const [activeCropsCount, setActiveCropsCount] = useState<number | undefined>(undefined);
@@ -121,28 +123,21 @@ export default function DashboardPage() {
       let lon = -75.6972; 
       let locationName = "Ottawa (Default)"; 
 
-      if (user?.farmId) {
-        try {
-          const farmDocRef = doc(db, "farms", user.farmId);
-          const farmDocSnap = await getDoc(farmDocRef);
-          if (farmDocSnap.exists()) {
-            const farmData = farmDocSnap.data();
-            if (typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
-              lat = farmData.latitude;
-              lon = farmData.longitude;
-              locationName = `${farmData.farmName || 'Your Farm'} (Custom Location)`;
-            } else if (farmData.farmName) {
-              locationName = `${farmData.farmName} (Defaulting to Ottawa)`;
-            } else if (user.farmName) {
-                 locationName = `${user.farmName} (Defaulting to Ottawa)`;
-            }
-          } else if (user.farmName) {
-             locationName = `${user.farmName} (Defaulting to Ottawa)`;
+      if (user?.farmId && user?.isFarmOwner) { // Check if farm owner to use farm-specific location
+        const farmDocRef = doc(db, "farms", user.farmId);
+        const farmDocSnap = await getDoc(farmDocRef);
+        if (farmDocSnap.exists()) {
+          const farmData = farmDocSnap.data();
+          if (typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
+            lat = farmData.latitude;
+            lon = farmData.longitude;
+            locationName = `${farmData.farmName || 'Your Farm'} (Custom Location)`;
+          } else if (farmData.farmName) {
+            locationName = `${farmData.farmName} (Defaulting to Ottawa)`;
           }
-        } catch (e) {
-          console.error("Error fetching farm location for weather:", e);
-          if (user.farmName) locationName = `${user.farmName} (Error fetching location, defaulting to Ottawa)`;
         }
+      } else if (user?.farmName) { // For staff, use farmName if available, but default to Ottawa for coords
+         locationName = `${user.farmName} (Defaulting to Ottawa)`;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -170,7 +165,7 @@ export default function DashboardPage() {
     if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user?.farmId, user?.farmName]); 
+  }, [user?.farmId, user?.farmName, user?.isFarmOwner]); // Re-fetch if farmId, farmName or owner status changes
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -437,7 +432,7 @@ export default function DashboardPage() {
             <Icons.BrainCircuit className="h-5 w-5 text-primary" />
             Proactive Farm Insights
           </CardTitle>
-          <CardDescription>AI-powered lookahead for potential opportunities or risks on your farm.</CardDescription>
+          <CardDescription>AI-powered lookahead for potential opportunities or risks on your farm. Data is based on recent logs.</CardDescription>
         </CardHeader>
         <CardContent>
           <Button onClick={handleGetProactiveInsights} disabled={isLoadingInsights || !user?.farmId} className="mb-4">
@@ -458,23 +453,23 @@ export default function DashboardPage() {
             </div>
           )}
           {proactiveInsights && !isLoadingInsights && (
-            <div className="space-y-4 animate-in fade-in-50 duration-300">
+            <div className="space-y-4 animate-in fade-in-50 duration-300 p-4 border rounded-md bg-secondary/30">
               {proactiveInsights.identifiedOpportunities && (
                 <div>
-                  <h4 className="font-semibold text-green-600">Potential Opportunities:</h4>
+                  <h4 className="font-semibold text-green-600 dark:text-green-500">Potential Opportunities:</h4>
                   <p className="text-sm text-muted-foreground whitespace-pre-wrap">{proactiveInsights.identifiedOpportunities}</p>
                 </div>
               )}
               {proactiveInsights.identifiedRisks && (
-                <div>
-                  <h4 className="font-semibold text-red-600">Potential Risks:</h4>
+                <div className="mt-3">
+                  <h4 className="font-semibold text-red-600 dark:text-red-500">Potential Risks:</h4>
                   <p className="text-sm text-muted-foreground whitespace-pre-wrap">{proactiveInsights.identifiedRisks}</p>
                 </div>
               )}
-              {!proactiveInsights.identifiedOpportunities && !proactiveInsights.identifiedRisks && (
-                 <p className="text-sm text-muted-foreground">No specific opportunities or risks identified by the AI based on current data.</p>
+              {(!proactiveInsights.identifiedOpportunities && !proactiveInsights.identifiedRisks) && (
+                 <p className="text-sm text-muted-foreground">No specific opportunities or risks identified by the AI based on current data snapshot.</p>
               )}
-              <p className="text-xs italic text-muted-foreground mt-2">Data considered: {proactiveInsights.dataConsideredSummary}</p>
+              <p className="text-xs italic text-muted-foreground/80 pt-3 mt-3 border-t border-border/50">Data considered: {proactiveInsights.dataConsideredSummary}</p>
             </div>
           )}
           {!user?.farmId && !authLoading && <p className="text-sm text-destructive">Please ensure you are associated with a farm to get insights.</p>}
@@ -539,3 +534,6 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+
+    
