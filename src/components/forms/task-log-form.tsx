@@ -16,41 +16,9 @@ import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { Icons } from "../icons";
-
-interface TaskLogData {
-  id: string;
-  taskName: string;
-  description?: string;
-  dueDate?: string; // Stored as YYYY-MM-DD string
-  assignedTo?: string; // For now, just a text field
-  status: "To Do" | "In Progress" | "Done";
-  submittedAt: string; // ISO string
-}
-
-const mockTaskLogService = {
-  save: async (logData: Omit<TaskLogData, 'id' | 'submittedAt' | 'dueDate'> & { dueDate?: Date }): Promise<TaskLogData> => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        try {
-          const existingLogsString = localStorage.getItem('taskLogs');
-          const existingLogs: TaskLogData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
-          
-          const newLog: TaskLogData = { 
-            ...logData, 
-            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
-            submittedAt: new Date().toISOString(),
-            dueDate: logData.dueDate ? format(logData.dueDate, "yyyy-MM-dd") : undefined,
-          };
-          existingLogs.push(newLog);
-          localStorage.setItem('taskLogs', JSON.stringify(existingLogs));
-          resolve(newLog);
-        } catch (error) {
-          reject(error);
-        }
-      }, 500);
-    });
-  }
-};
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const taskLogSchema = z.object({
   taskName: z.string().min(1, "Task name is required."),
@@ -69,6 +37,8 @@ interface TaskLogFormProps {
 export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { user } = useAuth();
+
   const form = useForm<z.infer<typeof taskLogSchema>>({
     resolver: zodResolver(taskLogSchema),
     defaultValues: {
@@ -80,22 +50,36 @@ export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
   });
 
   async function onSubmit(values: z.infer<typeof taskLogSchema>) {
+    if (!user) {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to save a task.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      await mockTaskLogService.save(values);
+      const taskData = {
+        ...values,
+        userId: user.uid,
+        dueDate: values.dueDate ? format(values.dueDate, "yyyy-MM-dd") : null, // Store as string or null
+        createdAt: serverTimestamp(),
+      };
+      await addDoc(collection(db, "taskLogs"), taskData);
       toast({
         title: "Task Saved",
-        description: `Task: ${values.taskName} has been saved.`,
+        description: `Task: ${values.taskName} has been saved to Firestore.`,
       });
       form.reset({ taskName: "", description: "", assignedTo: "", status: "To Do", dueDate: undefined });
       if (onLogSaved) {
         onLogSaved();
       }
     } catch (error) {
-      console.error("Error saving task:", error);
+      console.error("Error saving task to Firestore:", error);
       toast({
         title: "Error Saving Task",
-        description: "Could not save the task.",
+        description: "Could not save the task to Firestore.",
         variant: "destructive",
       });
     } finally {
@@ -213,10 +197,10 @@ export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
             )}
           />
         </div>
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" disabled={isSubmitting || !user}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> {/* Using User as placeholder */}
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> 
               Saving Task...
             </>
           ) : (
@@ -226,6 +210,7 @@ export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
             </>
           )}
         </Button>
+        {!user && <p className="text-sm text-destructive">Please log in to save tasks.</p>}
       </form>
     </Form>
   );

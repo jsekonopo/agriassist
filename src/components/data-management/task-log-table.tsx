@@ -17,15 +17,18 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
 interface TaskLog {
-  id: string;
+  id: string; // Firestore document ID
   taskName: string;
   description?: string;
-  dueDate?: string; // YYYY-MM-DD
+  dueDate?: string | null; // Stored as YYYY-MM-DD string or null
   assignedTo?: string;
   status: "To Do" | "In Progress" | "Done";
-  submittedAt: string; // ISO string
+  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
 }
 
 interface TaskLogTableProps {
@@ -38,61 +41,65 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) {
+      setIsLoading(false);
+      setLogs([]);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
-    try {
-      const storedLogs = localStorage.getItem("taskLogs");
-      if (storedLogs) {
-        const parsedLogs = JSON.parse(storedLogs) as TaskLog[];
-        // Sort by due date (earliest first, undefined last), then by submittedAt
-        parsedLogs.sort((a, b) => {
-            if (a.dueDate && b.dueDate) {
-                const dateA = parseISO(a.dueDate).getTime();
-                const dateB = parseISO(b.dueDate).getTime();
-                if (dateA !== dateB) return dateA - dateB;
-            } else if (a.dueDate) {
-                return -1; // a has due date, b doesn't, so a comes first
-            } else if (b.dueDate) {
-                return 1;  // b has due date, a doesn't, so b comes first
-            }
-            return parseISO(b.submittedAt).getTime() - parseISO(a.submittedAt).getTime();
+    const fetchTasks = async () => {
+      try {
+        const q = query(
+          collection(db, "taskLogs"),
+          where("userId", "==", user.uid),
+          orderBy("createdAt", "desc")
+        );
+        const querySnapshot = await getDocs(q);
+        const fetchedLogs: TaskLog[] = querySnapshot.docs.map(docSnapshot => ({
+          id: docSnapshot.id,
+          ...docSnapshot.data(),
+          createdAt: docSnapshot.data().createdAt?.toDate ? docSnapshot.data().createdAt.toDate() : undefined,
+        } as TaskLog));
+        setLogs(fetchedLogs);
+      } catch (e) {
+        console.error("Failed to load tasks from Firestore:", e);
+        setError("Could not load tasks. Please try again.");
+        toast({
+          title: "Error Loading Tasks",
+          description: "Failed to load tasks from Firestore.",
+          variant: "destructive"
         });
-        setLogs(parsedLogs);
-      } else {
-        setLogs([]);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (e) {
-      console.error("Failed to load tasks:", e);
-      setError("Could not load tasks. Data might be corrupted.");
-      toast({
-        title: "Error Loading Tasks",
-        description: "Failed to load tasks from local storage.",
-        variant: "destructive"
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [refreshTrigger, toast]);
+    };
+    fetchTasks();
+  }, [user, refreshTrigger, toast]);
 
-  const handleDeleteLog = (logId: string) => {
+  const handleDeleteLog = async (logId: string) => {
+    if (!user) {
+      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+      return;
+    }
     if (window.confirm("Are you sure you want to delete this task? This action cannot be undone.")) {
       try {
-        const updatedLogs = logs.filter(log => log.id !== logId);
-        localStorage.setItem("taskLogs", JSON.stringify(updatedLogs));
-        setLogs(updatedLogs);
+        await deleteDoc(doc(db, "taskLogs", logId));
         toast({
           title: "Task Deleted",
-          description: "The task has been removed.",
+          description: "The task has been removed from Firestore.",
         });
-        onLogDeleted();
+        onLogDeleted(); // Trigger refresh
       } catch (e) {
-        console.error("Failed to delete task:", e);
+        console.error("Failed to delete task from Firestore:", e);
         setError("Could not delete the task.");
         toast({
           title: "Error Deleting Task",
-          description: "Failed to delete the task.",
+          description: "Failed to delete the task from Firestore.",
           variant: "destructive"
         });
       }
@@ -126,7 +133,19 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
     );
   }
 
-  if (logs.length === 0) {
+  if (!user && !isLoading) {
+     return (
+      <Alert className="mt-4">
+        <Icons.Info className="h-4 w-4" />
+        <AlertTitle>Please Log In</AlertTitle>
+        <AlertDescription>
+          Log in to view and manage your tasks.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (logs.length === 0 && user) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
@@ -141,7 +160,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your farm tasks. Data is stored locally in your browser.</TableCaption>
+        <TableCaption>A list of your farm tasks. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[200px]">Task Name</TableHead>
