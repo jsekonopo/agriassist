@@ -61,11 +61,11 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
   });
 
   useEffect(() => {
-    form.reset({ 
-        ...form.getValues(), 
-        weightUnit: preferredWeightUnit 
-    });
-  }, [preferredWeightUnit, form]);
+    // Update default unit if user preference changes and form field hasn't been touched by user
+    if (user?.settings?.preferredWeightUnit && !form.formState.dirtyFields.weightUnit) {
+      form.setValue("weightUnit", user.settings.preferredWeightUnit, { shouldValidate: true });
+    }
+  }, [user?.settings?.preferredWeightUnit, form]);
 
   useEffect(() => {
     if (!user || !user.farmId) {
@@ -118,7 +118,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
         animalIdTag: selectedAnimal.animalIdTag, 
         logDate: format(values.logDate, "yyyy-MM-dd"),
         weight: values.weight,
-        weightUnit: values.weightUnit,
+        weightUnit: values.weightUnit, // Unit as selected in the form
         notes: values.notes,
         createdAt: serverTimestamp(),
       };
@@ -131,7 +131,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
         animalDocId: "",
         logDate: undefined,
         weight: undefined,
-        weightUnit: preferredWeightUnit, 
+        weightUnit: user?.settings?.preferredWeightUnit || "kg", // Reset to preferred or default
         notes: "",
       });
       if (onLogSaved) {

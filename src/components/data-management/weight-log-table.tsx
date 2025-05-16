@@ -26,7 +26,7 @@ interface WeightLog {
   animalDocId: string;
   logDate: string; 
   weight: number;
-  weightUnit: string; 
+  weightUnit: string; // Unit in which weight was originally logged
   notes?: string;
   createdAt?: Timestamp | Date;
   farmId: string;
@@ -130,20 +130,25 @@ export function WeightLogTable({ refreshTrigger, onLogDeleted }: WeightLogTableP
     }
   };
 
-  const formatWeightForDisplay = (weight: number, storedUnit: string, targetUnit: PreferredWeightUnit): string => {
+  const formatWeightForDisplay = (weight: number, loggedUnit: string, displayUnit: PreferredWeightUnit): string => {
     let displayWeight = weight;
-    const actualStoredUnit = storedUnit.toLowerCase();
-    const actualTargetUnit = targetUnit.toLowerCase();
+    const actualLoggedUnit = loggedUnit.toLowerCase();
+    const actualDisplayUnit = displayUnit.toLowerCase();
 
-    if (actualStoredUnit === actualTargetUnit) {
+    if (actualLoggedUnit === actualDisplayUnit) {
       // No conversion needed
-    } else if (actualStoredUnit === 'kg' && actualTargetUnit === 'lbs') {
+    } else if (actualLoggedUnit === 'kg' && actualDisplayUnit === 'lbs') {
       displayWeight = weight * KG_TO_LBS_FACTOR;
-    } else if (actualStoredUnit === 'lbs' && actualTargetUnit === 'kg') {
+    } else if (actualLoggedUnit === 'lbs' && actualDisplayUnit === 'kg') {
       displayWeight = weight * LBS_TO_KG_FACTOR;
     }
-    // If units are somehow different but not kg/lbs, display as stored (though this shouldn't happen with current form).
-    return `${displayWeight.toFixed(1)} ${actualTargetUnit}`;
+    // If units are somehow different but not kg/lbs (e.g. grams, oz), display as stored - this scenario isn't handled by current form
+    // For robustness, if conversion isn't kg/lbs, just show original
+    if (actualLoggedUnit !== actualDisplayUnit && !( (actualLoggedUnit === 'kg' && actualDisplayUnit === 'lbs') || (actualLoggedUnit === 'lbs' && actualDisplayUnit === 'kg') ) ){
+        return `${weight.toFixed(1)} ${actualLoggedUnit}`; // Fallback to originally logged unit if unknown conversion
+    }
+
+    return `${displayWeight.toFixed(1)} ${actualDisplayUnit}`;
   };
 
 
