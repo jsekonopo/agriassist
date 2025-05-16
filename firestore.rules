@@ -1,0 +1,263 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwnUserDocument(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getAuthenticatedUserData() {
+      return isAuthenticated() ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data : null;
+    }
+
+    function getFarmData(farmId) {
+      return (farmId != null && farmId != "") ? get(/databases/$(database)/documents/farms/$(farmId)).data : null;
+    }
+
+    function isOwnerOfFarm(farmId) { // Checks if the requesting user is the owner of the specified farmId
+      let farmDocData = getFarmData(farmId);
+      return isAuthenticated() && farmDocData != null && farmDocData.ownerId == request.auth.uid;
+    }
+    
+    // Checks if the requesting user has a specific role on the specified farm.
+    // Relies on the user's own document (`roleOnCurrentFarm` and `farmId`).
+    function hasRoleOnFarm(userId, currentFarmId, targetRole) {
+        let userData = getAuthenticatedUserData(); 
+        return isAuthenticated() && 
+               userData != null &&
+               userData.uid == userId && 
+               userData.farmId == currentFarmId &&
+               userData.roleOnCurrentFarm == targetRole;
+    }
+    
+    function isAdminOnFarm(currentFarmId) {
+        return hasRoleOnFarm(request.auth.uid, currentFarmId, 'admin');
+    }
+
+    function isEditorOnFarm(currentFarmId) {
+        return hasRoleOnFarm(request.auth.uid, currentFarmId, 'editor');
+    }
+    
+    function isViewerOnFarm(currentFarmId) {
+        return hasRoleOnFarm(request.auth.uid, currentFarmId, 'viewer');
+    }
+
+    // User has some form of access (owner or any staff role) to this specific farm.
+    function hasGeneralAccessToFarm(currentFarmId) {
+        return isAuthenticated() &&
+               authenticatedUserData() != null &&
+               authenticatedUserData().farmId == currentFarmId &&
+               (isOwnerOf(currentFarmId) || 
+                isAdminOnFarm(currentFarmId) || 
+                isEditorOnFarm(currentFarmId) || 
+                isViewerOnFarm(currentFarmId));
+    }
+
+    // For farm-specific documents: checks if the user's primary farmId (from their user document) 
+    // matches the document's farmId AND that they have general access to that farm.
+    function isAssociatedWithAndHasAccessToDocFarm(docFarmId) {
+      return isAuthenticated() &&
+             getAuthenticatedUserData() != null &&
+             getAuthenticatedUserData().farmId == docFarmId &&
+             hasGeneralAccessToFarm(docFarmId);
+    }
+    
+    // For creating new farm-specific documents:
+    // Does the farmId in the new document match the user's current farmId?
+    function newDocFarmIdMatchesUserCurrentFarm() {
+      return isAuthenticated() &&
+             authenticatedUserData() != null &&
+             request.resource.data.farmId == authenticatedUserData().farmId;
+    }
+
+    // Users Collection (/users/{userId})
+    match /users/{userId} {
+      allow create: if isOwnUserDocument(userId);
+      allow read: if isOwnUserDocument(userId);
+      allow update: if isOwnUserDocument(userId) &&
+                      request.resource.data.keys().hasOnly([
+                        'name', 'farmName', 'updatedAt', 
+                        'selectedPlanId', 'subscriptionStatus', 'stripeCustomerId', 'stripeSubscriptionId', 'subscriptionCurrentPeriodEnd',
+                        'settings' 
+                      ]) &&
+                      // farmName on user doc can only be changed by the owner of *that specific farm*
+                      (request.resource.data.farmName == resource.data.farmName || isOwnerOf(resource.data.farmId)) &&
+                      // Client cannot change these critical association/role fields directly on their user doc
+                      request.resource.data.farmId == resource.data.farmId && 
+                      request.resource.data.isFarmOwner == resource.data.isFarmOwner &&
+                      request.resource.data.roleOnCurrentFarm == resource.data.roleOnCurrentFarm;
+      allow delete: if false;
+      allow list: if false;
+    }
+
+    // Farms Collection (/farms/{farmId})
+    match /farms/{farmId} {
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow read: if isAuthenticated() && hasGeneralAccessToFarm(farmId);
+      allow update: if isAuthenticated() &&
+                      (
+                        // Owner can update farmName, staff array, latitude, longitude
+                        (isOwnerOf(farmId) && 
+                         request.resource.data.keys().hasOnly(['farmName', 'staff', 'updatedAt', 'ownerId', 'farmId', 'latitude', 'longitude'])) ||
+                        // Admin can update staff list
+                        (isAdminOnFarm(farmId) && 
+                         request.resource.data.keys().hasOnly(['staff', 'updatedAt']) &&
+                         request.resource.data.farmName == resource.data.farmName && // Admin cannot change farmName
+                         request.resource.data.ownerId == resource.data.ownerId      // Admin cannot change owner
+                        )
+                      ) &&
+                      request.resource.data.ownerId == resource.data.ownerId && 
+                      request.resource.data.farmId == resource.data.farmId;
+      allow delete: if isAuthenticated() && isOwnerOf(farmId);
+      allow list: if false;
+    }
+
+    // --- Rules for Farm-Specific Data Collections ---
+    function canReadFarmSpecificDoc(docFarmId) {
+      return isAssociatedWithAndHasAccessToDocFarm(docFarmId);
+    }
+    function canCreateFarmSpecificDoc(docFarmId) {
+      return newDocFarmIdMatchesUserCurrentFarm() &&
+             (isOwnerOf(docFarmId) || isAdminOnFarm(docFarmId) || isEditorOnFarm(docFarmId));
+    }
+    function canUpdateFarmSpecificDoc(docFarmId) {
+      return isAssociatedWithAndHasAccessToDocFarm(docFarmId) &&
+             request.resource.data.farmId == resource.data.farmId && // FarmId of doc cannot change
+             (isOwnerOf(docFarmId) || isAdminOnFarm(docFarmId) || isEditorOnFarm(docFarmId));
+    }
+    function canDeleteFarmSpecificDoc(docFarmId) {
+      return isAssociatedWithAndHasAccessToDocFarm(docFarmId) &&
+             (isOwnerOf(docFarmId) || isAdminOnFarm(docFarmId));
+    }
+
+    // Applying generic rules to each collection
+    match /fields/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /plantingLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /harvestingLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /soilDataLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /weatherLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /taskLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /farmInputs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /farmEquipment/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /expenseLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /revenueLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /fertilizerLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /irrigationLogs/{docId} {
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /livestockAnimals/{docId} { // New Livestock Collection
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /livestockHealthLogs/{docId} { // New Livestock Collection
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+    match /livestockBreedingRecords/{docId} { // New Livestock Collection
+      allow list: if isAuthenticated();
+      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    }
+
+    // Pending Invitations Collection (/pendingInvitations/{invitationId})
+    match /pendingInvitations/{invitationId} {
+      allow create: if isAuthenticated() &&
+                      (isOwnerOf(request.resource.data.inviterFarmId) || isAdminOnFarm(request.resource.data.inviterFarmId) ) &&
+                      request.resource.data.inviterUid == request.auth.uid;
+      allow read: if isAuthenticated() && authenticatedUserData() != null &&
+                    ( (resource.data.invitedUserUid == request.auth.uid && resource.data.status == 'pending') ||
+                      (resource.data.invitedEmail.lower() == authenticatedUserData().email.lower() && resource.data.status == 'pending') || 
+                      ( (isOwnerOf(resource.data.inviterFarmId) || isAdminOnFarm(resource.data.inviterFarmId)) && resource.data.inviterUid == request.auth.uid) );
+      allow update: if false; // API routes with Admin SDK handle status changes
+      allow delete: if false; // API routes with Admin SDK handle deletion/revocation
+      allow list: if isAuthenticated();
+    }
+  }
+}
+
+    
