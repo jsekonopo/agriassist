@@ -11,7 +11,8 @@ import { WeatherDataForm } from "./forms/weather-data-form";
 import { FieldDefinitionForm } from "./forms/field-definition-form";
 import { TaskLogForm } from "./forms/task-log-form";
 import { FertilizerLogForm } from "./forms/fertilizer-log-form";
-import { IrrigationLogForm } from "./forms/irrigation-log-form"; // Added
+import { IrrigationLogForm } from "./forms/irrigation-log-form";
+import { FarmInputLogForm } from "./forms/farm-input-log-form"; // Added
 import { Icons } from "./icons"; 
 import type { LucideIcon } from "lucide-react";
 import { PlantingLogTable } from "./data-management/planting-log-table";
@@ -21,7 +22,8 @@ import { WeatherDataLogTable } from "./data-management/weather-data-log-table";
 import { FieldDefinitionTable } from "./data-management/field-definition-table";
 import { TaskLogTable } from "./data-management/task-log-table";
 import { FertilizerLogTable } from "./data-management/fertilizer-log-table";
-import { IrrigationLogTable } from "./data-management/irrigation-log-table"; // Added
+import { IrrigationLogTable } from "./data-management/irrigation-log-table";
+import { FarmInputLogTable } from "./data-management/farm-input-log-table"; // Added
 import { Separator } from "@/components/ui/separator";
 
 interface DataTab {
@@ -59,17 +61,25 @@ const dataTabs: DataTab[] = [
     tableComponent: HarvestingLogTable,
   },
   {
+    value: "inputs", // Added Inputs Inventory tab
+    label: "Inputs",
+    icon: Icons.InputsInventory,
+    description: "Manage your inventory of farm inputs like seeds, fertilizers, and pesticides.",
+    formComponent: FarmInputLogForm,
+    tableComponent: FarmInputLogTable,
+  },
+  {
     value: "fertilizer",
-    label: "Fertilizer",
+    label: "Fertilizer App.",
     icon: Icons.FertilizerLog,
     description: "Log fertilizer applications and details.",
     formComponent: FertilizerLogForm,
     tableComponent: FertilizerLogTable,
   },
   {
-    value: "irrigation", // Added Irrigation tab
+    value: "irrigation", 
     label: "Irrigation",
-    icon: Icons.Water, // Using existing Icons.Water (Droplets)
+    icon: Icons.Water, 
     description: "Log water usage and irrigation activities.",
     formComponent: IrrigationLogForm,
     tableComponent: IrrigationLogTable,
@@ -109,14 +119,14 @@ export function DataManagementContent() {
   
   const gridColsClass = () => {
     const count = dataTabs.length;
+    // Simple approach: up to 4 tabs, use count. More than 4, use 4 columns and let it wrap.
+    // Responsive:
     if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
     if (count <= 3) return "grid-cols-1 sm:grid-cols-3";
     if (count <= 4) return "grid-cols-2 md:grid-cols-4";
-    if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3"; // Adjusted for 5 or 6
-    // For 7 tabs: 2, 3, then maybe 4 on large. For 8: 2, 4, 4
-    if (count === 7) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4"; // Adjust this as needed
-    if (count >= 8) return "grid-cols-2 sm:grid-cols-4 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4"; // For 8 or more, let it wrap in 4 columns
-    return `grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-${Math.min(count, 8)}`;
+    // For 5 or more, use a flexible grid that wraps. 
+    // For example, ensure a minimum of 2 cols, max of 4-5 on larger screens.
+    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5"; // Adjusted for more tabs
   };
 
 
@@ -156,5 +166,3 @@ export function DataManagementContent() {
     </Tabs>
   );
 }
-
-    

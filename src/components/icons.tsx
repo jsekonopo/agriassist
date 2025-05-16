@@ -40,7 +40,8 @@ import {
   FlaskConical,
   FileText, 
   UserCircle,
-  Archive, // Added for FertilizerLog
+  Archive, 
+  Package, // Added for Inputs Inventory
 } from 'lucide-react';
 
 export const Icons = {
@@ -84,8 +85,8 @@ export const Icons = {
   FlaskConical,
   Reporting: FileText,
   UserCircle,
-  FertilizerLog: Archive, // Added new icon mapping
+  FertilizerLog: Archive,
+  InputsInventory: Package, // Added new icon mapping
 };
 
 export type IconName = keyof typeof Icons;
-
