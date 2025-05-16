@@ -8,60 +8,25 @@ import { Calendar } from "@/components/ui/calendar";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Icons } from "../icons";
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy } from "firebase/firestore";
 
-interface SoilLogData {
-  id: string;
-  fieldId: string;
-  sampleDate: string; // Stored as YYYY-MM-DD string
-  phLevel?: number;
-  organicMatter?: string;
-  nutrients?: {
-    nitrogen?: string;
-    phosphorus?: string;
-    potassium?: string;
-  };
-  treatmentsApplied?: string;
-  notes?: string;
-  submittedAt: string; // ISO string
+interface FieldDefinitionLog {
+  id: string; 
+  fieldName: string;
 }
 
-const mockSoilLogService = {
-  save: async (logData: Omit<SoilLogData, 'id' | 'submittedAt' | 'sampleDate'> & { sampleDate: Date }): Promise<SoilLogData> => {
-    console.log("Mock service: Attempting to save soil data log:", logData);
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        try {
-          const existingLogsString = localStorage.getItem('soilDataLogs');
-          const existingLogs: SoilLogData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
-          
-          const newLog: SoilLogData = { 
-            ...logData, 
-            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
-            submittedAt: new Date().toISOString(),
-            sampleDate: format(logData.sampleDate, "yyyy-MM-dd"),
-          };
-          existingLogs.push(newLog);
-          localStorage.setItem('soilDataLogs', JSON.stringify(existingLogs));
-          console.log("Mock service: Soil data log saved to localStorage:", newLog);
-          resolve(newLog);
-        } catch (error) {
-          console.error("Mock service: Error saving soil data log to localStorage:", error);
-          reject(error);
-        }
-      }, 500);
-    });
-  }
-};
-
 const soilDataSchema = z.object({
-  fieldId: z.string().min(1, "Field ID or name is required."),
+  fieldId: z.string().min(1, "Field selection is required."),
   sampleDate: z.date({ required_error: "Sample date is required." }),
   phLevel: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
@@ -84,6 +49,10 @@ interface SoilDataFormProps {
 export function SoilDataForm({ onLogSaved }: SoilDataFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { user } = useAuth();
+  const [fields, setFields] = useState<FieldDefinitionLog[]>([]);
+  const [isLoadingFields, setIsLoadingFields] = useState(true);
+
   const form = useForm<z.infer<typeof soilDataSchema>>({
     resolver: zodResolver(soilDataSchema),
     defaultValues: {
@@ -96,13 +65,49 @@ export function SoilDataForm({ onLogSaved }: SoilDataFormProps) {
     },
   });
 
+  useEffect(() => {
+    if (!user) {
+      setFields([]);
+      setIsLoadingFields(false);
+      return;
+    }
+    const fetchFields = async () => {
+      setIsLoadingFields(true);
+      try {
+        const q = query(collection(db, "fields"), where("userId", "==", user.uid), orderBy("fieldName", "asc"));
+        const querySnapshot = await getDocs(q);
+        const fetchedFields = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          fieldName: doc.data().fieldName,
+        } as FieldDefinitionLog));
+        setFields(fetchedFields);
+      } catch (error) {
+        console.error("Failed to load fields for soil data form:", error);
+        toast({ title: "Error Loading Fields", description: "Could not load your defined fields.", variant: "destructive" });
+      } finally {
+        setIsLoadingFields(false);
+      }
+    };
+    fetchFields();
+  }, [user, toast]);
+
   async function onSubmit(values: z.infer<typeof soilDataSchema>) {
+    if (!user) {
+      toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      await mockSoilLogService.save(values);
+      const logData = {
+        ...values,
+        userId: user.uid,
+        sampleDate: format(values.sampleDate, "yyyy-MM-dd"),
+        createdAt: serverTimestamp(),
+      };
+      await addDoc(collection(db, "soilDataLogs"), logData);
       toast({
         title: "Soil Data Saved",
-        description: `Soil data for Field: ${values.fieldId} has been saved.`,
+        description: `Soil data for the selected field has been saved to Firestore.`,
       });
       form.reset({
         fieldId: "",
@@ -117,10 +122,10 @@ export function SoilDataForm({ onLogSaved }: SoilDataFormProps) {
         onLogSaved();
       }
     } catch (error) {
-      console.error("Error saving soil data:", error);
+      console.error("Error saving soil data to Firestore:", error);
       toast({
         title: "Error Saving Log",
-        description: "Could not save the soil data.",
+        description: "Could not save the soil data to Firestore.",
         variant: "destructive",
       });
     } finally {
@@ -137,10 +142,29 @@ export function SoilDataForm({ onLogSaved }: SoilDataFormProps) {
             name="fieldId"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Field ID / Name</FormLabel>
-                <FormControl>
-                  <Input placeholder="e.g., Field B, South Plot" {...field} />
-                </FormControl>
+                <FormLabel>Field</FormLabel>
+                 <Select 
+                    onValueChange={field.onChange} 
+                    defaultValue={field.value}
+                    disabled={isLoadingFields || fields.length === 0}
+                  >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (fields.length === 0 ? "No fields defined" : "Select a field")} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {!isLoadingFields && fields.length > 0 ? (
+                      fields.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.fieldName}
+                        </SelectItem>
+                      ))
+                    ) : (
+                       !isLoadingFields && <div className="p-2 text-sm text-muted-foreground">No fields defined. Please add fields first.</div>
+                    )}
+                  </SelectContent>
+                </Select>
                 <FormMessage />
               </FormItem>
             )}
@@ -291,7 +315,7 @@ export function SoilDataForm({ onLogSaved }: SoilDataFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" disabled={isSubmitting || !user || isLoadingFields}>
           {isSubmitting ? (
             <>
               <Icons.User className="mr-2 h-4 w-4 animate-spin" />
@@ -301,7 +325,10 @@ export function SoilDataForm({ onLogSaved }: SoilDataFormProps) {
             "Save Soil Data"
           )}
         </Button>
+        {!user && <p className="text-sm text-destructive">Please log in to save soil data.</p>}
       </form>
     </Form>
   );
 }
+
+    
