@@ -11,7 +11,8 @@
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 import { adminDb } from '@/lib/firebase-admin';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, orderBy, limit } from 'firebase/firestore';
+import { format, parseISO } from 'date-fns';
 
 const InterpretSoilHealthInputSchema = z.object({
   farmId: z.string().describe("The ID of the farm to which this soil data belongs."),
@@ -33,6 +34,7 @@ const InterpretSoilHealthOutputSchema = z.object({
   organicMatterInterpretation: z.string().describe('Interpretation of the organic matter percentage and its importance. Suggests ways to improve if low.'),
   nutrientInterpretation: z.string().describe('Interpretation of N, P, K levels (e.g., deficient, adequate, surplus for the intended crop if specified).'),
   recommendations: z.string().describe('Actionable recommendations for soil amendments, fertilizer application, or other practices to improve soil health based on the interpretation. Be specific if possible.'),
+  historicalContextSummary: z.string().optional().describe("A summary of historical soil test data for this field if it was found and used as context."),
 });
 export type InterpretSoilHealthOutput = z.infer<typeof InterpretSoilHealthOutputSchema>;
 
@@ -42,11 +44,15 @@ export async function interpretSoilHealth(input: InterpretSoilHealthInput): Prom
 
 const prompt = ai.definePrompt({
   name: 'interpretSoilHealthPrompt',
-  input: {schema: InterpretSoilHealthInputSchema.extend({ fieldName: z.string().optional() })},
-  output: {schema: InterpretSoilHealthOutputSchema.omit({fieldName: true})}, // fieldName is for context, not AI output directly from this prompt
+  input: {schema: InterpretSoilHealthInputSchema.extend({ 
+    internalFieldName: z.string().optional(),
+    internalHistoricalContext: z.string().optional(),
+  })},
+  output: {schema: InterpretSoilHealthOutputSchema.omit({fieldName: true, historicalContextSummary: true})}, // fieldName & historical context added by flow
   prompt: `You are an expert soil scientist and agronomist.
-A farmer has provided the following soil test results{{#if fieldName}} for their field named "{{fieldName}}"{{/if}}:
+A farmer has provided the following soil test results{{#if internalFieldName}} for their field named "{{internalFieldName}}"{{/if}}:
 
+Current Test Results:
 - pH Level: {{{phLevel}}}
 - Organic Matter: {{{organicMatterPercent}}}%
 - Nitrogen (N): {{{nitrogenPPM}}} PPM
@@ -55,7 +61,13 @@ A farmer has provided the following soil test results{{#if fieldName}} for their
 {{#if cropType}}- Intended Crop: {{{cropType}}}{{/if}}
 {{#if soilTexture}}- Soil Texture: {{{soilTexture}}}{{/if}}
 
-Based on these results:
+{{#if internalHistoricalContext}}
+Historical context for this field:
+{{{internalHistoricalContext}}}
+Consider this historical data when providing your interpretation and recommendations.
+{{/if}}
+
+Based on all available information (current test and historical context if provided):
 1.  Provide an **Overall Assessment** of the soil's health.
 2.  Interpret the **pH Level**: Is it optimal? What are the implications? Does it need adjustment (e.g., liming, sulfur)?
 3.  Interpret the **Organic Matter Percentage**: Is it good? Why is it important? How can it be improved if needed?
@@ -74,32 +86,63 @@ const interpretSoilHealthFlow = ai.defineFlow(
   },
   async (input) => {
     let fieldName: string | undefined = undefined;
+    let historicalContextSummaryForPrompt: string | undefined = undefined;
+    let historicalContextSummaryForOutput: string | undefined = undefined;
+
     if (input.fieldId && input.farmId) {
       try {
-        const fieldDocRef = doc(adminDb, "farms", input.farmId, "fields", input.fieldId); // Assuming fields is a subcollection of farms
-        // If fields is a top-level collection: const fieldDocRef = doc(adminDb, "fields", input.fieldId);
-        // And add a check: if (fieldDocSnap.data()?.farmId !== input.farmId) throw new Error("Field does not belong to the specified farm.");
+        const fieldDocRef = doc(adminDb, "fields", input.fieldId);
         const fieldDocSnap = await getDoc(fieldDocRef);
-        if (fieldDocSnap.exists()) {
+        if (fieldDocSnap.exists() && fieldDocSnap.data()?.farmId === input.farmId) {
           fieldName = fieldDocSnap.data()?.fieldName;
+
+          // Fetch historical soil data for this field
+          const historicalQuery = query(
+            collection(adminDb, "soilDataLogs"),
+            where("farmId", "==", input.farmId),
+            where("fieldId", "==", input.fieldId),
+            orderBy("sampleDate", "desc"),
+            limit(5) // Get last 5 tests for context
+          );
+          const historicalSnapshot = await getDocs(historicalQuery);
+          if (!historicalSnapshot.empty) {
+            const historicalLines: string[] = ["Recent past soil tests for this field:"];
+            historicalSnapshot.docs.forEach(logDoc => {
+              const logData = logDoc.data();
+              let line = `- On ${format(parseISO(logData.sampleDate), "MMM yyyy")}:`;
+              if (logData.phLevel !== undefined) line += ` pH ${logData.phLevel.toFixed(1)}`;
+              if (logData.organicMatter) line += `, OM ${logData.organicMatter}`;
+              if (logData.nutrients?.nitrogen) line += `, N ${logData.nutrients.nitrogen}`;
+              if (logData.nutrients?.phosphorus) line += `, P ${logData.nutrients.phosphorus}`;
+              if (logData.nutrients?.potassium) line += `, K ${logData.nutrients.potassium}`;
+              historicalLines.push(line + ".");
+            });
+            if (historicalLines.length > 1) { // more than just the header
+                historicalContextSummaryForPrompt = historicalLines.join("\n");
+                historicalContextSummaryForOutput = "AI considered the following historical context: " + historicalLines.slice(1).join(" ").replace(/- /g, "");
+            }
+          } else {
+            historicalContextSummaryForOutput = "No significant historical soil test data found for this field in the logs.";
+          }
         }
       } catch (error) {
-        console.error("Error fetching field name for soil interpretation:", error);
-        // Proceed without fieldName if it fails
+        console.error("Error fetching field or historical soil data:", error);
+        historicalContextSummaryForOutput = "Could not fetch historical soil data due to an error.";
       }
     }
     
     const promptInput = {
         ...input,
-        fieldName: fieldName,
+        internalFieldName: fieldName,
+        internalHistoricalContext: historicalContextSummaryForPrompt,
     };
 
     const {output} = await prompt(promptInput);
     
-    // Add fieldName to the final output if it was determined
     return {
         ...output!,
         fieldName: fieldName,
+        historicalContextSummary: historicalContextSummaryForOutput,
     };
   }
 );

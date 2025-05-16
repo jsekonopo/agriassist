@@ -1,4 +1,3 @@
-
 "use client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -25,7 +24,7 @@ interface FieldOption {
 
 const numberPositive = (name: string) => z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)), 
-    z.number({required_error: `${name} is required.`, invalid_type_error: `${name} must be a number.`}).gte(0, `${name} must be non-negative.`) // Allow 0 for some soil metrics
+    z.number({required_error: `${name} is required.`, invalid_type_error: `${name} must be a number.`}).gte(0, `${name} must be non-negative.`)
 );
 
 const formSchema = z.object({
@@ -119,11 +118,11 @@ export function AiSoilInterpretationForm() {
             name="fieldId"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-base">Select Field (Optional)</FormLabel>
+                <FormLabel className="text-base">Select Field (Optional for Historical Context)</FormLabel>
                 <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isLoadingFields || farmFields.length === 0}>
                   <FormControl>
                     <SelectTrigger>
-                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (farmFields.length === 0 ? "No fields defined" : "Select a field for context")} />
+                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (farmFields.length === 0 ? "No fields defined" : "Select a field")} />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
@@ -134,7 +133,7 @@ export function AiSoilInterpretationForm() {
                     ))}
                   </SelectContent>
                 </Select>
-                <FormDescription>Selecting a field can provide more context to the AI.</FormDescription>
+                <FormDescription>Selecting a field allows the AI to consider its historical soil data.</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -274,6 +273,7 @@ export function AiSoilInterpretationForm() {
         <Card className="mt-6 shadow-md animate-in fade-in-50 duration-500">
           <CardHeader>
              <CardTitle className="flex items-center gap-2"><Icons.CheckCircle2 className="h-5 w-5 text-green-500"/>Soil Health Interpretation {result.fieldName ? `for ${result.fieldName}` : ''}</CardTitle>
+             {result.historicalContextSummary && <CardDescription className="text-xs italic">{result.historicalContextSummary}</CardDescription>}
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
