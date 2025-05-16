@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -25,6 +25,8 @@ interface FieldDefinitionLog {
   fieldName: string;
 }
 
+const commonIrrigationUnits = ["mm", "inches", "gallons", "liters", "acre-inches", "Other"] as const;
+
 const irrigationLogSchema = z.object({
   fieldId: z.string().min(1, "Field selection is required."),
   irrigationDate: z.date({ required_error: "Irrigation date is required." }),
@@ -33,7 +35,7 @@ const irrigationLogSchema = z.object({
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({required_error: "Amount applied is required.", invalid_type_error: "Amount must be a number"}).positive("Amount must be positive.")
   ),
-  amountUnit: z.string().min(1, "Unit for amount is required (e.g., inches, mm, gallons)."),
+  amountUnit: z.string().min(1, "Unit for amount is required."),
   durationHours: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "Duration must be a number"}).positive("Duration must be positive.").optional()
@@ -58,7 +60,7 @@ export function IrrigationLogForm({ onLogSaved }: IrrigationLogFormProps) {
     defaultValues: {
       fieldId: "",
       waterSource: "",
-      amountUnit: "mm",
+      amountUnit: "mm", // Default to a common irrigation unit
       irrigationMethod: "",
       notes: "",
     },
@@ -257,9 +259,19 @@ export function IrrigationLogForm({ onLogSaved }: IrrigationLogFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Unit</FormLabel>
-                  <FormControl>
-                    <Input placeholder="e.g., mm, inches, gallons" {...field} />
-                  </FormControl>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select unit" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {commonIrrigationUnits.map(unit => (
+                        <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>Select 'Other' and specify in notes if needed.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -299,11 +311,14 @@ export function IrrigationLogForm({ onLogSaved }: IrrigationLogFormProps) {
         <Button type="submit" disabled={isSubmitting || !user || !user.farmId || isLoadingFields}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
+              <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
               Saving Log...
             </>
           ) : (
-            "Save Irrigation Log"
+            <>
+              <Icons.Water className="mr-2 h-4 w-4" />
+               Save Irrigation Log
+            </>
           )}
         </Button>
         {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save logs.</p>}

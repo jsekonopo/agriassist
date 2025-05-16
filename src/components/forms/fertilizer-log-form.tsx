@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -25,6 +25,8 @@ interface FieldDefinitionLog {
   fieldName: string;
 }
 
+const commonFertilizerUnits = ["kg/ha", "lbs/acre", "kg", "lbs", "g", "L", "mL", "tons", "gallons/acre", "Other"] as const;
+
 const fertilizerLogSchema = z.object({
   fieldId: z.string().min(1, "Field selection is required."),
   dateApplied: z.date({ required_error: "Application date is required." }),
@@ -33,7 +35,7 @@ const fertilizerLogSchema = z.object({
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({required_error: "Amount applied is required.", invalid_type_error: "Amount must be a number"}).positive("Amount must be positive.")
   ),
-  amountUnit: z.string().min(1, "Unit for amount is required (e.g., kg, lbs, tons)."),
+  amountUnit: z.string().min(1, "Unit for amount is required."),
   applicationMethod: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -54,7 +56,7 @@ export function FertilizerLogForm({ onLogSaved }: FertilizerLogFormProps) {
     defaultValues: {
       fieldId: "",
       fertilizerType: "",
-      amountUnit: "kg",
+      amountUnit: "kg/ha", // Default to a common application rate unit
       applicationMethod: "",
       notes: "",
     },
@@ -110,7 +112,7 @@ export function FertilizerLogForm({ onLogSaved }: FertilizerLogFormProps) {
         dateApplied: undefined,
         fertilizerType: "",
         amountApplied: undefined,
-        amountUnit: "kg",
+        amountUnit: "kg/ha",
         applicationMethod: "",
         notes: "",
       });
@@ -239,9 +241,19 @@ export function FertilizerLogForm({ onLogSaved }: FertilizerLogFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Unit</FormLabel>
-                  <FormControl>
-                    <Input placeholder="e.g., kg, lbs, tons/acre" {...field} />
-                  </FormControl>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select unit" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {commonFertilizerUnits.map(unit => (
+                        <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>Select 'Other' and specify in notes if needed.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -251,7 +263,7 @@ export function FertilizerLogForm({ onLogSaved }: FertilizerLogFormProps) {
             control={form.control}
             name="applicationMethod"
             render={({ field }) => (
-              <FormItem className="md:col-span-2"> {/* Spans two columns on medium screens and up if needed */}
+              <FormItem className="md:col-span-2">
                 <FormLabel>Application Method (Optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="e.g., Broadcast, Banded, Spreader" {...field} />
@@ -281,11 +293,14 @@ export function FertilizerLogForm({ onLogSaved }: FertilizerLogFormProps) {
         <Button type="submit" disabled={isSubmitting || !user || !user.farmId || isLoadingFields}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
+              <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
               Saving Log...
             </>
           ) : (
-            "Save Fertilizer Log"
+            <>
+              <Icons.FertilizerLog className="mr-2 h-4 w-4" />
+              Save Fertilizer Log
+            </>
           )}
         </Button>
         {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save logs.</p>}
@@ -293,3 +308,5 @@ export function FertilizerLogForm({ onLogSaved }: FertilizerLogFormProps) {
     </Form>
   );
 }
+
+    

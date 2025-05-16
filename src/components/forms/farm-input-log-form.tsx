@@ -21,6 +21,7 @@ import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const inputTypes = ["Seed", "Fertilizer", "Pesticide", "Other"] as const;
+const commonInputUnits = ["kg", "lbs", "liters", "gallons", "bags", "units", "Other"] as const;
 
 const farmInputLogSchema = z.object({
   inputName: z.string().min(1, "Input name is required."),
@@ -29,7 +30,7 @@ const farmInputLogSchema = z.object({
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({required_error: "Quantity is required.", invalid_type_error: "Quantity must be a number"}).positive("Quantity must be positive.")
   ),
-  quantityUnit: z.string().min(1, "Quantity unit is required (e.g., kg, bags, liters)."),
+  quantityUnit: z.string().min(1, "Quantity unit is required."), // Keep as string to allow "Other" or custom, but Select will guide
   purchaseDate: z.date({ required_error: "Purchase date is required." }),
   purchaseCost: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
@@ -52,7 +53,7 @@ export function FarmInputLogForm({ onLogSaved }: FarmInputLogFormProps) {
     resolver: zodResolver(farmInputLogSchema),
     defaultValues: {
       inputName: "",
-      quantityUnit: "kg",
+      quantityUnit: "kg", // Default to a common unit
       supplier: "",
       notes: "",
     },
@@ -161,9 +162,19 @@ export function FarmInputLogForm({ onLogSaved }: FarmInputLogFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Unit</FormLabel>
-                  <FormControl>
-                    <Input placeholder="e.g., kg, bags, liters" {...field} />
-                  </FormControl>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select unit" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {commonInputUnits.map(unit => (
+                        <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>Select 'Other' and specify in notes if needed.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -258,11 +269,14 @@ export function FarmInputLogForm({ onLogSaved }: FarmInputLogFormProps) {
         <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
+              <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
               Saving Input...
             </>
           ) : (
-            "Save Farm Input"
+            <>
+              <Icons.InputsInventory className="mr-2 h-4 w-4" />
+               Add Farm Input
+            </>
           )}
         </Button>
         {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save inputs.</p>}
@@ -270,3 +284,5 @@ export function FarmInputLogForm({ onLogSaved }: FarmInputLogFormProps) {
     </Form>
   );
 }
+
+    
