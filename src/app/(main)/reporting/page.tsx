@@ -17,18 +17,20 @@ interface HarvestingLog {
   cropName: string;
   yieldAmount?: number;
   yieldUnit?: string;
+  farmId: string; // Ensure this is part of the interface
   userId: string;
 }
 
 interface CropYieldSummary {
   cropName: string;
   totalYield: number;
-  unit: string; 
+  unit: string;
 }
 
 interface TaskLog {
   id: string;
   status: "To Do" | "In Progress" | "Done";
+  farmId: string; // Ensure this is part of the interface
   userId: string;
 }
 
@@ -47,7 +49,7 @@ export default function ReportingPage() {
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) { // Check for farmId
       setIsLoading(false);
       setCropYields([]);
       setTaskSummary(null);
@@ -59,17 +61,17 @@ export default function ReportingPage() {
 
     const fetchReportData = async () => {
       try {
-        // Process Harvesting Logs from Firestore
-        const harvestingQuery = query(collection(db, "harvestingLogs"), where("userId", "==", user.uid));
+        // Process Harvesting Logs from Firestore, filtered by farmId
+        const harvestingQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingSnapshot = await getDocs(harvestingQuery);
         const harvestingLogs: HarvestingLog[] = harvestingSnapshot.docs.map(doc => doc.data() as HarvestingLog);
-        
+
         const yieldMap = new Map<string, { total: number; unit: string; count: number }>();
         harvestingLogs.forEach(log => {
           if (log.cropName && log.yieldAmount !== undefined) {
             const existing = yieldMap.get(log.cropName) || { total: 0, unit: log.yieldUnit || 'units', count: 0 };
             existing.total += log.yieldAmount;
-            if (!existing.unit && log.yieldUnit) existing.unit = log.yieldUnit;
+            if (!existing.unit && log.yieldUnit) existing.unit = log.yieldUnit; // Keep first encountered unit or default
             existing.count++;
             yieldMap.set(log.cropName, existing);
           }
@@ -81,11 +83,11 @@ export default function ReportingPage() {
         }));
         setCropYields(yields);
 
-        // Process Task Logs from Firestore
-        const tasksQuery = query(collection(db, "taskLogs"), where("userId", "==", user.uid));
+        // Process Task Logs from Firestore, filtered by farmId
+        const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId));
         const tasksSnapshot = await getDocs(tasksQuery);
         const taskLogs: TaskLog[] = tasksSnapshot.docs.map(doc => doc.data() as TaskLog);
-        
+
         const summary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: taskLogs.length };
         taskLogs.forEach(log => {
           if (log.status === "To Do") summary.toDo++;
@@ -101,7 +103,7 @@ export default function ReportingPage() {
         setIsLoading(false);
       }
     };
-    
+
     fetchReportData();
   }, [user]);
 
@@ -123,6 +125,26 @@ export default function ReportingPage() {
         </div>
     );
   }
+  
+  if (!user?.farmId && !isLoading && user) { // User is logged in but not associated with a farm
+    return (
+         <div className="space-y-8">
+            <PageHeader
+                title="Farm Reports"
+                description="Summary of your farm's activities and performance."
+                icon={Icons.Reporting}
+            />
+            <Alert>
+                <Icons.Info className="h-4 w-4" />
+                <AlertTitle>Farm Association Needed</AlertTitle>
+                <AlertDescription>
+                Your account needs to be associated with a farm to view reports. Please check your profile or contact support.
+                </AlertDescription>
+            </Alert>
+        </div>
+    );
+  }
+
 
   if (error) {
     return (
@@ -152,7 +174,7 @@ export default function ReportingPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Crop Yield Summary</CardTitle>
-          <CardDescription>Total harvested yield per crop.</CardDescription>
+          <CardDescription>Total harvested yield per crop for your farm.</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -163,7 +185,7 @@ export default function ReportingPage() {
             </div>
           ) : cropYields.length > 0 ? (
             <Table>
-              <TableCaption>Data derived from your harvesting logs in Firestore.</TableCaption>
+              <TableCaption>Data derived from your farm's harvesting logs in Firestore.</TableCaption>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[200px]">Crop Name</TableHead>
@@ -186,7 +208,7 @@ export default function ReportingPage() {
               <Icons.Info className="h-4 w-4" />
               <AlertTitle>No Yield Data</AlertTitle>
               <AlertDescription>
-                No harvesting logs with yield information found in Firestore to generate this report.
+                No harvesting logs with yield information found in Firestore for this farm to generate this report.
               </AlertDescription>
             </Alert>
           )}
@@ -196,7 +218,7 @@ export default function ReportingPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Task Status Overview</CardTitle>
-          <CardDescription>Summary of tasks by their current status.</CardDescription>
+          <CardDescription>Summary of your farm's tasks by their current status.</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -217,7 +239,7 @@ export default function ReportingPage() {
                 <Icons.Info className="h-4 w-4" />
                 <AlertTitle>No Task Data</AlertTitle>
                 <AlertDescription>
-                  No tasks found in Firestore to generate this summary.
+                  No tasks found in Firestore for this farm to generate this summary.
                 </AlertDescription>
               </Alert>
           )}

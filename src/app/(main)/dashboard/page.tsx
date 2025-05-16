@@ -28,12 +28,16 @@ interface Field {
   fieldName: string;
   fieldSize?: number;
   fieldSizeUnit?: string;
+  farmId: string; // Added farmId
+  userId: string;
 }
 
 interface PlantingLog {
   id: string;
   cropName: string;
   plantingDate: string; // YYYY-MM-DD
+  farmId: string;
+  userId: string;
 }
 
 interface HarvestingLog {
@@ -41,6 +45,8 @@ interface HarvestingLog {
   cropName: string;
   yieldAmount?: number;
   yieldUnit?: string;
+  farmId: string;
+  userId: string;
 }
 
 interface TaskLog {
@@ -48,16 +54,16 @@ interface TaskLog {
   taskName: string;
   dueDate?: string | null; // YYYY-MM-DD or null
   status: "To Do" | "In Progress" | "Done";
+  farmId: string;
+  userId: string;
 }
 
 interface CropYieldData {
   name: string;
   totalYield: number;
-  unit?: string; // To handle units in tooltip, though chart might just show number
+  unit?: string;
 }
 
-
-// Function to get weather description from WMO code
 const getWeatherDescription = (code: number): string => {
   const descriptions: Record<number, string> = {
     0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog',
@@ -75,7 +81,7 @@ const getWeatherDescription = (code: number): string => {
 const HECTARE_TO_ACRE = 2.47105;
 
 const sampleResourceData = [
-  { name: 'Water (Sample)', value: 65 }, 
+  { name: 'Water (Sample)', value: 65 },
   { name: 'Fertilizer (Sample)', value: 40 },
 ];
 const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))'];
@@ -121,8 +127,16 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (!user || authLoading) {
-      setDataLoading(true); // Keep loading if auth is still processing or no user
+    if (!user || authLoading || !user.farmId) {
+      setDataLoading(true);
+      if (!authLoading && user && !user.farmId) { // User loaded but no farmId
+        setDataLoading(false); // Stop loading to show N/A or relevant messages
+        setTotalAcreage(0);
+        setActiveCropsCount(0);
+        setNextHarvestCrop("N/A");
+        setCropYieldData([]);
+        setUpcomingTasks([]);
+      }
       return;
     }
 
@@ -130,7 +144,7 @@ export default function DashboardPage() {
     const fetchData = async () => {
       try {
         // Fetch Fields for Total Acreage
-        const fieldsQuery = query(collection(db, "fields"), where("userId", "==", user.uid));
+        const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
         let acreage = 0;
         fieldsSnapshot.docs.forEach(doc => {
@@ -146,15 +160,15 @@ export default function DashboardPage() {
         setTotalAcreage(acreage > 0 ? parseFloat(acreage.toFixed(1)) : 0);
 
         // Fetch Planting Logs for Active Crops & Next Harvest
-        const plantingLogsQuery = query(collection(db, "plantingLogs"), where("userId", "==", user.uid), orderBy("plantingDate", "desc"));
+        const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
         const pLogs = plantingLogsSnapshot.docs.map(doc => doc.data() as PlantingLog);
         const uniqueCrops = new Set(pLogs.map(log => log.cropName));
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
-        
+
         // Fetch Harvesting Logs for Crop Yield Overview
-        const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("userId", "==", user.uid));
+        const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
         const hLogs = harvestingLogsSnapshot.docs.map(doc => doc.data() as HarvestingLog);
         const yields: { [key: string]: { total: number; unit?: string } } = {};
@@ -168,13 +182,12 @@ export default function DashboardPage() {
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
 
         // Fetch Task Logs for Upcoming Tasks
-        const tasksQuery = query(collection(db, "taskLogs"), where("userId", "==", user.uid), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
+        const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
         setUpcomingTasks(tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TaskLog)));
 
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
-        // Potentially set an error state here to show in UI
       } finally {
         setDataLoading(false);
       }
@@ -194,22 +207,22 @@ export default function DashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <DashboardStatsCard
           title="Total Acreage"
-          value={dataLoading ? undefined : (totalAcreage !== undefined ? totalAcreage : "N/A")}
+          value={dataLoading || authLoading ? undefined : (totalAcreage !== undefined ? totalAcreage : "N/A")}
           unit={totalAcreage !== undefined && totalAcreage > 0 ? "acres" : ""}
           icon={Icons.Location}
-          isLoading={dataLoading}
+          isLoading={dataLoading || authLoading}
         />
         <DashboardStatsCard
           title="Active Crops"
-          value={dataLoading ? undefined : (activeCropsCount !== undefined ? activeCropsCount : "N/A")}
+          value={dataLoading || authLoading ? undefined : (activeCropsCount !== undefined ? activeCropsCount : "N/A")}
           icon={Icons.Planting}
-          isLoading={dataLoading}
+          isLoading={dataLoading || authLoading}
         />
         <DashboardStatsCard
           title="Next Planned Harvest"
-          value={dataLoading ? undefined : (nextHarvestCrop || "N/A")}
+          value={dataLoading || authLoading ? undefined : (nextHarvestCrop || "N/A")}
           icon={Icons.Harvesting}
-          isLoading={dataLoading}
+          isLoading={dataLoading || authLoading}
           trend={nextHarvestCrop && nextHarvestCrop !== "N/A" ? "Based on latest planting" : ""}
         />
          <Card className="shadow-lg hover:shadow-xl transition-shadow duration-300">
@@ -246,10 +259,10 @@ export default function DashboardPage() {
         <Card className="lg:col-span-2 shadow-lg">
           <CardHeader>
             <CardTitle>Crop Yield Overview</CardTitle>
-            <CardDescription>Total harvested yield per crop from your logs.</CardDescription>
+            <CardDescription>Total harvested yield per crop from your farm's logs.</CardDescription>
           </CardHeader>
           <CardContent className="h-[350px]">
-            {dataLoading ? <Skeleton className="w-full h-full" /> : 
+            {dataLoading || authLoading ? <Skeleton className="w-full h-full" /> :
               cropYieldData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={cropYieldData}>
@@ -267,7 +280,7 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
               ) : (
                 <div className="flex items-center justify-center h-full">
-                  <p className="text-muted-foreground">No harvesting data to display.</p>
+                  <p className="text-muted-foreground">No harvesting data for this farm to display.</p>
                 </div>
               )
             }
@@ -311,10 +324,10 @@ export default function DashboardPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Upcoming Tasks</CardTitle>
-          <CardDescription>Key activities for the upcoming period.</CardDescription>
+          <CardDescription>Key activities for your farm.</CardDescription>
         </CardHeader>
         <CardContent>
-          {dataLoading ? (
+          {dataLoading || authLoading ? (
             <>
               <Skeleton className="h-10 w-full mb-2" />
               <Skeleton className="h-10 w-full mb-2" />
@@ -322,7 +335,7 @@ export default function DashboardPage() {
             </>
           ) : upcomingTasks.length > 0 ? (
             <ul className="space-y-3">
-              {upcomingTasks.slice(0, 5).map(task => ( // Display up to 5 tasks
+              {upcomingTasks.slice(0, 5).map(task => (
                 <li key={task.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-md">
                   <div>
                     <p className="font-medium">{task.taskName}</p>
@@ -331,19 +344,18 @@ export default function DashboardPage() {
                       {task.dueDate && ` - Due: ${format(parseISO(task.dueDate), "MMM dd, yyyy")}`}
                     </p>
                   </div>
-                  {/* <Button variant="outline" size="sm">View Details</Button> */}
                 </li>
               ))}
             </ul>
           ) : (
-             <p className="text-muted-foreground">No upcoming tasks.</p>
+             <p className="text-muted-foreground">No upcoming tasks for this farm.</p>
           )}
           {upcomingTasks.length > 5 && (
              <Button variant="link" className="mt-4 px-0" asChild>
                 <Link href="/data-management?tab=tasks">View all tasks</Link>
              </Button>
           )}
-           {upcomingTasks.length === 0 && !dataLoading && (
+           {upcomingTasks.length === 0 && !dataLoading && !authLoading && (
              <Button variant="link" className="mt-4 px-0" asChild>
                 <Link href="/data-management?tab=tasks">Add a new task</Link>
              </Button>

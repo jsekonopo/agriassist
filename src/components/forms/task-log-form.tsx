@@ -50,10 +50,10 @@ export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
   });
 
   async function onSubmit(values: z.infer<typeof taskLogSchema>) {
-    if (!user) {
+    if (!user || !user.uid || !user.farmId) {
       toast({
         title: "Authentication Error",
-        description: "You must be logged in to save a task.",
+        description: "You must be logged in and associated with a farm to save a task.",
         variant: "destructive",
       });
       return;
@@ -63,6 +63,7 @@ export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
       const taskData = {
         ...values,
         userId: user.uid,
+        farmId: user.farmId,
         dueDate: values.dueDate ? format(values.dueDate, "yyyy-MM-dd") : null, // Store as string or null
         createdAt: serverTimestamp(),
       };
@@ -197,10 +198,10 @@ export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
             )}
           />
         </div>
-        <Button type="submit" disabled={isSubmitting || !user}>
+        <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> 
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
               Saving Task...
             </>
           ) : (
@@ -210,7 +211,7 @@ export function TaskLogForm({ onLogSaved }: TaskLogFormProps) {
             </>
           )}
         </Button>
-        {!user && <p className="text-sm text-destructive">Please log in to save tasks.</p>}
+        {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save tasks.</p>}
       </form>
     </Form>
   );

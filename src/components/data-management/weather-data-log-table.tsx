@@ -32,8 +32,10 @@ interface WeatherLog {
   windSpeedUnit?: string;
   conditions?: string;
   notes?: string;
-  submittedAt?: string; // ISO string, might be from old data or client-gen
+  submittedAt?: string; 
   createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  farmId: string;
+  userId: string;
 }
 
 interface WeatherDataLogTableProps {
@@ -49,7 +51,7 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) {
       setIsLoading(false);
       setLogs([]);
       return;
@@ -61,8 +63,8 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
       try {
         const q = query(
           collection(db, "weatherLogs"),
-          where("userId", "==", user.uid),
-          orderBy("createdAt", "desc") // Order by Firestore server timestamp
+          where("farmId", "==", user.farmId), // Query by farmId
+          orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
         const fetchedLogs: WeatherLog[] = querySnapshot.docs.map(doc => ({
@@ -84,11 +86,11 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
       }
     };
     fetchWeatherLogs();
-  }, [user, refreshTrigger, toast]);
+  }, [user?.farmId, refreshTrigger, toast]);
 
   const handleDeleteLog = async (logId: string) => {
-     if (!user) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+     if (!user || !user.farmId) {
+      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
       return;
     }
     if (window.confirm("Are you sure you want to delete this weather log? This action cannot be undone.")) {
@@ -110,7 +112,7 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
       }
     }
   };
-  
+
   if (isLoading) {
     return <p className="text-center text-muted-foreground py-4">Loading weather logs...</p>;
   }
@@ -125,25 +127,25 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
     );
   }
 
-  if (!user && !isLoading) {
+  if (!user?.farmId && !isLoading) {
      return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>Please Log In</AlertTitle>
+        <AlertTitle>Farm Association Required</AlertTitle>
         <AlertDescription>
-          Log in to view and manage your weather logs.
+          Log in and ensure you are associated with a farm to view weather logs.
         </AlertDescription>
       </Alert>
     );
   }
 
-  if (logs.length === 0 && user) {
+  if (logs.length === 0 && user?.farmId) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>No Weather Logs Found</AlertTitle>
+        <AlertTitle>No Weather Logs Found for this Farm</AlertTitle>
         <AlertDescription>
-          You haven&apos;t recorded any weather observations yet. Add a new log using the form.
+          Your farm hasn&apos;t recorded any weather observations yet. Add a new log using the form.
         </AlertDescription>
       </Alert>
     );
@@ -152,7 +154,7 @@ export function WeatherDataLogTable({ refreshTrigger, onLogDeleted }: WeatherDat
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your recent weather logs. Data is stored in Firestore.</TableCaption>
+        <TableCaption>A list of your farm's recent weather logs. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[150px]">Date</TableHead>

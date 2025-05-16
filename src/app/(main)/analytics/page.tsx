@@ -13,7 +13,6 @@ import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
 import { Skeleton } from '@/components/ui/skeleton';
 
-// Sample data remains for charts not yet connected to dynamic data
 const fertilizerData = [
   { month: 'Jan', usage: 50 }, { month: 'Feb', usage: 60 }, { month: 'Mar', usage: 55 },
   { month: 'Apr', usage: 70 }, { month: 'May', usage: 80 }, { month: 'Jun', usage: 75 },
@@ -30,12 +29,13 @@ interface HarvestingLog {
   harvestDate: string; // YYYY-MM-DD
   yieldAmount?: number;
   yieldUnit?: string;
+  farmId: string;
   userId: string;
 }
 
 interface DynamicYieldData {
   year: string;
-  [cropName: string]: number | string; // year is string, yields are numbers
+  [cropName: string]: number | string;
 }
 
 const chartColors = [
@@ -53,7 +53,7 @@ export default function AnalyticsPage() {
   const [isLoadingYieldData, setIsLoadingYieldData] = useState(true);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) {
       setIsLoadingYieldData(false);
       setDynamicYieldData([]);
       setUniqueCropsForChart([]);
@@ -63,7 +63,7 @@ export default function AnalyticsPage() {
     const fetchYieldData = async () => {
       setIsLoadingYieldData(true);
       try {
-        const q = query(collection(db, "harvestingLogs"), where("userId", "==", user.uid), orderBy("harvestDate", "asc"));
+        const q = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId), orderBy("harvestDate", "asc"));
         const querySnapshot = await getDocs(q);
         const logs = querySnapshot.docs.map(doc => doc.data() as HarvestingLog);
 
@@ -90,7 +90,7 @@ export default function AnalyticsPage() {
             yieldsByYearAndCrop[year][log.cropName] += log.yieldAmount;
           }
         });
-        
+
         const uniqueCropsArray = Array.from(allCrops);
         setUniqueCropsForChart(uniqueCropsArray);
 
@@ -101,12 +101,11 @@ export default function AnalyticsPage() {
           });
           return yearData;
         });
-        
+
         setDynamicYieldData(chartData);
 
       } catch (error) {
         console.error("Error fetching yield data for analytics:", error);
-        // Optionally set an error state to display to the user
       } finally {
         setIsLoadingYieldData(false);
       }
@@ -119,7 +118,7 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Farm Analytics"
-        description="Insights into your resource usage and crop yields."
+        description="Insights into your resource usage and crop yields for your farm."
         icon={Icons.Analytics}
       />
 
@@ -127,8 +126,8 @@ export default function AnalyticsPage() {
         <Icons.Info className="h-4 w-4" />
         <AlertTitle>Data Source Information</AlertTitle>
         <AlertDescription>
-          The "Historical Yield Comparison" chart below is generated from your harvesting logs.
-          The "Fertilizer Usage" and "Water Usage" charts currently display sample data. Future enhancements will allow for dynamic data from dedicated logging features.
+          The "Historical Yield Comparison" chart below is generated from your farm's harvesting logs in Firestore.
+          The "Fertilizer Usage" and "Water Usage" charts currently display sample data. Future enhancements will allow for dynamic data from dedicated logging features for your farm.
         </AlertDescription>
       </Alert>
 
@@ -144,7 +143,7 @@ export default function AnalyticsPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="month" stroke="hsl(var(--foreground))" fontSize={12} />
                 <YAxis stroke="hsl(var(--foreground))" fontSize={12}/>
-                <Tooltip 
+                <Tooltip
                     contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
                     labelStyle={{ color: 'hsl(var(--foreground))' }}
                 />
@@ -181,7 +180,7 @@ export default function AnalyticsPage() {
        <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Historical Yield Comparison</CardTitle>
-          <CardDescription>Year-over-year yield trends for your logged crops (total yield amount per year).</CardDescription>
+          <CardDescription>Year-over-year yield trends for your farm's logged crops (total yield amount per year).</CardDescription>
         </CardHeader>
         <CardContent className="h-[350px]">
           {isLoadingYieldData ? (
@@ -194,30 +193,30 @@ export default function AnalyticsPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="year" stroke="hsl(var(--foreground))" fontSize={12} />
                 <YAxis stroke="hsl(var(--foreground))" fontSize={12} />
-                <Tooltip 
+                <Tooltip
                   contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
                   labelStyle={{ color: 'hsl(var(--foreground))' }}
                 />
                 <Legend wrapperStyle={{fontSize: "12px"}}/>
                 {uniqueCropsForChart.map((cropName, index) => (
-                  <Bar 
-                    key={cropName} 
-                    dataKey={cropName} 
-                    fill={chartColors[index % chartColors.length]} 
-                    name={cropName} 
-                    radius={[4, 4, 0, 0]} 
+                  <Bar
+                    key={cropName}
+                    dataKey={cropName}
+                    fill={chartColors[index % chartColors.length]}
+                    name={cropName}
+                    radius={[4, 4, 0, 0]}
                   />
                 ))}
               </BarChart>
             </ResponsiveContainer>
           ) : (
             <div className="flex items-center justify-center h-full">
-              <p className="text-muted-foreground">No harvesting data with yields recorded to display historical trends.</p>
+              <p className="text-muted-foreground">No harvesting data with yields recorded for this farm to display historical trends.</p>
             </div>
           )}
         </CardContent>
       </Card>
-      
+
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Resource Optimization Tips</CardTitle>

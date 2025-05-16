@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -29,6 +28,8 @@ interface TaskLog {
   assignedTo?: string;
   status: "To Do" | "In Progress" | "Done";
   createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  farmId: string;
+  userId: string;
 }
 
 interface TaskLogTableProps {
@@ -44,7 +45,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) {
       setIsLoading(false);
       setLogs([]);
       return;
@@ -56,7 +57,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
       try {
         const q = query(
           collection(db, "taskLogs"),
-          where("userId", "==", user.uid),
+          where("farmId", "==", user.farmId), // Query by farmId
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -79,11 +80,11 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
       }
     };
     fetchTasks();
-  }, [user, refreshTrigger, toast]);
+  }, [user?.farmId, refreshTrigger, toast]);
 
   const handleDeleteLog = async (logId: string) => {
-    if (!user) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+    if (!user || !user.farmId) {
+      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
       return;
     }
     if (window.confirm("Are you sure you want to delete this task? This action cannot be undone.")) {
@@ -118,7 +119,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
         return "secondary";
     }
   };
-  
+
   if (isLoading) {
     return <p className="text-center text-muted-foreground py-4">Loading tasks...</p>;
   }
@@ -133,25 +134,25 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
     );
   }
 
-  if (!user && !isLoading) {
+  if (!user?.farmId && !isLoading) {
      return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>Please Log In</AlertTitle>
+        <AlertTitle>Farm Association Required</AlertTitle>
         <AlertDescription>
-          Log in to view and manage your tasks.
+          Log in and ensure you are associated with a farm to view tasks.
         </AlertDescription>
       </Alert>
     );
   }
 
-  if (logs.length === 0 && user) {
+  if (logs.length === 0 && user?.farmId) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>No Tasks Found</AlertTitle>
+        <AlertTitle>No Tasks Found for this Farm</AlertTitle>
         <AlertDescription>
-          You haven&apos;t created any tasks yet. Add a new task using the form.
+          Your farm hasn&apos;t created any tasks yet. Add a new task using the form.
         </AlertDescription>
       </Alert>
     );
@@ -180,7 +181,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
               </TableCell>
               <TableCell>{log.dueDate ? format(parseISO(log.dueDate), "MMM dd, yyyy") : "N/A"}</TableCell>
               <TableCell>{log.assignedTo || "N/A"}</TableCell>
-              <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.description}>
+              <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.description ?? undefined}>
                 {log.description || "N/A"}
               </TableCell>
               <TableCell className="text-right">

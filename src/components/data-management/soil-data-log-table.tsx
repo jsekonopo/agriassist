@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -35,6 +34,8 @@ interface SoilLog {
   treatmentsApplied?: string;
   notes?: string;
   createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  farmId: string;
+  userId: string;
 }
 
 interface SoilDataLogTableProps {
@@ -50,7 +51,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) {
       setIsLoading(false);
       setLogs([]);
       return;
@@ -62,7 +63,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
       try {
         const q = query(
           collection(db, "soilDataLogs"),
-          where("userId", "==", user.uid),
+          where("farmId", "==", user.farmId), // Query by farmId
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -73,8 +74,10 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
             try {
               const fieldDocRef = doc(db, "fields", data.fieldId);
               const fieldDocSnap = await getDoc(fieldDocRef);
-              if (fieldDocSnap.exists()) {
+              if (fieldDocSnap.exists() && fieldDocSnap.data().farmId === user.farmId) {
                 fieldName = fieldDocSnap.data().fieldName || "Unknown Field";
+              } else if (fieldDocSnap.exists()){
+                fieldName = "Field (Different Farm)";
               } else {
                 fieldName = "Deleted/Unknown Field";
               }
@@ -83,7 +86,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
               fieldName = "Error fetching field";
             }
           }
-          
+
           return {
             id: docSnapshot.id,
             ...data,
@@ -91,7 +94,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
             createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : undefined,
           } as SoilLog;
         });
-        
+
         const fetchedLogs = await Promise.all(fetchedLogsPromises);
         setLogs(fetchedLogs);
       } catch (e) {
@@ -107,11 +110,11 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
       }
     };
     fetchSoilDataLogs();
-  }, [user, refreshTrigger, toast]);
+  }, [user?.farmId, refreshTrigger, toast]);
 
   const handleDeleteLog = async (logId: string) => {
-    if (!user) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+    if (!user || !user.farmId) {
+      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
       return;
     }
     if (window.confirm("Are you sure you want to delete this soil data log? This action cannot be undone.")) {
@@ -133,7 +136,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
       }
     }
   };
-  
+
   if (isLoading) {
     return <p className="text-center text-muted-foreground py-4">Loading soil data logs...</p>;
   }
@@ -148,25 +151,25 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
     );
   }
 
-  if (!user && !isLoading) {
+  if (!user?.farmId && !isLoading) {
      return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>Please Log In</AlertTitle>
+        <AlertTitle>Farm Association Required</AlertTitle>
         <AlertDescription>
-          Log in to view and manage your soil data logs.
+          Log in and ensure you are associated with a farm to view soil data logs.
         </AlertDescription>
       </Alert>
     );
   }
 
-  if (logs.length === 0 && user) {
+  if (logs.length === 0 && user?.farmId) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>No Soil Data Logs Found</AlertTitle>
+        <AlertTitle>No Soil Data Logs Found for this Farm</AlertTitle>
         <AlertDescription>
-          You haven&apos;t recorded any soil data yet. Add a new log using the form.
+          Your farm hasn&apos;t recorded any soil data yet. Add a new log using the form.
         </AlertDescription>
       </Alert>
     );
@@ -184,7 +187,7 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your recent soil data logs. Data is stored in Firestore.</TableCaption>
+        <TableCaption>A list of your farm's recent soil data logs. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[150px]">Field</TableHead>
@@ -219,5 +222,3 @@ export function SoilDataLogTable({ refreshTrigger, onLogDeleted }: SoilDataLogTa
     </div>
   );
 }
-
-    

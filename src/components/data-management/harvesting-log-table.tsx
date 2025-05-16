@@ -30,6 +30,8 @@ interface HarvestingLog {
   yieldUnit?: string;
   notes?: string;
   createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  farmId: string; // Added farmId
+  userId: string; // Keep for auditing if needed
 }
 
 interface HarvestingLogTableProps {
@@ -45,7 +47,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) {
       setIsLoading(false);
       setLogs([]);
       return;
@@ -57,7 +59,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
       try {
         const q = query(
           collection(db, "harvestingLogs"),
-          where("userId", "==", user.uid),
+          where("farmId", "==", user.farmId), // Query by farmId
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -68,8 +70,10 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
             try {
               const fieldDocRef = doc(db, "fields", data.fieldId);
               const fieldDocSnap = await getDoc(fieldDocRef);
-              if (fieldDocSnap.exists()) {
+              if (fieldDocSnap.exists() && fieldDocSnap.data().farmId === user.farmId) {
                 fieldName = fieldDocSnap.data().fieldName || "Unknown Field";
+              } else if (fieldDocSnap.exists()){
+                 fieldName = "Field (Different Farm)";
               } else {
                  fieldName = "Deleted/Unknown Field";
               }
@@ -78,7 +82,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
               fieldName = "Error fetching field";
             }
           }
-          
+
           return {
             id: docSnapshot.id,
             ...data,
@@ -86,7 +90,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
             createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : undefined,
           } as HarvestingLog;
         });
-        
+
         const fetchedLogs = await Promise.all(fetchedLogsPromises);
         setLogs(fetchedLogs);
       } catch (e) {
@@ -102,11 +106,11 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
       }
     };
     fetchHarvestingLogs();
-  }, [user, refreshTrigger, toast]);
+  }, [user?.farmId, refreshTrigger, toast]);
 
   const handleDeleteLog = async (logId: string) => {
-    if (!user) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+    if (!user || !user.farmId) {
+      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
       return;
     }
     if (window.confirm("Are you sure you want to delete this harvesting log? This action cannot be undone.")) {
@@ -128,7 +132,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
       }
     }
   };
-  
+
   if (isLoading) {
     return <p className="text-center text-muted-foreground py-4">Loading harvesting logs...</p>;
   }
@@ -142,26 +146,26 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
       </Alert>
     );
   }
-  
-  if (!user && !isLoading) {
+
+  if (!user?.farmId && !isLoading) {
      return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>Please Log In</AlertTitle>
+        <AlertTitle>Farm Association Required</AlertTitle>
         <AlertDescription>
-          Log in to view and manage your harvesting logs.
+          Log in and ensure you are associated with a farm to view harvesting logs.
         </AlertDescription>
       </Alert>
     );
   }
 
-  if (logs.length === 0 && user) {
+  if (logs.length === 0 && user?.farmId) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>No Harvesting Logs Found</AlertTitle>
+        <AlertTitle>No Harvesting Logs Found for this Farm</AlertTitle>
         <AlertDescription>
-          You haven&apos;t recorded any harvesting activities yet. Add a new log using the form.
+          Your farm hasn&apos;t recorded any harvesting activities yet. Add a new log using the form.
         </AlertDescription>
       </Alert>
     );
@@ -170,7 +174,7 @@ export function HarvestingLogTable({ refreshTrigger, onLogDeleted }: HarvestingL
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your recent harvesting logs. Data is stored in Firestore.</TableCaption>
+        <TableCaption>A list of your farm's recent harvesting logs. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[150px]">Crop Name</TableHead>

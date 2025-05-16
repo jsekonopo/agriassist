@@ -69,10 +69,10 @@ export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
   });
 
   async function onSubmit(values: z.infer<typeof weatherDataSchema>) {
-    if (!user) {
+    if (!user || !user.uid || !user.farmId) {
       toast({
         title: "Authentication Error",
-        description: "You must be logged in to save a weather log.",
+        description: "You must be logged in and associated with a farm to save a weather log.",
         variant: "destructive",
       });
       return;
@@ -82,8 +82,9 @@ export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
       const logData = {
         ...values,
         userId: user.uid,
+        farmId: user.farmId,
         date: format(values.date, "yyyy-MM-dd"), // Format date before saving
-        submittedAt: new Date().toISOString(), // Keep for potential consistency, though createdAt is primary
+        submittedAt: new Date().toISOString(), 
         createdAt: serverTimestamp(),
       };
       await addDoc(collection(db, "weatherLogs"), logData);
@@ -289,17 +290,17 @@ export function WeatherDataForm({ onLogSaved }: WeatherDataFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting || !user}>
+        <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> {/* Using User as placeholder */}
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
               Saving...
             </>
           ) : (
             "Save Weather Log"
           )}
         </Button>
-        {!user && <p className="text-sm text-destructive">Please log in to save weather logs.</p>}
+        {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save weather logs.</p>}
       </form>
     </Form>
   );

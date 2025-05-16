@@ -21,7 +21,7 @@ import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy } from "firebase/firestore";
 
 interface FieldDefinitionLog {
-  id: string; 
+  id: string;
   fieldName: string;
 }
 
@@ -60,7 +60,7 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
   });
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) {
       setFields([]);
       setIsLoadingFields(false);
       return;
@@ -68,7 +68,7 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
     const fetchFields = async () => {
       setIsLoadingFields(true);
       try {
-        const q = query(collection(db, "fields"), where("userId", "==", user.uid), orderBy("fieldName", "asc"));
+        const q = query(collection(db, "fields"), where("farmId", "==", user.farmId), orderBy("fieldName", "asc"));
         const querySnapshot = await getDocs(q);
         const fetchedFields = querySnapshot.docs.map(doc => ({
           id: doc.id,
@@ -83,11 +83,11 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
       }
     };
     fetchFields();
-  }, [user, toast]);
+  }, [user?.farmId, toast]);
 
   async function onSubmit(values: z.infer<typeof harvestingLogSchema>) {
-    if (!user) {
-      toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" });
+    if (!user || !user.uid || !user.farmId) {
+      toast({ title: "Authentication Error", description: "You must be logged in and associated with a farm.", variant: "destructive" });
       return;
     }
     setIsSubmitting(true);
@@ -95,6 +95,7 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
       const logData = {
         ...values,
         userId: user.uid,
+        farmId: user.farmId,
         harvestDate: format(values.harvestDate, "yyyy-MM-dd"),
         createdAt: serverTimestamp(),
       };
@@ -183,14 +184,14 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Field</FormLabel>
-                 <Select 
-                    onValueChange={field.onChange} 
+                 <Select
+                    onValueChange={field.onChange}
                     defaultValue={field.value}
-                    disabled={isLoadingFields || fields.length === 0}
+                    disabled={isLoadingFields || fields.length === 0 || !user?.farmId}
                   >
                   <FormControl>
                     <SelectTrigger>
-                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (fields.length === 0 ? "No fields defined" : "Select a field")} />
+                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (fields.length === 0 ? "No fields defined for this farm" : "Select a field")} />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
@@ -201,7 +202,7 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
                         </SelectItem>
                       ))
                     ) : (
-                       !isLoadingFields && <div className="p-2 text-sm text-muted-foreground">No fields defined. Please add fields first.</div>
+                       !isLoadingFields && <div className="p-2 text-sm text-muted-foreground">No fields defined for this farm. Please add fields first.</div>
                     )}
                   </SelectContent>
                 </Select>
@@ -255,7 +256,7 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting || !user || isLoadingFields}>
+        <Button type="submit" disabled={isSubmitting || !user || !user.farmId || isLoadingFields}>
           {isSubmitting ? (
             <>
               <Icons.User className="mr-2 h-4 w-4 animate-spin" />
@@ -265,7 +266,7 @@ export function HarvestingLogForm({ onLogSaved }: HarvestingLogFormProps) {
             "Save Harvesting Log"
           )}
         </Button>
-        {!user && <p className="text-sm text-destructive">Please log in to save harvesting logs.</p>}
+        {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save harvesting logs.</p>}
       </form>
     </Form>
   );

@@ -29,6 +29,8 @@ interface PlantingLog {
   seedsUsed?: string;
   notes?: string;
   createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  farmId: string; // Added farmId
+  userId: string; // Keep for auditing if needed
 }
 
 interface PlantingLogTableProps {
@@ -44,7 +46,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) { // Check for user and farmId
       setIsLoading(false);
       setLogs([]);
       return;
@@ -56,7 +58,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
       try {
         const q = query(
           collection(db, "plantingLogs"),
-          where("userId", "==", user.uid),
+          where("farmId", "==", user.farmId), // Query by farmId
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
@@ -67,9 +69,13 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
             try {
               const fieldDocRef = doc(db, "fields", data.fieldId);
               const fieldDocSnap = await getDoc(fieldDocRef);
-              if (fieldDocSnap.exists()) {
+              // Ensure the field also belongs to the same farm for consistency
+              if (fieldDocSnap.exists() && fieldDocSnap.data().farmId === user.farmId) {
                 fieldName = fieldDocSnap.data().fieldName || "Unknown Field";
-              } else {
+              } else if (fieldDocSnap.exists()) {
+                fieldName = "Field (Different Farm)"; // Should not happen if form logic is correct
+              }
+              else {
                 fieldName = "Deleted/Unknown Field";
               }
             } catch (fieldError) {
@@ -77,7 +83,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
               fieldName = "Error fetching field name";
             }
           }
-          
+
           return {
             id: docSnapshot.id,
             ...data,
@@ -101,13 +107,14 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
       }
     };
     fetchPlantingLogs();
-  }, [user, refreshTrigger, toast]);
+  }, [user?.farmId, refreshTrigger, toast]); // Depend on user.farmId
 
   const handleDeleteLog = async (logId: string) => {
-    if (!user) {
-      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+    if (!user || !user.farmId) {
+      toast({ title: "Not Authenticated", description: "You must be logged in and associated with a farm.", variant: "destructive" });
       return;
     }
+    // Add security check here in future (e.g., Firestore rules should enforce this)
     if (window.confirm("Are you sure you want to delete this planting log? This action cannot be undone.")) {
       try {
         await deleteDoc(doc(db, "plantingLogs", logId));
@@ -127,7 +134,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
       }
     }
   };
-  
+
   if (isLoading) {
     return <p className="text-center text-muted-foreground py-4">Loading planting logs...</p>;
   }
@@ -142,25 +149,25 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
     );
   }
 
-  if (!user && !isLoading) {
+  if (!user?.farmId && !isLoading) {
      return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>Please Log In</AlertTitle>
+        <AlertTitle>Farm Association Required</AlertTitle>
         <AlertDescription>
-          Log in to view and manage your planting logs.
+          Log in and ensure you are associated with a farm to view planting logs.
         </AlertDescription>
       </Alert>
     );
   }
 
-  if (logs.length === 0 && user) {
+  if (logs.length === 0 && user?.farmId) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>No Planting Logs Found</AlertTitle>
+        <AlertTitle>No Planting Logs Found for this Farm</AlertTitle>
         <AlertDescription>
-          You haven&apos;t recorded any planting activities yet. Add a new log using the form.
+          Your farm hasn&apos;t recorded any planting activities yet. Add a new log using the form.
         </AlertDescription>
       </Alert>
     );
@@ -169,7 +176,7 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your recent planting logs. Data is stored in Firestore.</TableCaption>
+        <TableCaption>A list of your farm's recent planting logs. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[150px]">Crop Name</TableHead>
@@ -200,5 +207,3 @@ export function PlantingLogTable({ refreshTrigger, onLogDeleted }: PlantingLogTa
     </div>
   );
 }
-
-    

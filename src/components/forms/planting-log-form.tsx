@@ -17,11 +17,11 @@ import { useState, useEffect } from "react";
 import { Icons } from "../icons";
 import { useAuth } from "@/contexts/auth-context";
 import { db } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp, query, where, getDocs, Timestamp, doc } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy } from "firebase/firestore";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface FieldDefinitionLog {
-  id: string; 
+  id: string;
   fieldName: string;
 }
 
@@ -55,7 +55,7 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
   });
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) { // Check for user and farmId
       setFields([]);
       setIsLoadingFields(false);
       return;
@@ -63,7 +63,7 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
     const fetchFields = async () => {
       setIsLoadingFields(true);
       try {
-        const q = query(collection(db, "fields"), where("userId", "==", user.uid), orderBy("fieldName", "asc"));
+        const q = query(collection(db, "fields"), where("farmId", "==", user.farmId), orderBy("fieldName", "asc"));
         const querySnapshot = await getDocs(q);
         const fetchedFields = querySnapshot.docs.map(doc => ({
           id: doc.id,
@@ -78,13 +78,13 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
       }
     };
     fetchFields();
-  }, [user, toast]);
+  }, [user?.farmId, toast]); // Depend on user.farmId
 
   async function onSubmit(values: z.infer<typeof plantingLogSchema>) {
-    if (!user) {
+    if (!user || !user.uid || !user.farmId) { // Ensure user, uid and farmId exist
       toast({
         title: "Authentication Error",
-        description: "You must be logged in to save a planting log.",
+        description: "You must be logged in and associated with a farm to save a planting log.",
         variant: "destructive",
       });
       return;
@@ -93,7 +93,8 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
     try {
       const logData = {
         ...values,
-        userId: user.uid,
+        userId: user.uid, // Keep userId for auditing or direct user actions if needed
+        farmId: user.farmId, // Associate with the farm
         plantingDate: format(values.plantingDate, "yyyy-MM-dd"),
         createdAt: serverTimestamp(),
       };
@@ -107,7 +108,7 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
       if (onLogSaved) {
         onLogSaved();
       }
-      
+
     } catch (error) {
       console.error("Error saving planting log to Firestore:", error);
       toast({
@@ -184,14 +185,14 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Field</FormLabel>
-                 <Select 
-                    onValueChange={field.onChange} 
+                 <Select
+                    onValueChange={field.onChange}
                     defaultValue={field.value}
-                    disabled={isLoadingFields || fields.length === 0}
+                    disabled={isLoadingFields || fields.length === 0 || !user?.farmId}
                   >
                   <FormControl>
                     <SelectTrigger>
-                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (fields.length === 0 ? "No fields defined" : "Select a field")} />
+                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (fields.length === 0 ? "No fields defined for this farm" : "Select a field")} />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
@@ -202,7 +203,7 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
                         </SelectItem>
                       ))
                     ) : (
-                       !isLoadingFields && <div className="p-2 text-sm text-muted-foreground">No fields defined. Please add fields first.</div>
+                       !isLoadingFields && <div className="p-2 text-sm text-muted-foreground">No fields defined for this farm. Please add fields first.</div>
                     )}
                   </SelectContent>
                 </Select>
@@ -241,7 +242,7 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting || !user || isLoadingFields}>
+        <Button type="submit" disabled={isSubmitting || !user || !user.farmId || isLoadingFields}>
           {isSubmitting ? (
             <>
               <Icons.User className="mr-2 h-4 w-4 animate-spin" />
@@ -251,10 +252,8 @@ export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
             "Save Planting Log"
           )}
         </Button>
-         {!user && <p className="text-sm text-destructive">Please log in to save planting logs.</p>}
+         {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save planting logs.</p>}
       </form>
     </Form>
   );
 }
-
-    
