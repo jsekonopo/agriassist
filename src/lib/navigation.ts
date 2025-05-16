@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, Database, BarChart3, BrainCircuit, Leaf, Wheat, Layers3, CloudSun, Settings } from 'lucide-react';
+import { LayoutDashboard, Database, BarChart3, BrainCircuit, Leaf, Wheat, Layers3, CloudSun, Settings, FileText } from 'lucide-react';
+import { Icons } from '@/components/icons'; // Import Icons object
 
 export interface NavItem {
   title: string;
@@ -13,22 +14,27 @@ export const mainNavItems: NavItem[] = [
   {
     title: 'Dashboard',
     href: '/dashboard',
-    icon: LayoutDashboard,
+    icon: Icons.Dashboard,
   },
   {
     title: 'Data Management',
     href: '/data-management',
-    icon: Database,
+    icon: Icons.DataManagement,
   },
   {
     title: 'Analytics',
     href: '/analytics',
-    icon: BarChart3,
+    icon: Icons.Analytics,
   },
   {
     title: 'AI Farm Expert',
     href: '/ai-expert',
-    icon: BrainCircuit,
+    icon: Icons.AIExpert,
+  },
+  {
+    title: 'Reporting',
+    href: '/reporting',
+    icon: Icons.Reporting, // Use the new Reporting icon
   },
 ];
 
@@ -41,7 +47,7 @@ export const dataManagementIcons = {
 
 export const settingsNavItem: NavItem = {
   title: 'Settings',
-  href: '/settings', // Example, not implemented yet
+  href: '/settings', 
   icon: Settings,
-  disabled: true, // Mark as disabled if not implemented
+  disabled: true, 
 };

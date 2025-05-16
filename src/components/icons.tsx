@@ -35,9 +35,10 @@ import {
   Tractor,
   Camera,
   ScanSearch,
-  ClipboardList, // Added ClipboardList
-  Recycle, // Added Recycle
-  FlaskConical, // Added FlaskConical
+  ClipboardList,
+  Recycle,
+  FlaskConical,
+  FileText, // Added FileText
 } from 'lucide-react';
 
 export const Icons = {
@@ -76,9 +77,10 @@ export const Icons = {
   Tractor,
   Camera,
   ScanSearch,
-  ClipboardList, // Export ClipboardList
-  Recycle, // Export Recycle
-  FlaskConical, // Export FlaskConical
+  ClipboardList,
+  Recycle,
+  FlaskConical,
+  Reporting: FileText, // Export FileText as Reporting
 };
 
 export type IconName = keyof typeof Icons;
