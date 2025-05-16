@@ -36,7 +36,7 @@ function AcceptInvitationContent() {
 
     if (!firebaseUser) {
       setStatus('prompt_login');
-      setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, the invitation should appear on your profile page, or you can try this link again.');
+      setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, try this link again if not automatically processed.');
       setProcessed(true);
       return;
     }
@@ -63,8 +63,8 @@ function AcceptInvitationContent() {
           setStatus('success');
           setMessage(result.message || 'Invitation accepted successfully! You are now part of the farm.');
           toast({ title: 'Success', description: result.message || 'Invitation accepted!' });
-          await refreshUserData(); // Refresh context to get new farm details
-          router.push('/profile'); // Or '/dashboard'
+          await refreshUserData(); 
+          router.push('/profile'); 
         } else {
           setStatus('error');
           setMessage(result.message || 'Failed to process invitation. The token might be invalid, expired, or already used.');
@@ -148,10 +148,10 @@ function AcceptInvitationContent() {
             <p className="text-muted-foreground">{message}</p>
             <div className="flex flex-col sm:flex-row gap-2">
               <Button asChild className="flex-1">
-                <Link href={`/login?redirect=/accept-invitation?token=${token}`}>Login</Link>
+                <Link href={`/login?redirect=/accept-invitation?token=${encodeURIComponent(token || '')}`}>Login</Link>
               </Button>
               <Button asChild variant="outline" className="flex-1">
-                <Link href={`/register?redirect=/accept-invitation?token=${token}`}>Register</Link>
+                <Link href={`/register?redirect=/accept-invitation?token=${encodeURIComponent(token || '')}`}>Register</Link>
               </Button>
             </div>
             <p className="text-xs text-muted-foreground text-center pt-2">
@@ -174,7 +174,7 @@ export default function AcceptInvitationPage() {
           <span className="text-2xl font-semibold">AgriAssist</span>
         </Link>
       </div>
-      <Suspense fallback={<div>Loading invitation...</div>}>
+      <Suspense fallback={<div className="text-center p-8"><Icons.Search className="h-12 w-12 text-primary animate-spin mx-auto" /><p className="mt-2 text-muted-foreground">Loading invitation...</p></div>}>
         <AcceptInvitationContent />
       </Suspense>
     </div>
