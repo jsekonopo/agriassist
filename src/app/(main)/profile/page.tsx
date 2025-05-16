@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useAuth, type PlanId, type User } from '@/contexts/auth-context'; // Import User type
+import { useAuth, type PlanId, type User, type UserRole } from '@/contexts/auth-context'; // Import User type
 import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +13,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useState, useEffect, useCallback } from 'react';
 import { Separator } from '@/components/ui/separator';
@@ -36,14 +37,18 @@ const profileFormSchema = z.object({
   farmName: z.string().min(2, { message: "Farm name must be at least 2 characters." }),
 });
 
+const rolesForSelection: UserRole[] = ['admin', 'editor', 'viewer'];
+
 const inviteStaffFormSchema = z.object({
   staffEmail: z.string().email({ message: "Please enter a valid email address." }),
+  role: z.enum(rolesForSelection, { required_error: "Please select a role for the staff member."}),
 });
 
 interface StaffMemberDisplay {
   uid: string;
   name: string;
   email: string;
+  role: UserRole;
 }
 
 interface PendingInvitation {
@@ -54,6 +59,7 @@ interface PendingInvitation {
   farmName?: string; 
   invitedEmail: string;
   invitedUserUid: string | null; 
+  invitedRole: UserRole;
   status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'error_farm_not_found' | 'expired';
   createdAt: Timestamp;
   tokenExpiresAt?: Timestamp;
@@ -78,7 +84,7 @@ export default function ProfilePage() {
     declineInvitation, 
     revokeInvitation, 
     refreshUserData,
-    cancelSubscription // Get cancelSubscription directly from useAuth
+    cancelSubscription
   } = useAuth();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
@@ -104,6 +110,7 @@ export default function ProfilePage() {
     resolver: zodResolver(inviteStaffFormSchema),
     defaultValues: {
       staffEmail: "",
+      role: 'viewer', // Default role for new invites
     },
   });
 
@@ -117,31 +124,15 @@ export default function ProfilePage() {
   }, [user, profileForm, isEditing]);
 
   const fetchStaffDetails = useCallback(async () => {
-    if (!user?.isFarmOwner || !user.staffMembers || user.staffMembers.length === 0) {
+    if (!user?.isFarmOwner || !user.staff || user.staff.length === 0) {
       setStaffDetails([]);
       return;
     }
     setIsLoadingStaffDetails(true);
-    try {
-      const detailsPromises = user.staffMembers.map(async (staffUid) => {
-        if (staffUid === user.uid) return null;
-        const userDocRef = doc(db, "users", staffUid);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          const staffData = userDocSnap.data() as User; // Cast to User
-          return { uid: staffUid, name: staffData.name || 'N/A', email: staffData.email || 'N/A' };
-        }
-        return { uid: staffUid, name: 'Unknown User', email: 'N/A (User data not found)' };
-      });
-      const resolvedDetails = (await Promise.all(detailsPromises)).filter(Boolean) as StaffMemberDisplay[];
-      setStaffDetails(resolvedDetails);
-    } catch (error) {
-      console.error("Error fetching staff details:", error);
-      toast({ title: "Error", description: "Could not fetch staff details.", variant: "destructive" });
-    } finally {
-      setIsLoadingStaffDetails(false);
-    }
-  }, [user, toast]); // Updated dependency: user object itself
+    // staff in user context is now StaffMemberWithDetails which includes role, name, email
+    setStaffDetails(user.staff.filter(staffMember => staffMember.uid !== user.uid));
+    setIsLoadingStaffDetails(false);
+  }, [user]); 
 
   useEffect(() => {
     if (user?.isFarmOwner) {
@@ -149,7 +140,7 @@ export default function ProfilePage() {
     } else {
         setStaffDetails([]);
     }
-  }, [user?.isFarmOwner, fetchStaffDetails]);
+  }, [user?.isFarmOwner, user?.staff, fetchStaffDetails]);
 
 
   const fetchMyPendingInvitations = useCallback(async () => {
@@ -160,7 +151,7 @@ export default function ProfilePage() {
     setIsLoadingMyInvitations(true);
     try {
       const invites: PendingInvitation[] = [];
-      // Query by UID
+      
       const qByUid = query(
         collection(db, "pendingInvitations"),
         where("invitedUserUid", "==", user.uid),
@@ -169,7 +160,6 @@ export default function ProfilePage() {
       const uidSnapshot = await getDocs(qByUid);
       uidSnapshot.docs.forEach(docSnap => invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation));
 
-      // Query by email (case-insensitive for broader matching if UID wasn't set on invite initially)
       const qByEmail = query(
         collection(db, "pendingInvitations"),
         where("invitedEmail", "==", user.email.toLowerCase()),
@@ -259,7 +249,7 @@ export default function ProfilePage() {
       return;
     }
     setIsInvitingStaff(true);
-    const result = await inviteStaffMemberByEmail(values.staffEmail);
+    const result = await inviteStaffMemberByEmail(values.staffEmail, values.role);
     toast({
       title: result.success ? "Invitation Request Logged" : "Invitation Failed",
       description: result.message,
@@ -300,7 +290,7 @@ export default function ProfilePage() {
     if (result.success) {
       await refreshUserData(); 
       fetchMyPendingInvitations(); 
-      if (user?.isFarmOwner) fetchFarmPendingInvitations(); // Refresh owner's view if they were also an owner
+      if (user?.isFarmOwner) fetchFarmPendingInvitations(); 
     }
   }
 
@@ -378,6 +368,8 @@ export default function ProfilePage() {
       </div>
     );
   }
+  
+  const userRoleDisplay = user.roleOnCurrentFarm ? user.roleOnCurrentFarm.charAt(0).toUpperCase() + user.roleOnCurrentFarm.slice(1) : (user.isFarmOwner ? 'Owner' : 'Not associated');
 
   return (
     <div className="space-y-6">
@@ -395,7 +387,7 @@ export default function ProfilePage() {
                {user.farmName && 
                 <p className="text-sm text-muted-foreground mt-1">
                   Farm: <span className="font-medium text-foreground">{user.farmName}</span>
-                  {user.isFarmOwner ? ` (Owner)` : user.farmId ? ` (Staff Member)` : ''}
+                  {` (${userRoleDisplay})`}
                 </p>
                }
                {user.farmId && <p className="text-xs text-muted-foreground">Farm ID: {user.farmId}</p>}
@@ -462,8 +454,8 @@ export default function ProfilePage() {
           ) : (
             <>
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">Role</h3>
-                <p className="text-lg text-foreground">{user.isFarmOwner ? 'Farm Owner' : (user.farmId ? 'Staff Member' : 'Not associated with a farm')}</p>
+                <h3 className="text-sm font-medium text-muted-foreground">Role on Farm</h3>
+                <p className="text-lg text-foreground">{userRoleDisplay}</p>
               </div>
             </>
           )}
@@ -503,7 +495,7 @@ export default function ProfilePage() {
                         <AlertDialogAction
                             onClick={async () => {
                                 if (!firebaseUser) return;
-                                const result = await cancelSubscription(); // Use cancelSubscription from useAuth
+                                const result = await cancelSubscription(); 
                                 toast({
                                     title: result.success ? "Subscription Cancellation Requested" : "Cancellation Failed",
                                     description: result.message,
@@ -552,7 +544,7 @@ export default function ProfilePage() {
               {myPendingInvitations.map(invite => (
                 <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
                   <div>
-                    <p className="font-medium">Invitation to join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span></p>
+                    <p className="font-medium">Invitation to join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span> as a <span className="font-semibold capitalize">{invite.invitedRole}</span></p>
                     <p className="text-sm text-muted-foreground">Invited by: {invite.inviterName || 'Farm Owner'} (Farm ID: {invite.inviterFarmId})</p>
                     <p className="text-xs text-muted-foreground">Sent: {invite.createdAt?.toDate().toLocaleDateString()}</p>
                   </div>
@@ -587,31 +579,55 @@ export default function ProfilePage() {
             <Form {...inviteStaffForm}>
               <form onSubmit={inviteStaffForm.handleSubmit(onInviteStaffSubmit)} className="space-y-4">
                 <h3 className="text-md font-medium">Invite New Staff Member</h3>
-                <FormField
-                  control={inviteStaffForm.control}
-                  name="staffEmail"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Staff Email Address</FormLabel>
-                      <div className="flex gap-2">
+                 <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_auto] gap-2 items-end">
+                  <FormField
+                    control={inviteStaffForm.control}
+                    name="staffEmail"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Staff Email Address</FormLabel>
                         <FormControl>
-                          <Input type="email" placeholder="staffmember@example.com" {...field} className="flex-grow" />
+                          <Input type="email" placeholder="staffmember@example.com" {...field} />
                         </FormControl>
-                        <Button type="submit" disabled={isInvitingStaff} className="flex-shrink-0">
-                          {isInvitingStaff ? (
-                            <> <Icons.Search className="mr-2 h-4 w-4 animate-spin" /> Logging Invite... </>
-                          ) : ( "Log Invitation Request" )}
-                        </Button>
-                      </div>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={inviteStaffForm.control}
+                    name="role"
+                    render={({ field }) => (
+                        <FormItem>
+                            <FormLabel>Assign Role</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select a role" />
+                                </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                {rolesForSelection.map(roleValue => (
+                                    <SelectItem key={roleValue} value={roleValue} className="capitalize">
+                                    {roleValue}
+                                    </SelectItem>
+                                ))}
+                                </SelectContent>
+                            </Select>
+                            <FormMessage />
+                        </FormItem>
+                    )}
+                   />
+                  <Button type="submit" disabled={isInvitingStaff} className="self-end">
+                    {isInvitingStaff ? (
+                      <> <Icons.Search className="mr-2 h-4 w-4 animate-spin" /> Logging Invite... </>
+                    ) : ( "Log Invitation Request" )}
+                  </Button>
+                </div>
                  <Alert variant="default">
                     <Icons.Info className="h-4 w-4" />
                     <AlertTitle>Invitation Process</AlertTitle>
                     <AlertDescription>
-                      This logs an invitation request. An email will be sent to the invited user with a unique link to accept. They must have or create an AgriAssist account with that email.
+                      This logs an invitation request. An email will be sent to the invited user with a unique link to accept. They must have or create an AgriAssist account with that email to join as the selected role.
                     </AlertDescription>
                   </Alert>
               </form>
@@ -626,9 +642,9 @@ export default function ProfilePage() {
               ) : staffDetails.length > 0 ? (
                 <ul className="space-y-2">
                   {staffDetails.map(staff => (
-                    <li key={staff.uid} className="flex justify-between items-center p-3 border rounded-md bg-muted/50">
+                    <li key={staff.uid} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
                       <div>
-                        <p className="font-medium">{staff.name}</p>
+                        <p className="font-medium">{staff.name} <span className="text-xs text-muted-foreground capitalize">({staff.role})</span></p>
                         <p className="text-sm text-muted-foreground">{staff.email}</p>
                       </div>
                        <AlertDialog>
@@ -672,7 +688,7 @@ export default function ProfilePage() {
                         {farmPendingInvitations.map(invite => (
                           <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
                             <div>
-                              <p className="font-medium">Invited: <span className="text-primary">{invite.invitedEmail}</span></p>
+                              <p className="font-medium">Invited: <span className="text-primary">{invite.invitedEmail}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p>
                               <p className="text-xs text-muted-foreground">Status: {invite.status} (Sent: {invite.createdAt?.toDate().toLocaleDateString()})</p>
                                {invite.tokenExpiresAt && <p className="text-xs text-muted-foreground">Expires: {invite.tokenExpiresAt.toDate().toLocaleDateString()}</p>}
                             </div>
