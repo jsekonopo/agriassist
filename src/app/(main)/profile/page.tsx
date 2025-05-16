@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useAuth, type PlanId } from '@/contexts/auth-context';
+import { useAuth, type PlanId, type User } from '@/contexts/auth-context'; // Import User type
 import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,8 +54,9 @@ interface PendingInvitation {
   farmName?: string; 
   invitedEmail: string;
   invitedUserUid: string | null; 
-  status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'error_farm_not_found';
+  status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'error_farm_not_found' | 'expired';
   createdAt: Timestamp;
+  tokenExpiresAt?: Timestamp;
 }
 
 const planNames: Record<PlanId, string> = {
@@ -66,7 +67,19 @@ const planNames: Record<PlanId, string> = {
 
 
 export default function ProfilePage() {
-  const { user, isLoading: authIsLoading, updateUserProfile, firebaseUser, inviteStaffMemberByEmail, removeStaffMember, acceptInvitation, declineInvitation, revokeInvitation, refreshUserData } = useAuth();
+  const { 
+    user, 
+    isLoading: authIsLoading, 
+    updateUserProfile, 
+    firebaseUser, 
+    inviteStaffMemberByEmail, 
+    removeStaffMember, 
+    acceptInvitation, 
+    declineInvitation, 
+    revokeInvitation, 
+    refreshUserData,
+    cancelSubscription // Get cancelSubscription directly from useAuth
+  } = useAuth();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmittingProfile, setIsSubmittingProfile] = useState(false);
@@ -111,11 +124,11 @@ export default function ProfilePage() {
     setIsLoadingStaffDetails(true);
     try {
       const detailsPromises = user.staffMembers.map(async (staffUid) => {
-        if (staffUid === user.uid) return null; // Should not happen if staffMembers array is managed correctly
+        if (staffUid === user.uid) return null;
         const userDocRef = doc(db, "users", staffUid);
         const userDocSnap = await getDoc(userDocRef);
         if (userDocSnap.exists()) {
-          const staffData = userDocSnap.data();
+          const staffData = userDocSnap.data() as User; // Cast to User
           return { uid: staffUid, name: staffData.name || 'N/A', email: staffData.email || 'N/A' };
         }
         return { uid: staffUid, name: 'Unknown User', email: 'N/A (User data not found)' };
@@ -128,13 +141,13 @@ export default function ProfilePage() {
     } finally {
       setIsLoadingStaffDetails(false);
     }
-  }, [user?.isFarmOwner, user?.staffMembers, user?.uid, toast]);
+  }, [user, toast]); // Updated dependency: user object itself
 
   useEffect(() => {
     if (user?.isFarmOwner) {
         fetchStaffDetails();
     } else {
-        setStaffDetails([]); // Clear staff details if user is not owner or becomes staff
+        setStaffDetails([]);
     }
   }, [user?.isFarmOwner, fetchStaffDetails]);
 
@@ -146,31 +159,31 @@ export default function ProfilePage() {
     }
     setIsLoadingMyInvitations(true);
     try {
-      // Query by UID - for users who already had an account when invited
+      const invites: PendingInvitation[] = [];
+      // Query by UID
       const qByUid = query(
         collection(db, "pendingInvitations"),
         where("invitedUserUid", "==", user.uid),
         where("status", "==", "pending")
       );
-      // Query by email - for users who might not have had an account (invitedUserUid was null)
+      const uidSnapshot = await getDocs(qByUid);
+      uidSnapshot.docs.forEach(docSnap => invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation));
+
+      // Query by email (case-insensitive for broader matching if UID wasn't set on invite initially)
       const qByEmail = query(
         collection(db, "pendingInvitations"),
         where("invitedEmail", "==", user.email.toLowerCase()),
         where("status", "==", "pending")
       );
-      
-      const [uidSnapshot, emailSnapshot] = await Promise.all([getDocs(qByUid), getDocs(qByEmail)]);
-      
-      const invitesMap = new Map<string, PendingInvitation>();
-      uidSnapshot.docs.forEach(docSnap => invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation));
+      const emailSnapshot = await getDocs(qByEmail);
+      const existingIds = new Set(invites.map(inv => inv.id));
       emailSnapshot.docs.forEach(docSnap => {
-        // Add if not already present (e.g., if invitedUserUid was null and now matches after signup)
-        if (!invitesMap.has(docSnap.id)) {
-          invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation);
+        if (!existingIds.has(docSnap.id)) {
+          invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation);
         }
       });
-
-      setMyPendingInvitations(Array.from(invitesMap.values()));
+      
+      setMyPendingInvitations(invites.filter(invite => invite.tokenExpiresAt ? invite.tokenExpiresAt.toMillis() > Date.now() : true));
 
     } catch (error) {
       console.error("Error fetching user's pending invitations:", error);
@@ -198,7 +211,8 @@ export default function ProfilePage() {
         where("status", "==", "pending")
       );
       const querySnapshot = await getDocs(q);
-      const invites = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation));
+      const invites = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation))
+        .filter(invite => invite.tokenExpiresAt ? invite.tokenExpiresAt.toMillis() > Date.now() : true);
       setFarmPendingInvitations(invites);
     } catch (error) {
       console.error("Error fetching farm's pending invitations:", error);
@@ -212,16 +226,15 @@ export default function ProfilePage() {
     if (user?.isFarmOwner) {
         fetchFarmPendingInvitations();
     } else {
-        setFarmPendingInvitations([]); // Clear farm invites if user is not owner
+        setFarmPendingInvitations([]);
     }
   }, [user?.isFarmOwner, fetchFarmPendingInvitations]);
 
 
   async function onProfileSubmit(values: z.infer<typeof profileFormSchema>) {
-    if (!user || !firebaseUser) return; // firebaseUser check added
+    if (!user || !firebaseUser) return;
     setIsSubmittingProfile(true);
     try {
-      // updateUserProfile now handles updating farmName in farms collection if user is owner
       await updateUserProfile(values.name, values.farmName);
       toast({
         title: "Profile Updated",
@@ -271,8 +284,8 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-        await refreshUserData(); // Refresh context user which should re-trigger staff list fetch
-        fetchStaffDetails(); // And explicitly refetch details
+        await refreshUserData(); 
+        fetchStaffDetails(); 
     }
   }
 
@@ -285,10 +298,9 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-      await refreshUserData(); // Crucial: refresh user data in context to get new farmId, role, etc.
-      fetchMyPendingInvitations(); // Refresh this user's list of pending invites
-      // If user was an owner, they might need to refresh their farm's staff list view (if they had one open)
-      // This is handled by AuthContext update triggering Profile Page re-render
+      await refreshUserData(); 
+      fetchMyPendingInvitations(); 
+      if (user?.isFarmOwner) fetchFarmPendingInvitations(); // Refresh owner's view if they were also an owner
     }
   }
 
@@ -476,14 +488,14 @@ export default function ProfilePage() {
                 <AlertDialog>
                     <AlertDialogTrigger asChild>
                         <Button variant="outline">
-                            <Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription (Simulated)
+                            <Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription
                         </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                         <AlertDialogHeader>
                         <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            This will cancel your current paid subscription. Your plan will revert to Free at the end of the current billing period (simulated).
+                            This will cancel your current paid subscription. Your plan will revert to Free at the end of the current billing period (or immediately, based on Stripe settings).
                         </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
@@ -491,7 +503,7 @@ export default function ProfilePage() {
                         <AlertDialogAction
                             onClick={async () => {
                                 if (!firebaseUser) return;
-                                const result = await user.cancelSubscription(); // Use cancelSubscription from user object
+                                const result = await cancelSubscription(); // Use cancelSubscription from useAuth
                                 toast({
                                     title: result.success ? "Subscription Cancellation Requested" : "Cancellation Failed",
                                     description: result.message,
@@ -512,20 +524,21 @@ export default function ProfilePage() {
             <Button asChild>
                 <Link href="/pricing">
                     <Icons.Dollar className="mr-2 h-4 w-4" />
-                     {user.selectedPlanId === 'free' ? 'Upgrade Plan' : 'View Plans & Manage'} (Simulated)
+                     {user.selectedPlanId === 'free' ? 'Upgrade Plan' : 'View Plans & Manage'}
                 </Link>
             </Button>
-            <Alert variant="default">
-                <Icons.Info className="h-4 w-4" />
-                <AlertTitle>Subscription Simulation Note</AlertTitle>
-                <AlertDescription>
-                    Subscription management and payments are currently simulated. Actual plan changes via Stripe are required for a live system.
-                </AlertDescription>
-            </Alert>
+            { process.env.NODE_ENV === 'development' &&
+                <Alert variant="default">
+                    <Icons.Info className="h-4 w-4" />
+                    <AlertTitle>Stripe Integration Note</AlertTitle>
+                    <AlertDescription>
+                        Subscription management and payments are integrated with Stripe. Ensure your Stripe keys and webhooks are configured.
+                    </AlertDescription>
+                </Alert>
+            }
         </CardContent>
       </Card>
 
-      {/* Section for User's Pending Invitations */}
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>My Pending Invitations</CardTitle>
@@ -544,7 +557,7 @@ export default function ProfilePage() {
                     <p className="text-xs text-muted-foreground">Sent: {invite.createdAt?.toDate().toLocaleDateString()}</p>
                   </div>
                   <div className="flex gap-2 mt-2 sm:mt-0 flex-shrink-0">
-                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={!user.farmId || user.farmId === invite.inviterFarmId}>
+                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={user.farmId === invite.inviterFarmId}>
                       <Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => handleDeclineInvitation(invite.id)}>
@@ -598,7 +611,7 @@ export default function ProfilePage() {
                     <Icons.Info className="h-4 w-4" />
                     <AlertTitle>Invitation Process</AlertTitle>
                     <AlertDescription>
-                      This logs an invitation request to Firestore. An email is sent to the invited user if email services are configured. The user must have or create an AgriAssist account with that email and accept the invitation from their profile.
+                      This logs an invitation request. An email will be sent to the invited user with a unique link to accept. They must have or create an AgriAssist account with that email.
                     </AlertDescription>
                   </Alert>
               </form>
@@ -661,6 +674,7 @@ export default function ProfilePage() {
                             <div>
                               <p className="font-medium">Invited: <span className="text-primary">{invite.invitedEmail}</span></p>
                               <p className="text-xs text-muted-foreground">Status: {invite.status} (Sent: {invite.createdAt?.toDate().toLocaleDateString()})</p>
+                               {invite.tokenExpiresAt && <p className="text-xs text-muted-foreground">Expires: {invite.tokenExpiresAt.toDate().toLocaleDateString()}</p>}
                             </div>
                             <Button variant="outline" size="sm" onClick={() => handleRevokeInvitation(invite.id)}>
                                 <Icons.XCircle className="mr-2 h-4 w-4" /> Revoke
