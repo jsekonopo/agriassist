@@ -10,8 +10,12 @@ import { AddAnimalForm } from "./forms/add-animal-form";
 import { AnimalRegistryTable } from "./data-management/animal-registry-table";
 import { AddHealthRecordForm } from "./forms/add-health-record-form";
 import { HealthRecordsTable } from "./data-management/health-records-table";
-import { AddBreedingRecordForm } from "./forms/add-breeding-record-form"; // Import new form
-import { BreedingRecordsTable } from "./data-management/breeding-records-table"; // Import new table
+import { AddBreedingRecordForm } from "./forms/add-breeding-record-form";
+import { BreedingRecordsTable } from "./data-management/breeding-records-table";
+import { AddFeedLogForm } from "./forms/add-feed-log-form"; // New
+import { FeedLogTable } from "./data-management/feed-log-table"; // New
+import { AddWeightLogForm } from "./forms/add-weight-log-form"; // New
+import { WeightLogTable } from "./data-management/weight-log-table"; // New
 import { Separator } from "@/components/ui/separator";
 import { useAuth, type UserRole } from "@/contexts/auth-context"; 
 
@@ -57,6 +61,24 @@ const livestockTabs: LivestockTab[] = [
     tableComponent: BreedingRecordsTable,
     requiredRolesForAdd: rolesThatCanAdd,
   },
+  {
+    value: "feed",
+    label: "Feed Logs",
+    icon: Icons.FeedLog, 
+    description: "Record feed consumption for individual animals or groups.",
+    formComponent: AddFeedLogForm,
+    tableComponent: FeedLogTable,
+    requiredRolesForAdd: rolesThatCanAdd,
+  },
+  {
+    value: "weight",
+    label: "Weight Logs",
+    icon: Icons.WeightLog, 
+    description: "Track animal weights over time for growth monitoring.",
+    formComponent: AddWeightLogForm,
+    tableComponent: WeightLogTable,
+    requiredRolesForAdd: rolesThatCanAdd,
+  },
 ];
 
 export function LivestockManagementContent() {
@@ -78,7 +100,9 @@ export function LivestockManagementContent() {
     if (count <= 1) return "grid-cols-1";
     if (count === 2) return "grid-cols-1 sm:grid-cols-2";
     if (count === 3) return "grid-cols-1 sm:grid-cols-3"; 
-    return "grid-cols-1 sm:grid-cols-2 md:grid-cols-3"; // Default for 3 or more tabs
+    if (count === 4) return "grid-cols-2 md:grid-cols-4";
+    if (count === 5) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-5";
+    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"; // Default for many tabs
   };
 
   return (

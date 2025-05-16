@@ -46,7 +46,9 @@ import {
   Map,
   Beef,
   ActivitySquare,
-  GitFork, // Added for Breeding Records
+  GitFork,
+  ListChecks, // Added for Feed Logs
+  Scale,      // Added for Weight Logs
 } from 'lucide-react';
 
 export const Icons = {
@@ -96,8 +98,9 @@ export const Icons = {
   Map,
   Livestock: Beef,
   HealthRecord: ActivitySquare,
-  Breeding: GitFork, // Added Breeding icon
+  Breeding: GitFork,
+  FeedLog: ListChecks,    // Added for Feed Logs
+  WeightLog: Scale,       // Added for Weight Logs
 };
 
 export type IconName = keyof typeof Icons;
-
