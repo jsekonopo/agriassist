@@ -9,12 +9,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth, type UserRole, type PreferredAreaUnit } from '@/contexts/auth-context'; 
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
+import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
+import { useToast } from "@/hooks/use-toast";
 
 interface WeatherData {
   temperature: number;
@@ -27,7 +29,7 @@ interface Field {
   id: string;
   fieldName: string;
   fieldSize?: number;
-  fieldSizeUnit?: string; // e.g. "acres", "hectares"
+  fieldSizeUnit?: string; 
   farmId: string;
   userId: string;
 }
@@ -92,6 +94,7 @@ const rolesThatCanAddData: UserRole[] = [...ownerRoles, 'admin', 'editor'];
 
 export default function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
+  const { toast } = useToast();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState<string | null>(null);
@@ -104,6 +107,9 @@ export default function DashboardPage() {
   const [upcomingTasks, setUpcomingTasks] = useState<TaskLog[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
 
+  const [proactiveInsights, setProactiveInsights] = useState<ProactiveFarmInsightsOutput | null>(null);
+  const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
@@ -115,12 +121,28 @@ export default function DashboardPage() {
       let lon = -75.6972; 
       let locationName = "Ottawa (Default)"; 
 
-      if (user?.farmId && user.farmLatitude && user.farmLongitude) {
-        lat = user.farmLatitude;
-        lon = user.farmLongitude;
-        locationName = `${user.farmName || 'Your Farm'} (Custom Location)`;
-      } else if (user?.farmName) {
-        locationName = `${user.farmName} (Defaulting to Ottawa)`;
+      if (user?.farmId) {
+        try {
+          const farmDocRef = doc(db, "farms", user.farmId);
+          const farmDocSnap = await getDoc(farmDocRef);
+          if (farmDocSnap.exists()) {
+            const farmData = farmDocSnap.data();
+            if (typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
+              lat = farmData.latitude;
+              lon = farmData.longitude;
+              locationName = `${farmData.farmName || 'Your Farm'} (Custom Location)`;
+            } else if (farmData.farmName) {
+              locationName = `${farmData.farmName} (Defaulting to Ottawa)`;
+            } else if (user.farmName) {
+                 locationName = `${user.farmName} (Defaulting to Ottawa)`;
+            }
+          } else if (user.farmName) {
+             locationName = `${user.farmName} (Defaulting to Ottawa)`;
+          }
+        } catch (e) {
+          console.error("Error fetching farm location for weather:", e);
+          if (user.farmName) locationName = `${user.farmName} (Error fetching location, defaulting to Ottawa)`;
+        }
       }
       setWeatherLocationDisplay(locationName);
 
@@ -148,7 +170,7 @@ export default function DashboardPage() {
     if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user?.farmId, user?.farmName, user?.farmLatitude, user?.farmLongitude]); 
+  }, [user?.farmId, user?.farmName]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -176,7 +198,7 @@ export default function DashboardPage() {
             const unit = field.fieldSizeUnit?.toLowerCase() || "acres";
             if (unit.includes("hectare")) {
               acreageInAcres += field.fieldSize * HECTARES_TO_ACRES;
-            } else { // assume acres
+            } else { 
               acreageInAcres += field.fieldSize;
             }
           }
@@ -222,6 +244,25 @@ export default function DashboardPage() {
     fetchData();
   }, [user, authLoading, preferredAreaUnit]);
 
+  const handleGetProactiveInsights = useCallback(async () => {
+    if (!user?.farmId) {
+      toast({ title: "Error", description: "Farm ID is missing. Cannot fetch insights.", variant: "destructive" });
+      return;
+    }
+    setIsLoadingInsights(true);
+    setProactiveInsights(null);
+    try {
+      const insights = await proactiveFarmInsights({ farmId: user.farmId });
+      setProactiveInsights(insights);
+      toast({ title: "Insights Generated", description: "Proactive insights for your farm are ready." });
+    } catch (error) {
+      console.error("Error fetching proactive insights:", error);
+      toast({ title: "Error", description: "Could not fetch proactive insights. Please try again.", variant: "destructive" });
+    } finally {
+      setIsLoadingInsights(false);
+    }
+  }, [user?.farmId, toast]);
+
 
   return (
     <div className="space-y-6">
@@ -254,10 +295,10 @@ export default function DashboardPage() {
         />
          <Card className="shadow-lg hover:shadow-xl transition-shadow duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-sm font-medium text-muted-foreground truncate" title={weatherLocationDisplay}>
               {weatherLocationDisplay}
             </CardTitle>
-            <Icons.Weather className="h-5 w-5 text-muted-foreground" />
+            <Icons.Weather className="h-5 w-5 text-muted-foreground flex-shrink-0" />
           </CardHeader>
           <CardContent>
             {weatherLoading ? (
@@ -389,6 +430,56 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+      
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Icons.BrainCircuit className="h-5 w-5 text-primary" />
+            Proactive Farm Insights
+          </CardTitle>
+          <CardDescription>AI-powered lookahead for potential opportunities or risks on your farm.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button onClick={handleGetProactiveInsights} disabled={isLoadingInsights || !user?.farmId} className="mb-4">
+            {isLoadingInsights ? (
+              <>
+                <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
+                Generating Insights...
+              </>
+            ) : (
+              "Get Latest Insights"
+            )}
+          </Button>
+          {isLoadingInsights && (
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-1/3" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          )}
+          {proactiveInsights && !isLoadingInsights && (
+            <div className="space-y-4 animate-in fade-in-50 duration-300">
+              {proactiveInsights.identifiedOpportunities && (
+                <div>
+                  <h4 className="font-semibold text-green-600">Potential Opportunities:</h4>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{proactiveInsights.identifiedOpportunities}</p>
+                </div>
+              )}
+              {proactiveInsights.identifiedRisks && (
+                <div>
+                  <h4 className="font-semibold text-red-600">Potential Risks:</h4>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{proactiveInsights.identifiedRisks}</p>
+                </div>
+              )}
+              {!proactiveInsights.identifiedOpportunities && !proactiveInsights.identifiedRisks && (
+                 <p className="text-sm text-muted-foreground">No specific opportunities or risks identified by the AI based on current data.</p>
+              )}
+              <p className="text-xs italic text-muted-foreground mt-2">Data considered: {proactiveInsights.dataConsideredSummary}</p>
+            </div>
+          )}
+          {!user?.farmId && !authLoading && <p className="text-sm text-destructive">Please ensure you are associated with a farm to get insights.</p>}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="shadow-lg">
@@ -430,7 +521,7 @@ export default function DashboardPage() {
         </Card>
         <Card className="shadow-lg">
             <CardHeader>
-                <CardTitle>Farm Insights</CardTitle>
+                <CardTitle>Farm Insights (Sample)</CardTitle>
                 <CardDescription>Tips and recommendations for your farm.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">

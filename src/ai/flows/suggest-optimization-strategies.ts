@@ -13,7 +13,7 @@ import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 import { adminDb } from '@/lib/firebase-admin';
 import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, differenceInYears } from 'date-fns';
 
 const HECTARE_TO_ACRE = 2.47105;
 
@@ -27,7 +27,7 @@ export type SuggestOptimizationStrategiesInput = z.infer<
 
 const SuggestOptimizationStrategiesOutputSchema = z.object({
   strategies: z.string().describe('A list of actionable optimization strategies for the farm, considering the provided context and goals. Formatted for readability, potentially using Markdown.'),
-  dataSummary: z.string().optional().describe("A brief summary of the farm data used by the AI to generate the advice."),
+  dataSummary: z.string().optional().describe("A detailed summary of the farm data and trends considered by the AI to generate the advice."),
 });
 export type SuggestOptimizationStrategiesOutput = z.infer<
   typeof SuggestOptimizationStrategiesOutputSchema
@@ -42,30 +42,21 @@ export async function suggestOptimizationStrategies(
 const prompt = ai.definePrompt({
   name: 'suggestOptimizationStrategiesPrompt',
   input: {schema: SuggestOptimizationStrategiesInputSchema.extend({
-    farmName: z.string().optional(),
-    totalAcreage: z.number().optional(),
-    fieldCount: z.number().optional(),
-    recentCrops: z.string().optional(), // Comma-separated list
-    averageYields: z.string().optional(), // e.g., "Corn: 150 bu/acre, Soybeans: 45 bu/acre"
-    soilSummary: z.string().optional(), // e.g., "Predominantly Loamy Sand. Recent tests show average pH 6.5, OM 3%."
-    fertilizerSummary: z.string().optional(), // e.g., "Recent NPK application on corn. Manure used on Field X."
-    irrigationSummary: z.string().optional(), // e.g., "Mainly rain-fed. Field Y uses drip irrigation. Last irrigation 2 weeks ago."
-    recentWeatherSummary: z.string().optional(), // e.g., "Recent heavy rainfall followed by a dry week. Temperatures moderate."
+    farmProfileSummary: z.string().describe("A comprehensive summary of the farm's profile including name, size, field count, main crops, historical yields, soil conditions, fertilizer/water usage, and recent weather."),
+    identifiedTrends: z.string().optional().describe("A summary of any identified trends from the farm's historical data, e.g., yield trends, soil metric changes."),
   })},
-  output: {schema: SuggestOptimizationStrategiesOutputSchema.omit({dataSummary: true})}, // AI doesn't generate dataSummary
+  output: {schema: SuggestOptimizationStrategiesOutputSchema.omit({dataSummary: true})},
   prompt: `You are an AI Farm Optimization Expert, providing actionable advice to farmers to improve their operations.
 
-Based on the following comprehensive information about the farm, and the farmer's specific goals if provided, suggest optimization strategies to improve efficiency, sustainability, and increase yields.
+Based on the following comprehensive farm profile, and the farmer's specific goals if provided, suggest 3-5 key optimization strategies to improve efficiency, sustainability, and/or yields.
 
 Farm Profile:
-{{#if farmName}}- Farm Name: {{{farmName}}}{{/if}}
-{{#if totalAcreage}}- Approximate Total Size: {{{totalAcreage}}} acres (across {{{fieldCount}}} fields).{{/if}}
-{{#if recentCrops}}- Main Crops Logged Recently: {{{recentCrops}}}.{{/if}}
-{{#if averageYields}}- Historical Average Yields (from logs): {{{averageYields}}}.{{/if}}
-{{#if soilSummary}}- Soil Conditions Summary (from recent logs): {{{soilSummary}}}.{{/if}}
-{{#if fertilizerSummary}}- Fertilizer Usage Summary (from recent logs): {{{fertilizerSummary}}}.{{/if}}
-{{#if irrigationSummary}}- Water Usage/Irrigation Summary (from recent logs): {{{irrigationSummary}}}.{{/if}}
-{{#if recentWeatherSummary}}- Recent Weather Context (from logs): {{{recentWeatherSummary}}}.{{/if}}
+{{{farmProfileSummary}}}
+
+{{#if identifiedTrends}}
+Identified Trends from Historical Data:
+{{{identifiedTrends}}}
+{{/if}}
 
 {{#if optimizationGoals}}
 The farmer has these specific optimization goals: "{{{optimizationGoals}}}"
@@ -74,20 +65,35 @@ Please tailor your suggestions to help achieve these goals first and foremost, w
 
 Consider factors such as:
 - Crop rotation, diversification, and cover cropping.
-- Precision agriculture techniques (if applicable based on data).
+- Precision agriculture techniques.
 - Soil health management (organic matter improvement, pH adjustment, reduced tillage).
-- Nutrient management and fertilizer application efficiency (e.g., timing, placement, type).
-- Water conservation and irrigation optimization (e.g., scheduling, methods).
-- Pest and disease management strategies (integrated pest management, biological controls).
-- Tillage practices (conservation tillage, no-till).
-- Equipment utilization and efficiency.
-- Potential for new technologies or practices suitable for this farm's scale and context.
-- Economic viability and sustainability of suggestions.
+- Nutrient management and fertilizer application efficiency.
+- Water conservation and irrigation optimization.
+- Pest and disease management strategies (IPM).
+- Tillage practices.
+- Equipment utilization.
+- Potential for new technologies or practices.
+- Economic viability and sustainability.
 
 Provide specific, practical, and actionable recommendations. Format your response as a list of strategies, clearly explaining the reasoning and potential benefits for each.
-Focus on 3-5 key strategies that would likely offer the most impact based on the provided farm profile.
   `,
 });
+
+// Helper to analyze simple trends in numeric data over time
+function analyzeNumericTrend(data: {date: Date, value: number}[], valueName: string): string | undefined {
+    if (data.length < 2) return undefined;
+    data.sort((a, b) => a.date.getTime() - b.date.getTime()); // Oldest to newest
+    const first = data[0].value;
+    const last = data[data.length - 1].value;
+    const avg = data.reduce((sum, item) => sum + item.value, 0) / data.length;
+    
+    let trend = "stable";
+    if (last > first * 1.15) trend = "increasing"; // >15% increase
+    else if (last < first * 0.85) trend = "decreasing"; // >15% decrease
+
+    return `${valueName} trend: ${trend} (recent: ${last.toFixed(1)}, avg: ${avg.toFixed(1)}, oldest: ${first.toFixed(1)}).`;
+}
+
 
 const suggestOptimizationStrategiesFlow = ai.defineFlow(
   {
@@ -98,29 +104,24 @@ const suggestOptimizationStrategiesFlow = ai.defineFlow(
   async (input) => {
     const farmId = input.farmId;
     const dataSummaryLines: string[] = [];
-    let farmNameFromDb: string | undefined;
-    let totalAcreageFromDb = 0;
-    let fieldCountFromDb = 0;
-    const recentCropsSet = new Set<string>();
-    const yieldMap = new Map<string, { total: number; count: number; units: Set<string> }>();
-    const soilObservations: string[] = [];
-    const fertilizerApps: string[] = [];
-    const irrigationEvents: string[] = [];
-    const weatherNotes: string[] = [];
+    const farmProfileLines: string[] = [];
+    const identifiedTrendsLines: string[] = [];
 
     try {
       // Fetch Farm Details
       const farmDocRef = adminDb.collection('farms').doc(farmId);
       const farmDocSnap = await farmDocRef.get();
       if (farmDocSnap.exists()) {
-        farmNameFromDb = farmDocSnap.data()?.farmName;
-        dataSummaryLines.push(`- Farm: ${farmNameFromDb || 'Unnamed'}.`);
+        const farmData = farmDocSnap.data();
+        farmProfileLines.push(`- Farm Name: ${farmData?.farmName || 'Unnamed Farm'}.`);
+        dataSummaryLines.push(`- Farm details: ${farmData?.farmName || 'Unnamed Farm'}.`);
       }
 
       // Fetch Fields for Acreage and Count
       const fieldsQuery = query(collection(adminDb, "fields"), where("farmId", "==", farmId));
       const fieldsSnapshot = await getDocs(fieldsQuery);
-      fieldCountFromDb = fieldsSnapshot.size;
+      const fieldCount = fieldsSnapshot.size;
+      let totalAcreage = 0;
       fieldsSnapshot.docs.forEach(doc => {
         const field = doc.data();
         if (field.fieldSize && typeof field.fieldSize === 'number' && field.fieldSize > 0) {
@@ -128,106 +129,146 @@ const suggestOptimizationStrategiesFlow = ai.defineFlow(
           if (field.fieldSizeUnit && field.fieldSizeUnit.toLowerCase().includes('hectare')) {
             sizeInAcres = field.fieldSize * HECTARE_TO_ACRE;
           }
-          totalAcreageFromDb += sizeInAcres;
+          totalAcreage += sizeInAcres;
         }
       });
-      if (fieldCountFromDb > 0) dataSummaryLines.push(`- ${fieldCountFromDb} fields, totaling ~${totalAcreageFromDb.toFixed(1)} acres.`);
+      if (fieldCount > 0) {
+        farmProfileLines.push(`- Approximate Total Size: ${totalAcreage.toFixed(1)} acres (across ${fieldCount} fields).`);
+        dataSummaryLines.push(`- ${fieldCount} fields, ~${totalAcreage.toFixed(1)} acres.`);
+      }
 
-      // Fetch Planting Logs for Crops (more for broader history)
-      const plantingLogsQuery = query(collection(adminDb, "plantingLogs"), where("farmId", "==", farmId), orderBy("plantingDate", "desc"), limit(50));
+      // Fetch Planting Logs for Crops
+      const recentCropsSet = new Set<string>();
+      const plantingLogsQuery = query(collection(adminDb, "plantingLogs"), where("farmId", "==", farmId), orderBy("plantingDate", "desc"), limit(50)); // Wider history for crop diversity
       const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
       plantingLogsSnapshot.forEach(doc => recentCropsSet.add(doc.data().cropName));
-      if (recentCropsSet.size > 0) dataSummaryLines.push(`- Crops logged (recent & historical): ${Array.from(recentCropsSet).join(', ')}.`);
+      if (recentCropsSet.size > 0) {
+        farmProfileLines.push(`- Main Crops Logged (recent & historical): ${Array.from(recentCropsSet).join(', ')}.`);
+        dataSummaryLines.push(`- Crops: ${Array.from(recentCropsSet).slice(0,5).join(', ')}...`);
+      }
 
-      // Fetch Harvesting Logs for Yields
-      const harvestingLogsQuery = query(collection(adminDb, "harvestingLogs"), where("farmId", "==", farmId), orderBy("harvestDate", "desc"), limit(100)); // More logs for yield avg
+      // Fetch Harvesting Logs for Yields & Trends
+      const yieldMap = new Map<string, { yields: { year: number; amount: number }[]; units: Set<string> }>();
+      const harvestingLogsQuery = query(collection(adminDb, "harvestingLogs"), where("farmId", "==", farmId), orderBy("harvestDate", "desc"), limit(100)); // Ample logs for yield trends
       const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
       harvestingLogsSnapshot.forEach(doc => {
         const log = doc.data();
-        if (log.cropName && typeof log.yieldAmount === 'number' && log.yieldAmount > 0) {
-          const cropData = yieldMap.get(log.cropName) || { total: 0, count: 0, units: new Set<string>() };
-          cropData.total += log.yieldAmount;
-          cropData.count++;
+        if (log.cropName && typeof log.yieldAmount === 'number' && log.yieldAmount > 0 && log.harvestDate) {
+          const year = parseISO(log.harvestDate).getFullYear();
+          const cropData = yieldMap.get(log.cropName) || { yields: [], units: new Set<string>() };
+          cropData.yields.push({ year, amount: log.yieldAmount });
           if(log.yieldUnit) cropData.units.add(log.yieldUnit);
           yieldMap.set(log.cropName, cropData);
         }
       });
       if (yieldMap.size > 0) {
-        const yieldStrings = Array.from(yieldMap.entries()).map(([crop, data]) => 
-          `${crop}: ${(data.total / data.count).toFixed(1)} ${Array.from(data.units).join('/') || 'units'}`
-        );
-        dataSummaryLines.push(`- Average yields from logs: ${yieldStrings.join('; ')}.`);
+        const yieldStrings: string[] = [];
+        Array.from(yieldMap.entries()).forEach(([crop, data]) => {
+            const yieldsByYear: {[year: number]: number[]} = {};
+            data.yields.forEach(y => {
+                if(!yieldsByYear[y.year]) yieldsByYear[y.year] = [];
+                yieldsByYear[y.year].push(y.amount);
+            });
+            const avgYieldsByYear = Object.entries(yieldsByYear).map(([year, amounts]) => ({
+                date: new Date(parseInt(year), 6, 15), // Mid-year for trend analysis
+                value: amounts.reduce((s,a) => s+a,0) / amounts.length
+            }));
+            const overallAvg = data.yields.reduce((s,y) => s+y.amount,0) / data.yields.length;
+            yieldStrings.push(`${crop}: Overall Avg ${overallAvg.toFixed(1)} ${Array.from(data.units).join('/') || 'units'}`);
+            if (avgYieldsByYear.length >= 2) {
+                const trend = analyzeNumericTrend(avgYieldsByYear, `${crop} yield`);
+                if(trend) identifiedTrendsLines.push(`- ${trend}`);
+            }
+        });
+        farmProfileLines.push(`- Historical Yields Summary: ${yieldStrings.join('; ')}.`);
+        dataSummaryLines.push(`- Yield data for ${yieldMap.size} crops.`);
       }
-
-      // Fetch Recent Soil Data (last 5 logs)
-      const soilQuery = query(collection(adminDb, "soilDataLogs"), where("farmId", "==", farmId), orderBy("sampleDate", "desc"), limit(5));
+      
+      // Fetch Recent Soil Data & Trends
+      const soilObservations: string[] = [];
+      const fieldSoilData = new Map<string, {ph: {date: Date, value: number}[], om: {date: Date, value: number}[]}>();
+      const soilQuery = query(collection(adminDb, "soilDataLogs"), where("farmId", "==", farmId), orderBy("sampleDate", "desc"), limit(25)); // More for trends per field
       const soilSnapshot = await getDocs(soilQuery);
-      soilSnapshot.forEach(doc => {
-        const data = doc.data();
+      soilSnapshot.forEach(docSnap => {
+        const data = docSnap.data();
         let entry = `Test on ${format(parseISO(data.sampleDate), "MMM yyyy")}`;
         if(data.phLevel) entry += `, pH ${data.phLevel}`;
         if(data.organicMatter) entry += `, OM ${data.organicMatter}`;
-        // Add NPK if available
-        if (data.nutrients?.nitrogen) entry += `, N ${data.nutrients.nitrogen}`;
-        if (data.nutrients?.phosphorus) entry += `, P ${data.nutrients.phosphorus}`;
-        if (data.nutrients?.potassium) entry += `, K ${data.nutrients.potassium}`;
+        if(data.fieldId) entry += ` (Field: ${data.fieldId})`;
         soilObservations.push(entry);
+
+        if (data.fieldId && (data.phLevel !== undefined || data.organicMatter !== undefined)) {
+            const fieldData = fieldSoilData.get(data.fieldId) || { ph: [], om: [] };
+            const sampleDate = parseISO(data.sampleDate);
+            if (data.phLevel !== undefined && typeof data.phLevel === 'number') {
+                fieldData.ph.push({ date: sampleDate, value: data.phLevel });
+            }
+            const omString = typeof data.organicMatter === 'string' ? data.organicMatter.replace('%', '') : data.organicMatter;
+            const omValue = parseFloat(omString);
+            if (!isNaN(omValue)) {
+                 fieldData.om.push({ date: sampleDate, value: omValue });
+            }
+            fieldSoilData.set(data.fieldId, fieldData);
+        }
       });
-      if (soilObservations.length > 0) dataSummaryLines.push(`- Recent soil observations: ${soilObservations.slice(0,2).join('; ')}...`);
+      if (soilObservations.length > 0) {
+        farmProfileLines.push(`- Soil Conditions Summary (recent logs): ${soilObservations.slice(0,3).join('; ')}...`);
+        dataSummaryLines.push(`- ${soilObservations.length} soil tests logged.`);
+        fieldSoilData.forEach((data, fieldId) => {
+            if (data.ph.length >=2) {
+                const trend = analyzeNumericTrend(data.ph, `pH for field ${fieldId}`);
+                if(trend) identifiedTrendsLines.push(`- ${trend}`);
+            }
+             if (data.om.length >=2) {
+                const trend = analyzeNumericTrend(data.om, `Organic Matter % for field ${fieldId}`);
+                if(trend) identifiedTrendsLines.push(`- ${trend}`);
+            }
+        });
+      }
       
-      // Fetch Recent Fertilizer Applications (last 5 logs)
+      // Summaries for Fertilizer, Irrigation, Weather (limit to last few for brevity in profile)
+      const fertilizerApps: string[] = [];
       const fertilizerQuery = query(collection(adminDb, "fertilizerLogs"), where("farmId", "==", farmId), orderBy("dateApplied", "desc"), limit(5));
       const fertilizerSnapshot = await getDocs(fertilizerQuery);
-      fertilizerSnapshot.forEach(doc => {
-          const data = doc.data();
-          fertilizerApps.push(`${data.fertilizerType} (${data.amountApplied} ${data.amountUnit || ''}) applied on ${format(parseISO(data.dateApplied), "MMM yyyy")}`);
-      });
-       if (fertilizerApps.length > 0) dataSummaryLines.push(`- Recent fertilizer apps: ${fertilizerApps.slice(0,2).join('; ')}...`);
-
-      // Fetch Recent Irrigation Events (last 5 logs)
+      fertilizerSnapshot.forEach(docSnap => fertilizerApps.push(`${docSnap.data().fertilizerType} on ${format(parseISO(docSnap.data().dateApplied), "MMM yyyy")}`));
+      if(fertilizerApps.length > 0) farmProfileLines.push(`- Recent Fertilizer Usage: ${fertilizerApps.slice(0,2).join('; ')}...`);
+      
+      const irrigationEvents: string[] = [];
       const irrigationQuery = query(collection(adminDb, "irrigationLogs"), where("farmId", "==", farmId), orderBy("irrigationDate", "desc"), limit(5));
       const irrigationSnapshot = await getDocs(irrigationQuery);
-      irrigationSnapshot.forEach(doc => {
-          const data = doc.data();
-          irrigationEvents.push(`${data.amountApplied} ${data.amountUnit || ''} via ${data.irrigationMethod || 'unknown method'} on ${format(parseISO(data.irrigationDate), "MMM yyyy")}`);
-      });
-      if (irrigationEvents.length > 0) dataSummaryLines.push(`- Recent irrigation: ${irrigationEvents.slice(0,2).join('; ')}...`);
+      irrigationSnapshot.forEach(docSnap => irrigationEvents.push(`${docSnap.data().amountApplied} ${docSnap.data().amountUnit || ''} on ${format(parseISO(docSnap.data().irrigationDate), "MMM yyyy")}`));
+      if(irrigationEvents.length > 0) farmProfileLines.push(`- Recent Irrigation: ${irrigationEvents.slice(0,2).join('; ')}...`);
       
-      // Fetch Recent Weather Logs (last 7 days)
+      const weatherNotes: string[] = [];
       const weatherQuery = query(collection(adminDb, "weatherLogs"), where("farmId", "==", farmId), orderBy("date", "desc"), limit(7));
       const weatherSnapshot = await getDocs(weatherQuery);
-      weatherSnapshot.forEach(doc => {
-          const data = doc.data();
-          weatherNotes.push(`${format(parseISO(data.date), "MMM dd")}: ${data.conditions || ""}, Temp ${data.temperatureHigh !== undefined ? data.temperatureHigh : 'N/A'}/${data.temperatureLow !== undefined ? data.temperatureLow : 'N/A'}°C, Precip ${data.precipitation || 0}${data.precipitationUnit || 'mm'}`);
-      });
-      if (weatherNotes.length > 0) dataSummaryLines.push(`- Recent weather (last 7 logs): ${weatherNotes.slice(0,2).join('; ')}...`);
+      weatherSnapshot.forEach(docSnap => weatherNotes.push(`${format(parseISO(docSnap.data().date), "MMM dd")}: ${docSnap.data().conditions || ""}, Temp ${docSnap.data().temperatureHigh ?? 'N/A'}/${docSnap.data().temperatureLow ?? 'N/A'}°C`));
+      if(weatherNotes.length > 0) farmProfileLines.push(`- Recent Weather Context: ${weatherNotes.slice(0,2).join('; ')}...`);
+      
+      dataSummaryLines.push(`- Considered ${fertilizerApps.length} fertilizer, ${irrigationEvents.length} irrigation, ${weatherNotes.length} weather logs.`);
 
     } catch (e) {
       console.error("Error fetching farm data for optimization strategies:", e);
-      dataSummaryLines.push("Note: An error occurred while fetching detailed farm records. Advice may be more general.");
+      farmProfileLines.push("Note: An error occurred while fetching detailed farm records for the profile. Advice may be more general.");
+      dataSummaryLines.push("Error fetching some farm data.");
     }
+
+    const farmProfileSummary = farmProfileLines.length > 0 ? farmProfileLines.join("\n") : "Basic farm profile could not be fully constructed.";
+    const identifiedTrendsSummary = identifiedTrendsLines.length > 0 ? identifiedTrendsLines.join("\n") : undefined;
 
     const promptInputForAI = {
       farmId: input.farmId,
       optimizationGoals: input.optimizationGoals,
-      farmName: farmNameFromDb,
-      totalAcreage: totalAcreageFromDb > 0 ? parseFloat(totalAcreageFromDb.toFixed(1)) : undefined,
-      fieldCount: fieldCountFromDb > 0 ? fieldCountFromDb : undefined,
-      recentCrops: recentCropsSet.size > 0 ? Array.from(recentCropsSet).join(', ') : undefined,
-      averageYields: yieldMap.size > 0 ? Array.from(yieldMap.entries()).map(([crop, data]) => 
-        `${crop}: ${(data.total / data.count).toFixed(1)} ${Array.from(data.units).join('/') || 'units'}`
-      ).join('; ') : undefined,
-      soilSummary: soilObservations.length > 0 ? soilObservations.join(". ") : undefined,
-      fertilizerSummary: fertilizerApps.length > 0 ? fertilizerApps.join(". ") : undefined,
-      irrigationSummary: irrigationEvents.length > 0 ? irrigationEvents.join(". ") : undefined,
-      recentWeatherSummary: weatherNotes.length > 0 ? weatherNotes.join(". ") : undefined,
+      farmProfileSummary,
+      identifiedTrends: identifiedTrendsSummary,
     };
 
     const {output} = await prompt(promptInputForAI);
     
     return {
         ...output!,
-        dataSummary: dataSummaryLines.length > 0 ? dataSummaryLines.join("\n") : "No specific farm data was available to the AI.",
+        dataSummary: dataSummaryLines.join("\n"),
     };
   }
 );
+
