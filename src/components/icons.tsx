@@ -45,7 +45,8 @@ import {
   CreditCard,
   Map,
   Beef,
-  ActivitySquare, // Added for Health Records
+  ActivitySquare,
+  GitFork, // Added for Breeding Records
 } from 'lucide-react';
 
 export const Icons = {
@@ -94,7 +95,9 @@ export const Icons = {
   Expenses: CreditCard,
   Map,
   Livestock: Beef,
-  HealthRecord: ActivitySquare, // Added HealthRecord icon
+  HealthRecord: ActivitySquare,
+  Breeding: GitFork, // Added Breeding icon
 };
 
 export type IconName = keyof typeof Icons;
+

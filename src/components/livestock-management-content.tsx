@@ -8,8 +8,10 @@ import { Icons } from "./icons";
 import type { LucideIcon } from "lucide-react";
 import { AddAnimalForm } from "./forms/add-animal-form";
 import { AnimalRegistryTable } from "./data-management/animal-registry-table";
-import { AddHealthRecordForm } from "./forms/add-health-record-form"; // Import new form
-import { HealthRecordsTable } from "./data-management/health-records-table"; // Import new table
+import { AddHealthRecordForm } from "./forms/add-health-record-form";
+import { HealthRecordsTable } from "./data-management/health-records-table";
+import { AddBreedingRecordForm } from "./forms/add-breeding-record-form"; // Import new form
+import { BreedingRecordsTable } from "./data-management/breeding-records-table"; // Import new table
 import { Separator } from "@/components/ui/separator";
 import { useAuth, type UserRole } from "@/contexts/auth-context"; 
 
@@ -46,7 +48,15 @@ const livestockTabs: LivestockTab[] = [
     tableComponent: HealthRecordsTable,
     requiredRolesForAdd: rolesThatCanAdd,
   },
-  // Future tabs like Breeding Records will go here
+  {
+    value: "breeding",
+    label: "Breeding Records",
+    icon: Icons.Breeding, 
+    description: "Track mating, pregnancies, births, and offspring details.",
+    formComponent: AddBreedingRecordForm,
+    tableComponent: BreedingRecordsTable,
+    requiredRolesForAdd: rolesThatCanAdd,
+  },
 ];
 
 export function LivestockManagementContent() {
@@ -67,8 +77,8 @@ export function LivestockManagementContent() {
     const count = livestockTabs.length;
     if (count <= 1) return "grid-cols-1";
     if (count === 2) return "grid-cols-1 sm:grid-cols-2";
-    // Adjust if more tabs are added
-    return "grid-cols-1 sm:grid-cols-2 md:grid-cols-2"; // Default for 2 or more tabs
+    if (count === 3) return "grid-cols-1 sm:grid-cols-3"; 
+    return "grid-cols-1 sm:grid-cols-2 md:grid-cols-3"; // Default for 3 or more tabs
   };
 
   return (
