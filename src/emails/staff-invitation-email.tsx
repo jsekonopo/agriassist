@@ -20,19 +20,17 @@ interface StaffInvitationEmailProps {
   inviterName?: string;
   farmName?: string;
   appName?: string;
-  invitationLink?: string; // Link to the profile page or a specific acceptance page
+  invitationLink?: string; 
 }
 
-const baseUrl = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : 'http://localhost:9002'; // Adjust if your dev port is different
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
 
 export const StaffInvitationEmail = ({
   invitedUserEmail,
   inviterName = 'A farm owner',
   farmName = 'a farm',
   appName = 'AgriAssist',
-  invitationLink = `${baseUrl}/profile`, // Default to profile page
+  invitationLink = `${baseUrl}/profile`, 
 }: StaffInvitationEmailProps) => {
   const previewText = `You've been invited to join ${farmName} on ${appName}!`;
 
@@ -81,16 +79,16 @@ export const StaffInvitationEmail = ({
             <Section className="text-center mt-[32px] mb-[32px]">
               <Button
                 className="bg-primary rounded text-white text-[12px] font-semibold no-underline text-center px-5 py-3"
-                href={invitationLink}
+                href={invitationLink} // Use the dynamic invitationLink
               >
-                View Invitation & Join Farm
+                Accept Invitation
               </Button>
             </Section>
             <Text className="text-black text-[14px] leading-[24px]">
-              If you don&apos;t have an {appName} account yet, you&apos;ll be prompted to create one. Once logged in, you should see the pending invitation on your profile page.
+              Click the button above to accept the invitation. If you don&apos;t have an {appName} account yet with the email <span className="font-semibold">{invitedUserEmail}</span>, you&apos;ll be guided to create one.
             </Text>
             <Text className="text-black text-[14px] leading-[24px]">
-              If you were not expecting this invitation, you can safely ignore this email.
+              If you were not expecting this invitation, you can safely ignore this email. This invitation link is unique to you and will expire in 7 days.
             </Text>
             <Hr className="border border-solid border-[#eaeaea] my-[26px] mx-0 w-full" />
             <Text className="text-[#666666] text-[12px] leading-[24px]">
