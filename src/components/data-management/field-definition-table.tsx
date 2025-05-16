@@ -24,7 +24,9 @@ interface FieldDefinitionLog {
   id: string; 
   fieldName: string;
   fieldSize?: number;
-  fieldSizeUnit?: string; // Unit as stored in DB, e.g., 'acres', 'hectares'
+  fieldSizeUnit?: string; 
+  latitude?: number | null;
+  longitude?: number | null;
   notes?: string;
   createdAt?: Timestamp | Date; 
   farmId: string;
@@ -64,7 +66,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
         const q = query(
           collection(db, "fields"),
           where("farmId", "==", user.farmId), 
-          orderBy("createdAt", "desc")
+          orderBy("fieldName", "asc") // Order by name for consistency
         );
         const querySnapshot = await getDocs(q);
         const fetchedLogs: FieldDefinitionLog[] = querySnapshot.docs.map(doc => ({
@@ -78,7 +80,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
         setError("Could not load field definitions. Please try again.");
         toast({
           title: "Error Loading Fields",
-          description: "Failed to load field definitions from Firestore.",
+          description: "Failed to load field definitions.",
           variant: "destructive"
         });
       } finally {
@@ -100,15 +102,15 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
         await deleteDoc(doc(db, "fields", logId));
         toast({
           title: "Field Deleted",
-          description: "The field definition has been removed from Firestore.",
+          description: "The field definition has been removed.",
         });
         onLogDeleted(); 
       } catch (e) {
-        console.error("Failed to delete field definition from Firestore:", e);
+        console.error("Failed to delete field definition:", e);
         setError("Could not delete the field definition.");
         toast({
           title: "Error Deleting Field",
-          description: "Failed to delete the field definition from Firestore.",
+          description: "Failed to delete the field definition.",
           variant: "destructive"
         });
       }
@@ -118,7 +120,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   const formatFieldSize = (size?: number, unit?: string, targetUnit?: PreferredAreaUnit): string => {
     if (size === undefined || size === null) return "N/A";
     
-    const originalUnit = unit?.toLowerCase() || "acres"; // Assume acres if not specified
+    const originalUnit = unit?.toLowerCase() || "acres"; 
     const displayUnit = targetUnit || "acres";
 
     if (originalUnit === displayUnit) {
@@ -128,14 +130,13 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     let sizeInAcres: number;
     if (originalUnit.includes("hectare")) {
       sizeInAcres = size * HECTARES_TO_ACRES;
-    } else { // Assume acres
+    } else { 
       sizeInAcres = size;
     }
 
     if (displayUnit === "hectares") {
       return `${(sizeInAcres * ACRES_TO_HECTARES).toFixed(2)} ${displayUnit}`;
     }
-    // Default to acres if targetUnit is acres or unknown
     return `${sizeInAcres.toFixed(1)} ${displayUnit}`;
   };
   
@@ -183,9 +184,11 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
         <TableCaption>A list of your farm fields. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
-            <TableHead className="min-w-[200px]">Field Name</TableHead>
-            <TableHead className="min-w-[150px]">Size ({preferredAreaUnit})</TableHead>
-            <TableHead className="min-w-[250px]">Notes</TableHead>
+            <TableHead className="min-w-[150px]">Field Name</TableHead>
+            <TableHead className="min-w-[120px]">Size ({preferredAreaUnit})</TableHead>
+            <TableHead className="min-w-[100px]">Latitude</TableHead>
+            <TableHead className="min-w-[100px]">Longitude</TableHead>
+            <TableHead className="min-w-[200px]">Notes</TableHead>
             {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
@@ -194,7 +197,9 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
             <TableRow key={log.id}>
               <TableCell className="font-medium">{log.fieldName}</TableCell>
               <TableCell>{formatFieldSize(log.fieldSize, log.fieldSizeUnit, preferredAreaUnit)}</TableCell>
-              <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis">{log.notes || "N/A"}</TableCell>
+              <TableCell>{log.latitude !== undefined && log.latitude !== null ? log.latitude.toFixed(4) : "N/A"}</TableCell>
+              <TableCell>{log.longitude !== undefined && log.longitude !== null ? log.longitude.toFixed(4) : "N/A"}</TableCell>
+              <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
               {canUserDelete && (
                 <TableCell className="text-right">
                   <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete field">
@@ -209,3 +214,5 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     </div>
   );
 }
+
+    

@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,9 +23,17 @@ const fieldDefinitionSchema = z.object({
     (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
     z.number({invalid_type_error: "Field size must be a number"}).positive("Field size must be positive.").optional()
   ),
-  fieldSizeUnit: z.enum(areaUnits, {required_error: "Please select a unit for the field size if providing a size."}).optional(),
+  fieldSizeUnit: z.enum(areaUnits).optional(),
+  latitude: z.preprocess(
+    (val) => (val === "" || val === undefined || val === null ? undefined : parseFloat(String(val))),
+    z.number({invalid_type_error: "Latitude must be a number."}).min(-90).max(90).optional().nullable()
+  ),
+  longitude: z.preprocess(
+    (val) => (val === "" || val === undefined || val === null ? undefined : parseFloat(String(val))),
+    z.number({invalid_type_error: "Longitude must be a number."}).min(-180).max(180).optional().nullable()
+  ),
   notes: z.string().optional(),
-}).refine(data => (data.fieldSize !== undefined) ? data.fieldSizeUnit !== undefined : true, {
+}).refine(data => (data.fieldSize !== undefined && data.fieldSize !== null) ? data.fieldSizeUnit !== undefined : true, {
   message: "Unit is required if field size is provided.",
   path: ["fieldSizeUnit"],
 });
@@ -48,11 +56,12 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       notes: "",
       fieldSize: undefined,
       fieldSizeUnit: preferredAreaUnit,
+      latitude: null,
+      longitude: null,
     },
   });
 
   useEffect(() => {
-    // Update default unit if user preference changes and form hasn't been touched for unit
     if (user?.settings?.preferredAreaUnit && !form.formState.dirtyFields.fieldSizeUnit) {
       form.setValue("fieldSizeUnit", user.settings.preferredAreaUnit);
     }
@@ -73,7 +82,9 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       const fieldData = {
         fieldName: values.fieldName,
         fieldSize: values.fieldSize,
-        fieldSizeUnit: values.fieldSize !== undefined ? values.fieldSizeUnit : undefined, // Only save unit if size is provided
+        fieldSizeUnit: (values.fieldSize !== undefined && values.fieldSize !== null) ? values.fieldSizeUnit : undefined,
+        latitude: values.latitude,
+        longitude: values.longitude,
         notes: values.notes,
         userId: user.uid, 
         farmId: user.farmId, 
@@ -82,9 +93,16 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       await addDoc(collection(db, "fields"), fieldData);
       toast({
         title: "Field Definition Saved",
-        description: `Field: ${values.fieldName} has been saved to Firestore for farm ${user.farmId}.`,
+        description: `Field: ${values.fieldName} has been saved.`,
       });
-      form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: preferredAreaUnit, notes: "" });
+      form.reset({ 
+        fieldName: "", 
+        fieldSize: undefined, 
+        fieldSizeUnit: preferredAreaUnit, 
+        latitude: null,
+        longitude: null,
+        notes: "" 
+      });
       if (onLogSaved) {
         onLogSaved();
       }
@@ -92,7 +110,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       console.error("Error saving field definition to Firestore:", error);
       toast({
         title: "Error Saving Field",
-        description: "Could not save the field definition to Firestore.",
+        description: "Could not save the field definition.",
         variant: "destructive",
       });
     } finally {
@@ -103,21 +121,20 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <FormField
-            control={form.control}
-            name="fieldName"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Field Name</FormLabel>
-                <FormControl>
-                  <Input placeholder="e.g., North Pasture, Back Forty" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-           <div className="grid grid-cols-[2fr_1fr] gap-2 items-end"> {/* Adjusted for better alignment */}
+        <FormField
+          control={form.control}
+          name="fieldName"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Field Name</FormLabel>
+              <FormControl>
+                <Input placeholder="e.g., North Pasture, Back Forty" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-4">
             <FormField
               control={form.control}
               name="fieldSize"
@@ -137,7 +154,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Unit</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value || preferredAreaUnit}>
                      <FormControl>
                         <SelectTrigger>
                             <SelectValue placeholder="Select unit"/>
@@ -147,11 +164,41 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
                         {areaUnits.map(unit => <SelectItem key={unit} value={unit}>{unit.charAt(0).toUpperCase() + unit.slice(1)}</SelectItem>)}
                      </SelectContent>
                   </Select>
+                  <FormDescription>Required if size is entered.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
-          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+           <FormField
+            control={form.control}
+            name="latitude"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Latitude (Optional)</FormLabel>
+                <FormControl>
+                  <Input type="number" step="any" placeholder="e.g., 45.4215" {...field} value={field.value ?? ''} />
+                </FormControl>
+                <FormDescription>For map marker placement.</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="longitude"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Longitude (Optional)</FormLabel>
+                <FormControl>
+                  <Input type="number" step="any" placeholder="e.g., -75.6972" {...field} value={field.value ?? ''} />
+                </FormControl>
+                <FormDescription>For map marker placement.</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </div>
         <FormField
           control={form.control}
@@ -185,3 +232,5 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
     </Form>
   );
 }
+
+    
