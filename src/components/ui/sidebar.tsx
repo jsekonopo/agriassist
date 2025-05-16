@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -262,26 +263,53 @@ Sidebar.displayName = "Sidebar"
 const SidebarTrigger = React.forwardRef<
   React.ElementRef<typeof Button>,
   React.ComponentProps<typeof Button>
->(({ className, onClick, ...props }, ref) => {
-  const { toggleSidebar } = useSidebar()
+>(({ className, onClick, children, asChild: triggerAsChild, ...buttonProps }, ref) => {
+  const { toggleSidebar } = useSidebar();
+
+  const resolvedOnClick = (event: React.MouseEvent<HTMLElement>) => {
+    // Handle onClick from props passed to SidebarTrigger
+    if (onClick) {
+      onClick(event as React.MouseEvent<HTMLButtonElement>);
+    }
+
+    // Handle onClick from the child when using asChild
+    if (triggerAsChild && React.isValidElement(children) && typeof (children.props as any).onClick === 'function') {
+      (children.props as any).onClick(event);
+    }
+    
+    // Perform SidebarTrigger's own action if not defaultPrevented
+    if (!event.isDefaultPrevented) {
+      toggleSidebar();
+    }
+  };
+
+  if (triggerAsChild && React.isValidElement(children)) {
+    return (
+      <Slot
+        ref={ref}
+        onClick={resolvedOnClick}
+        data-sidebar="trigger"
+        {...buttonProps} // Pass other button-specific props like variant, size from SidebarTrigger's definition if needed
+        className={className} // Pass className from SidebarTrigger's props
+      >
+        {children}
+      </Slot>
+    );
+  }
 
   return (
     <Button
       ref={ref}
       data-sidebar="trigger"
-      variant="ghost"
-      size="icon"
-      className={cn("h-7 w-7", className)}
-      onClick={(event) => {
-        onClick?.(event)
-        toggleSidebar()
-      }}
-      {...props}
+      variant={buttonProps.variant || "ghost"}
+      size={buttonProps.size || "icon"}
+      className={cn("h-7 w-7", className, buttonProps.className)}
+      onClick={resolvedOnClick}
+      {...buttonProps}
     >
-      <PanelLeft />
-      <span className="sr-only">Toggle Sidebar</span>
+      {children || (<><PanelLeft /><span className="sr-only">Toggle Sidebar</span></>)}
     </Button>
-  )
+  );
 })
 SidebarTrigger.displayName = "SidebarTrigger"
 
