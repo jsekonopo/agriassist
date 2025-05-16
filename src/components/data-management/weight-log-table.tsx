@@ -21,12 +21,12 @@ import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
 interface WeightLog {
-  id: string; // Firestore document ID
-  animalIdTag: string; // Denormalized
+  id: string; 
+  animalIdTag: string; 
   animalDocId: string;
   logDate: string; 
   weight: number;
-  weightUnit: string; // Unit as stored in DB
+  weightUnit: string; 
   notes?: string;
   createdAt?: Timestamp | Date;
   farmId: string;
@@ -136,13 +136,13 @@ export function WeightLogTable({ refreshTrigger, onLogDeleted }: WeightLogTableP
     const actualTargetUnit = targetUnit.toLowerCase();
 
     if (actualStoredUnit === actualTargetUnit) {
-      displayWeight = weight;
+      // No conversion needed
     } else if (actualStoredUnit === 'kg' && actualTargetUnit === 'lbs') {
       displayWeight = weight * KG_TO_LBS_FACTOR;
     } else if (actualStoredUnit === 'lbs' && actualTargetUnit === 'kg') {
       displayWeight = weight * LBS_TO_KG_FACTOR;
     }
-    // If units are somehow different but not kg/lbs, display as stored.
+    // If units are somehow different but not kg/lbs, display as stored (though this shouldn't happen with current form).
     return `${displayWeight.toFixed(1)} ${actualTargetUnit}`;
   };
 

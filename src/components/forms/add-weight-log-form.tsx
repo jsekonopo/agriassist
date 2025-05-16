@@ -16,12 +16,12 @@ import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { Icons } from "../icons";
-import { useAuth, type PreferredWeightUnit } from "@/contexts/auth-context"; // Import PreferredWeightUnit
+import { useAuth, type PreferredWeightUnit } from "@/contexts/auth-context"; 
 import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy, Timestamp } from "firebase/firestore";
 
 interface AnimalOption {
-  id: string; // Firestore document ID of the animal
+  id: string; 
   animalIdTag: string;
 }
 
@@ -49,22 +49,20 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
   const [animals, setAnimals] = useState<AnimalOption[]>([]);
   const [isLoadingAnimals, setIsLoadingAnimals] = useState(true);
   
-  // Get preferred weight unit from context, default to 'kg'
   const preferredWeightUnit = user?.settings?.preferredWeightUnit || "kg";
 
   const form = useForm<z.infer<typeof addWeightLogSchema>>({
     resolver: zodResolver(addWeightLogSchema),
     defaultValues: {
       animalDocId: "",
-      weightUnit: preferredWeightUnit, // Set default from context
+      weightUnit: preferredWeightUnit, 
       notes: "",
     },
   });
 
-  // Effect to update form's default weightUnit if user's preference changes
   useEffect(() => {
     form.reset({ 
-        ...form.getValues(), // keep other form values
+        ...form.getValues(), 
         weightUnit: preferredWeightUnit 
     });
   }, [preferredWeightUnit, form]);
@@ -133,7 +131,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
         animalDocId: "",
         logDate: undefined,
         weight: undefined,
-        weightUnit: preferredWeightUnit, // Reset to preferred unit
+        weightUnit: preferredWeightUnit, 
         notes: "",
       });
       if (onLogSaved) {
@@ -231,7 +229,7 @@ export function AddWeightLogForm({ onLogSaved }: AddWeightLogFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Unit</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}> {/* Ensure value is bound for controlled component */}
+                  <Select onValueChange={field.onChange} value={field.value}> 
                       <FormControl>
                           <SelectTrigger>
                               <SelectValue placeholder="Select unit"/>
