@@ -121,7 +121,7 @@ export default function AnalyticsPage() {
                 <p className="text-sm text-muted-foreground">Consider drip irrigation for vegetable plots to reduce water usage by up to 20%.</p>
             </div>
             <div className="flex items-start gap-3 p-3 bg-secondary/50 rounded-md">
-                <Icons.Layers3 className="w-5 h-5 text-primary flex-shrink-0 mt-1"/>
+                <Icons.Soil className="w-5 h-5 text-primary flex-shrink-0 mt-1"/>
                 <p className="text-sm text-muted-foreground">Regular soil testing can help optimize fertilizer application, saving costs and improving soil health.</p>
             </div>
         </CardContent>
