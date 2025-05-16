@@ -31,7 +31,9 @@ import {
   MapPin,
   Droplets,
   Thermometer,
-  Tractor
+  Tractor,
+  Camera, // Added Camera icon
+  ScanSearch, // Potentially useful alternative
 } from 'lucide-react';
 
 export const Icons = {
@@ -67,7 +69,9 @@ export const Icons = {
   Location: MapPin,
   Water: Droplets,
   Temperature: Thermometer,
-  Tractor
+  Tractor,
+  Camera, // Export Camera
+  ScanSearch, // Export ScanSearch
 };
 
 export type IconName = keyof typeof Icons;

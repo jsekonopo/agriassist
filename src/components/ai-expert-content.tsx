@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { AiAskForm } from "./forms/ai-ask-form";
 import { AiTreatmentForm } from "./forms/ai-treatment-form";
 import { AiOptimizationForm } from "./forms/ai-optimization-form";
+import { AiPlantDiagnosisForm } from "./forms/ai-plant-diagnosis-form"; // Added
 import { Icons } from "./icons";
 import type { LucideIcon } from "lucide-react";
 
@@ -25,10 +26,17 @@ const aiTabs: AiTab[] = [
     formComponent: AiAskForm,
   },
   {
+    value: "plant_diagnosis", // New tab
+    label: "Plant Diagnosis",
+    icon: Icons.Camera, // Using Camera icon
+    description: "Upload a photo and describe symptoms to diagnose plant health issues.",
+    formComponent: AiPlantDiagnosisForm,
+  },
+  {
     value: "treatment",
     label: "Treatment Plan",
-    icon: Icons.Planting,
-    description: "Get AI recommendations for crop diseases or pest infestations.",
+    icon: Icons.Planting, // Consider changing icon if Camera is too similar to PlantDiagnosis
+    description: "Get AI recommendations for crop diseases or pest infestations based on symptoms.",
     formComponent: AiTreatmentForm,
   },
   {
@@ -43,7 +51,7 @@ const aiTabs: AiTab[] = [
 export function AiExpertContent() {
   return (
     <Tabs defaultValue="ask" className="w-full">
-      <TabsList className="grid w-full grid-cols-1 md:grid-cols-3 mb-6">
+      <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 md:grid-cols-4 mb-6">
         {aiTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value} className="flex items-center gap-2 text-sm md:text-base">
             <tab.icon className="h-4 w-4 md:h-5 md:w-5" />
