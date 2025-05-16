@@ -1,3 +1,4 @@
+
 "use client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -34,13 +35,36 @@ export function PlantingLogForm() {
   });
 
   function onSubmit(values: z.infer<typeof plantingLogSchema>) {
-    console.log("Planting Log Data:", values);
-    // Here you would typically send data to a backend
-    toast({
-      title: "Planting Log Submitted (Simulated)",
-      description: `Crop: ${values.cropName}, Date: ${format(values.plantingDate, "PPP")}`,
-    });
-    form.reset();
+    try {
+      const existingLogsString = localStorage.getItem('plantingLogs');
+      const existingLogs = existingLogsString ? JSON.parse(existingLogsString) : [];
+      
+      const newLog = { 
+        ...values, 
+        id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9), // pseudo unique id
+        submittedAt: new Date().toISOString(),
+        plantingDate: format(values.plantingDate, "yyyy-MM-dd"), // Store date as a consistent string
+      };
+      existingLogs.push(newLog);
+      localStorage.setItem('plantingLogs', JSON.stringify(existingLogs));
+
+      toast({
+        title: "Planting Log Saved",
+        description: `Crop: ${values.cropName} on ${format(values.plantingDate, "PPP")} has been saved locally.`,
+      });
+      form.reset(); // Reset form after successful submission
+    } catch (error) {
+      console.error("Error saving planting log to localStorage:", error);
+      let message = "Could not save the planting log.";
+      if (error instanceof Error) {
+        message = `Could not save the planting log: ${error.message}. Please check console for details.`;
+      }
+      toast({
+        title: "Error Saving Log",
+        description: message,
+        variant: "destructive",
+      });
+    }
   }
 
   return (
