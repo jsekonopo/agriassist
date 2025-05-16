@@ -29,6 +29,7 @@ function AcceptInvitationContent() {
     if (authLoading) {
       setStatus('initial_loading');
       setMessage('Loading user session...');
+      setProcessedApiCall(false); // Reset if auth state changes
       return;
     }
 
@@ -42,10 +43,12 @@ function AcceptInvitationContent() {
     if (!firebaseUser) {
       setStatus('prompt_login');
       setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, please return to this page or click the invitation link again if not redirected automatically.');
+      // processedApiCall remains false, so if they log in and come back, it will try to process.
       return;
     }
 
-    if (!processedApiCall) {
+    // If user is authenticated and token exists, and we haven't processed this token yet in this component instance
+    if (firebaseUser && token && !processedApiCall) {
       setStatus('processing_token');
       setMessage('Verifying your invitation...');
 
@@ -80,7 +83,7 @@ function AcceptInvitationContent() {
           setMessage('An unexpected error occurred while processing your invitation. Please try again later or contact support.');
           toast({ title: 'Error', description: 'An unexpected error occurred.', variant: 'destructive' });
         } finally {
-          setProcessedApiCall(true);
+          setProcessedApiCall(true); // Mark as processed for this instance
         }
       };
       processToken();
@@ -89,31 +92,37 @@ function AcceptInvitationContent() {
 
   const getRedirectUrl = () => {
     if (typeof window !== "undefined") {
-      // Pass the current URL (including the token) as the redirect target
-      return encodeURIComponent(window.location.pathname + window.location.search);
+      // Ensure the token is part of the redirect URL
+      const currentPath = window.location.pathname; // should be /accept-invitation
+      const params = new URLSearchParams(window.location.search); // gets existing params like ?token=...
+      return encodeURIComponent(`${currentPath}${params.toString() ? `?${params.toString()}` : ''}`);
     }
     return '';
   };
   
-  if (status === 'initial_loading' || (status === 'processing_token' && !processedApiCall)) {
+  if (status === 'initial_loading') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[300px]">
         <Icons.Search className="h-12 w-12 text-primary animate-spin mb-4" />
-        <p className="text-muted-foreground">{authLoading ? 'Loading user session...' : 'Preparing to process invitation...'}</p>
+        <p className="text-muted-foreground">{message || 'Loading user session...'}</p>
         <Skeleton className="h-4 w-3/4 mt-4" />
         <Skeleton className="h-4 w-1/2 mt-2" />
       </div>
     );
   }
+  
+  if (status === 'processing_token' && !processedApiCall) { // Show processing if API call is about to start
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[200px]">
+        <Icons.Search className="h-10 w-10 text-primary animate-spin mb-4" />
+        <p className="text-lg font-medium text-center">{message || 'Verifying your invitation...'}</p>
+      </div>
+    );
+  }
+
 
   return (
     <div className="max-w-md mx-auto">
-      {status === 'processing_token' && processedApiCall && ( // Show processing only after API call started
-        <div className="flex flex-col items-center justify-center min-h-[200px]">
-          <Icons.Search className="h-10 w-10 text-primary animate-spin mb-4" />
-          <p className="text-lg font-medium text-center">{message || 'Verifying your invitation...'}</p>
-        </div>
-      )}
       {status === 'success' && (
         <Card className="bg-green-50 border-green-200 shadow-lg">
           <CardHeader>
@@ -190,5 +199,6 @@ export default function AcceptInvitationPage() {
     </div>
   );
 }
+    
 
     

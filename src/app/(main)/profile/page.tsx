@@ -119,7 +119,7 @@ export default function ProfilePage() {
         farmLatitude: user.farmLatitude !== undefined ? user.farmLatitude : null,
         farmLongitude: user.farmLongitude !== undefined ? user.farmLongitude : null,
       });
-    } else if (user && !isEditing) { // Reset form values if exiting edit mode without saving
+    } else if (user && !isEditing) {
         profileForm.reset({
             name: user.name || "",
             farmName: user.farmName || "",
@@ -135,8 +135,8 @@ export default function ProfilePage() {
       return;
     }
     setIsLoadingStaffDetails(true);
-    // user.staff from AuthContext already has { uid, name, email, role }
-    setStaffDetails(user.staff.filter(staffMember => staffMember.uid !== user.uid)); // Filter out the owner
+    // Filter out the owner themselves from the staff list to display
+    setStaffDetails(user.staff.filter(staffMember => staffMember.uid !== user.uid));
     setIsLoadingStaffDetails(false);
   }, [user]); 
 
@@ -151,6 +151,7 @@ export default function ProfilePage() {
     setIsLoadingMyInvitations(true);
     try {
       const invites: PendingInvitation[] = [];
+      // Query by invitedEmail (for invites sent before user had an account or if invitedUserUid wasn't set)
       const qByEmail = query( collection(db, "pendingInvitations"),
         where("invitedEmail", "==", user.email.toLowerCase()),
         where("status", "==", "pending")
@@ -162,6 +163,7 @@ export default function ProfilePage() {
             invites.push({ id: docSnap.id, ...data } as PendingInvitation);
         }
       });
+      // Query by invitedUserUid (for invites where UID was known)
       if (user.uid) {
           const qByUid = query( collection(db, "pendingInvitations"),
             where("invitedUserUid", "==", user.uid),
@@ -170,6 +172,7 @@ export default function ProfilePage() {
           const uidSnapshot = await getDocs(qByUid);
           uidSnapshot.docs.forEach(docSnap => {
             const data = docSnap.data();
+            // Add only if not already added by email query and not expired
             if (!invites.find(i => i.id === docSnap.id) && 
                 (!data.tokenExpiresAt || data.tokenExpiresAt.toMillis() > Date.now())) {
                  invites.push({ id: docSnap.id, ...data } as PendingInvitation);
@@ -225,6 +228,7 @@ export default function ProfilePage() {
       );
       toast({ title: "Profile Updated", description: "Your profile information has been successfully updated." });
       setIsEditing(false);
+      // refreshUserData(); // AuthContext will refresh itself via its own state update
     } catch (error: any) {
       console.error("Profile update error:", error);
       toast({ title: "Update Failed", description: error.message || "Could not update profile.", variant: "destructive"});
@@ -245,7 +249,10 @@ export default function ProfilePage() {
       description: result.message,
       variant: result.success ? "default" : "destructive",
     });
-    if (result.success) { inviteStaffForm.reset(); fetchFarmPendingInvitations(); }
+    if (result.success) { 
+      inviteStaffForm.reset(); 
+      fetchFarmPendingInvitations(); // Refresh pending invites list
+    }
     setIsInvitingStaff(false);
   }
   
@@ -256,7 +263,11 @@ export default function ProfilePage() {
     }
     const result = await removeStaffMember(staffUid);
      toast({ title: result.success ? "Staff Removed" : "Removal Failed", description: result.message, variant: result.success ? "default" : "destructive" });
-    if (result.success) { await refreshUserData(); fetchStaffDetails(); fetchFarmPendingInvitations(); }
+    if (result.success) { 
+        await refreshUserData(); // Refresh user context to update staff list in farm
+        fetchStaffDetails(); // Re-fetch staff details for profile page display
+        fetchFarmPendingInvitations(); // Just in case (though unlikely to be affected by removal)
+    }
   }
 
   async function handleUpdateStaffRole(staffUid: string, newRole: StaffRole) {
@@ -264,16 +275,34 @@ export default function ProfilePage() {
         toast({ title: "Permission Denied", description: "Only owners/admins can change staff roles.", variant: "destructive" });
         return;
     }
+    const staffToUpdate = staffDetails.find(s => s.uid === staffUid);
+    if (user.roleOnCurrentFarm === 'admin' && staffToUpdate?.role === 'admin' && user.uid !== staffUid) {
+        toast({ title: "Permission Denied", description: "Admins cannot change other admins' roles.", variant: "destructive" });
+        return;
+    }
+    if (user.roleOnCurrentFarm === 'admin' && newRole === 'admin') {
+        toast({ title: "Permission Denied", description: "Admins cannot promote others to admin.", variant: "destructive" });
+        return;
+    }
+
+
     const result = await updateStaffRole(staffUid, newRole);
     toast({ title: result.success ? "Role Updated" : "Update Failed", description: result.message, variant: result.success ? "default" : "destructive"});
-    if (result.success) { await refreshUserData(); fetchStaffDetails(); }
+    if (result.success) { 
+        await refreshUserData(); // Refresh user context (staff list on farm)
+        fetchStaffDetails(); // Re-fetch details to display updated role
+    }
   }
 
   async function handleAcceptInvitation(invitationId: string) {
     if (!firebaseUser) return; 
     const result = await acceptInvitation(invitationId);
     toast({ title: result.success ? "Invitation Accepted!" : "Acceptance Failed", description: result.message, variant: result.success ? "default" : "destructive" });
-    if (result.success) { await refreshUserData(); fetchMyPendingInvitations(); if (user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin') fetchFarmPendingInvitations(); }
+    if (result.success) { 
+      await refreshUserData(); 
+      fetchMyPendingInvitations(); 
+      if (user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin') fetchFarmPendingInvitations(); 
+    }
   }
 
   async function handleDeclineInvitation(invitationId: string) {
@@ -298,6 +327,7 @@ export default function ProfilePage() {
   const canManageBilling = user?.isFarmOwner;
   const isOwner = user?.isFarmOwner;
 
+
   if (authIsLoading || (!user && !authIsLoading)) { 
     return (
       <div className="space-y-6">
@@ -320,8 +350,9 @@ export default function ProfilePage() {
             <div>
               <CardTitle>{isEditing ? profileForm.getValues('name') : user.name || 'N/A'}</CardTitle>
               <CardDescription>{user.email || 'No email'}</CardDescription>
-               {user.farmName && <p className="text-sm text-muted-foreground mt-1">Farm: <span className="font-medium text-foreground">{isEditing ? profileForm.getValues('farmName') : user.farmName}</span> ({userRoleDisplay})</p>}
+               {user.farmName && <p className="text-sm text-muted-foreground mt-1">Farm: <span className="font-medium text-foreground">{isEditing ? profileForm.getValues('farmName') : user.farmName}</span></p>}
                {user.farmId && <p className="text-xs text-muted-foreground">Farm ID: {user.farmId}</p>}
+               <p className="text-sm text-muted-foreground">Role: <span className="font-medium text-foreground">{userRoleDisplay}</span></p>
             </div>
             {!isEditing && <Button variant="outline" onClick={() => setIsEditing(true)}><Icons.Edit3 className="mr-2 h-4 w-4" /> Edit Profile</Button>}
           </div>
@@ -357,7 +388,7 @@ export default function ProfilePage() {
               </form>
             </Form>
           ) : (
-            <div><h3 className="text-sm font-medium text-muted-foreground">Role on Farm</h3><p className="text-lg text-foreground">{userRoleDisplay}</p></div>
+            <div><h3 className="text-sm font-medium text-muted-foreground">Current Role on Farm</h3><p className="text-lg text-foreground">{userRoleDisplay}</p></div>
           )}
         </CardContent>
       </Card>
@@ -370,12 +401,12 @@ export default function ProfilePage() {
               <div><h3 className="text-sm font-medium text-muted-foreground">Status</h3><p className="text-lg text-foreground capitalize">{user.subscriptionStatus}</p></div>
               {user.selectedPlanId !== 'free' && user.subscriptionStatus === 'active' && (
                   <AlertDialog>
-                      <AlertDialogTrigger asChild><Button variant="outline"><Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription (Simulated)</Button></AlertDialogTrigger>
+                      <AlertDialogTrigger asChild><Button variant="outline"><Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription</Button></AlertDialogTrigger>
                       <AlertDialogContent>
-                          <AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This will cancel your paid subscription (simulated). Your plan will revert to Free.</AlertDialogDescription></AlertDialogHeader>
+                          <AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This will cancel your paid subscription. Your plan will revert to Free at the end of the current billing period.</AlertDialogDescription></AlertDialogHeader>
                           <AlertDialogFooter>
                           <AlertDialogCancel>No, Keep Plan</AlertDialogCancel>
-                          <AlertDialogAction onClick={async () => { if (!firebaseUser) return; const res = await cancelSubscription(); toast({title: res.success ? "Sub Cancelled" : "Cancel Failed", description: res.message, variant: res.success ? "default" : "destructive"}); if (res.success) refreshUserData();}} className={buttonVariants({variant: "destructive"})}>Yes, Cancel (Simulated)</AlertDialogAction>
+                          <AlertDialogAction onClick={async () => { if (!firebaseUser) return; const res = await cancelSubscription(); toast({title: res.success ? "Subscription Cancellation Initiated" : "Cancellation Failed", description: res.message, variant: res.success ? "default" : "destructive"}); if (res.success) refreshUserData();}} className={buttonVariants({variant: "destructive"})}>Yes, Cancel Subscription</AlertDialogAction>
                           </AlertDialogFooter>
                       </AlertDialogContent>
                   </AlertDialog>
@@ -404,7 +435,7 @@ export default function ProfilePage() {
 
       {canManageStaff && user.farmId && (
         <Card className="shadow-lg">
-          <CardHeader><CardTitle>Farm Staff Management</CardTitle><CardDescription>Manage staff access to your farm: <span className="font-semibold">{user.farmName}</span></CardDescription></CardHeader>
+          <CardHeader><CardTitle>Farm Staff Management</CardTitle><CardDescription>Manage staff access for farm: <span className="font-semibold">{user.farmName || user.farmId}</span></CardDescription></CardHeader>
           <CardContent className="space-y-6">
             <Form {...inviteStaffForm}>
               <form onSubmit={inviteStaffForm.handleSubmit(onInviteStaffSubmit)} className="space-y-4">
@@ -414,7 +445,7 @@ export default function ProfilePage() {
                   <FormField control={inviteStaffForm.control} name="role" render={({ field }) => (<FormItem><FormLabel>Assign Role</FormLabel><Select onValueChange={field.onChange} defaultValue={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger></FormControl><SelectContent>{staffRolesForSelection.map(rVal => (<SelectItem key={rVal} value={rVal} className="capitalize">{rVal}</SelectItem>))}</SelectContent></Select><FormMessage /></FormItem>)}/>
                   <Button type="submit" disabled={isInvitingStaff} className="self-end">{isInvitingStaff ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Logging Invite...</> : "Log Invitation Request"}</Button>
                 </div>
-                <Alert><Icons.Info className="h-4 w-4" /><AlertTitle>Invitation Process</AlertTitle><AlertDescription>An email will be sent with an acceptance link. The user needs an AgriAssist account (or to create one) with the invited email address.</AlertDescription></Alert>
+                <Alert><Icons.Info className="h-4 w-4" /><AlertTitle>Invitation Process</AlertTitle><AlertDescription>An email will be sent with an acceptance link. The user needs an AgriAssist account (or to create one) with the invited email address. The link is valid for 7 days.</AlertDescription></Alert>
               </form>
             </Form>
             <Separator />
@@ -430,12 +461,12 @@ export default function ProfilePage() {
                         <Select 
                             defaultValue={staff.role} 
                             onValueChange={(newRole) => {
-                                // Simple confirmation before changing role
-                                if (window.confirm(`Change ${staff.name || 'this staff'}'s role to ${newRole}?`)) {
-                                    handleUpdateStaffRole(staff.uid, newRole as StaffRole);
+                                const roleToUpdate = newRole as StaffRole;
+                                if (window.confirm(`Change ${staff.name || 'this staff'}'s role to ${roleToUpdate}?`)) {
+                                    handleUpdateStaffRole(staff.uid, roleToUpdate);
                                 }
                             }}
-                            disabled={(!isOwner && staff.role === 'admin') || staff.uid === user.uid } // Admins cannot change other admins or self
+                            disabled={staff.uid === user.uid || (user.roleOnCurrentFarm === 'admin' && staff.role === 'admin')}
                         >
                             <SelectTrigger className="w-[120px] h-8 text-xs">
                                 <SelectValue placeholder="Change role" />
@@ -446,7 +477,8 @@ export default function ProfilePage() {
                                         key={rVal} 
                                         value={rVal} 
                                         className="capitalize text-xs"
-                                        disabled={!isOwner && rVal === 'admin'} // Admin cannot assign admin role
+                                        // Owner can assign any role. Admin can assign editor/viewer but not admin.
+                                        disabled={(user.roleOnCurrentFarm === 'admin' && rVal === 'admin')}
                                     >
                                         {rVal}
                                     </SelectItem>
@@ -480,5 +512,7 @@ export default function ProfilePage() {
     </div>
   );
 }
+
+    
 
     
