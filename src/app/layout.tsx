@@ -2,6 +2,7 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
+import 'leaflet/dist/leaflet.css'; // Import Leaflet CSS
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AuthProvider } from '@/contexts/auth-context'; // Import AuthProvider

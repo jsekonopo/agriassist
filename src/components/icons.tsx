@@ -42,7 +42,8 @@ import {
   UserCircle,
   Archive, 
   Package,
-  CreditCard, // Added for Expenses
+  CreditCard,
+  Map, // Added Map icon
 } from 'lucide-react';
 
 export const Icons = {
@@ -75,7 +76,7 @@ export const Icons = {
   Calendar: CalendarDays,
   Help: HelpCircle,
   Dollar: DollarSign,
-  Location: MapPin,
+  Location: MapPin, // Used for individual fields in Data Management
   Water: Droplets,
   Temperature: Thermometer,
   Tractor,
@@ -88,8 +89,8 @@ export const Icons = {
   UserCircle,
   FertilizerLog: Archive,
   InputsInventory: Package,
-  Expenses: CreditCard, // Added new icon mapping
+  Expenses: CreditCard,
+  Map, // Added Map icon for the new Farm Map view
 };
 
 export type IconName = keyof typeof Icons;
-

@@ -1,6 +1,6 @@
 
 import type { LucideIcon } from 'lucide-react';
-import { Settings } from 'lucide-react';
+import { Settings, Map } from 'lucide-react'; // Added Map
 import { Icons } from '@/components/icons'; // Import Icons object
 
 export interface NavItem {
@@ -16,6 +16,11 @@ export const mainNavItems: NavItem[] = [
     title: 'Dashboard',
     href: '/dashboard',
     icon: Icons.Dashboard,
+  },
+  {
+    title: 'Farm Map', // New Map Item
+    href: '/map',
+    icon: Icons.Map, // Using the new Map icon
   },
   {
     title: 'Data Management',
@@ -48,6 +53,5 @@ export const settingsNavItem: NavItem = {
   title: 'Settings',
   href: '/settings', 
   icon: Settings,
-  disabled: false, // Enabled the settings link
+  disabled: false, 
 };
-
