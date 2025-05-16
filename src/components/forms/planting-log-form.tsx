@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +13,49 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
+import { Icons } from "../icons";
+
+// Mock service for saving planting logs
+// In a real app, this would interact with a backend API
+const mockPlantingLogService = {
+  save: async (logData: Omit<PlantingLogData, 'id' | 'submittedAt'>): Promise<PlantingLogData> => {
+    console.log("Mock service: Attempting to save planting log:", logData);
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        try {
+          const existingLogsString = localStorage.getItem('plantingLogs');
+          const existingLogs: PlantingLogData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
+          
+          const newLog: PlantingLogData = { 
+            ...logData, 
+            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
+            submittedAt: new Date().toISOString(),
+            plantingDate: format(logData.plantingDate, "yyyy-MM-dd"), // Ensure date is stored as string
+          };
+          existingLogs.push(newLog);
+          localStorage.setItem('plantingLogs', JSON.stringify(existingLogs));
+          console.log("Mock service: Planting log saved to localStorage:", newLog);
+          resolve(newLog);
+        } catch (error) {
+          console.error("Mock service: Error saving planting log to localStorage:", error);
+          reject(error);
+        }
+      }, 500); // Simulate network delay
+    });
+  }
+};
+
+interface PlantingLogData {
+  id: string;
+  cropName: string;
+  plantingDate: string; // Will be YYYY-MM-DD string after processing
+  fieldId: string;
+  seedsUsed?: string;
+  notes?: string;
+  submittedAt: string;
+}
+
 
 const plantingLogSchema = z.object({
   cropName: z.string().min(1, "Crop name is required."),
@@ -24,6 +67,7 @@ const plantingLogSchema = z.object({
 
 export function PlantingLogForm() {
   const { toast } = useToast();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const form = useForm<z.infer<typeof plantingLogSchema>>({
     resolver: zodResolver(plantingLogSchema),
     defaultValues: {
@@ -34,27 +78,23 @@ export function PlantingLogForm() {
     },
   });
 
-  function onSubmit(values: z.infer<typeof plantingLogSchema>) {
+  async function onSubmit(values: z.infer<typeof plantingLogSchema>) {
+    setIsSubmitting(true);
     try {
-      const existingLogsString = localStorage.getItem('plantingLogs');
-      const existingLogs = existingLogsString ? JSON.parse(existingLogsString) : [];
-      
-      const newLog = { 
-        ...values, 
-        id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9), // pseudo unique id
-        submittedAt: new Date().toISOString(),
-        plantingDate: format(values.plantingDate, "yyyy-MM-dd"), // Store date as a consistent string
-      };
-      existingLogs.push(newLog);
-      localStorage.setItem('plantingLogs', JSON.stringify(existingLogs));
+      // The service expects plantingDate as a Date object, it will handle formatting.
+      await mockPlantingLogService.save(values);
 
       toast({
         title: "Planting Log Saved",
-        description: `Crop: ${values.cropName} on ${format(values.plantingDate, "PPP")} has been saved locally.`,
+        description: `Crop: ${values.cropName} on ${format(values.plantingDate, "PPP")} has been saved.`,
       });
-      form.reset(); // Reset form after successful submission
+      form.reset(); 
+      // Potentially trigger a refresh of the log table if it's visible
+      // This might involve a shared state or a callback prop if the table is in the same component tree.
+      // For now, users will see new data on next table load/refresh.
+      
     } catch (error) {
-      console.error("Error saving planting log to localStorage:", error);
+      console.error("Error saving planting log:", error);
       let message = "Could not save the planting log.";
       if (error instanceof Error) {
         message = `Could not save the planting log: ${error.message}. Please check console for details.`;
@@ -64,6 +104,8 @@ export function PlantingLogForm() {
         description: message,
         variant: "destructive",
       });
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -169,7 +211,16 @@ export function PlantingLogForm() {
             </FormItem>
           )}
         />
-        <Button type="submit">Save Planting Log</Button>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? (
+            <>
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> {/* Using User as a placeholder spinner */}
+              Saving...
+            </>
+          ) : (
+            "Save Planting Log"
+          )}
+        </Button>
       </form>
     </Form>
   );

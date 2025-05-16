@@ -1,3 +1,4 @@
+
 "use client";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -6,8 +7,10 @@ import { PlantingLogForm } from "./forms/planting-log-form";
 import { HarvestingLogForm } from "./forms/harvesting-log-form";
 import { SoilDataForm } from "./forms/soil-data-form";
 import { WeatherDataForm } from "./forms/weather-data-form";
-import { Icons } from "./icons"; // Assuming you have an Icons component
+import { Icons } from "./icons"; 
 import type { LucideIcon } from "lucide-react";
+import { PlantingLogTable } from "./data-management/planting-log-table"; // Import the new table
+import { Separator } from "@/components/ui/separator";
 
 interface DataTab {
   value: string;
@@ -15,6 +18,7 @@ interface DataTab {
   icon: LucideIcon;
   description: string;
   formComponent: React.ElementType;
+  tableComponent?: React.ElementType; // Optional: for tabs that will show a table
 }
 
 const dataTabs: DataTab[] = [
@@ -22,8 +26,9 @@ const dataTabs: DataTab[] = [
     value: "planting",
     label: "Planting Logs",
     icon: Icons.Planting,
-    description: "Record details about your planting activities.",
+    description: "Record and view details about your planting activities.",
     formComponent: PlantingLogForm,
+    tableComponent: PlantingLogTable, // Add the table component here
   },
   {
     value: "harvesting",
@@ -71,6 +76,13 @@ export function DataManagementContent() {
             </CardHeader>
             <CardContent>
               <tab.formComponent />
+              {tab.tableComponent && (
+                <>
+                  <Separator className="my-8" />
+                  <h3 className="text-xl font-semibold mb-4">Recorded Logs</h3>
+                  <tab.tableComponent />
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

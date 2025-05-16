@@ -1,41 +1,61 @@
+
+"use client";
+
 import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
+import { useAuth } from '@/contexts/auth-context';
 
 export default function LandingPage() {
+  const { isAuthenticated, logout, user } = useAuth();
+
   return (
     <div className="flex flex-col min-h-screen">
       <header className="px-4 lg:px-6 h-16 flex items-center border-b">
-        <Link href="#" className="flex items-center justify-center" prefetch={false}>
+        <Link href="/" className="flex items-center justify-center" prefetch={false}>
           <Icons.Logo className="h-8 w-8 text-primary" />
           <span className="ml-2 text-xl font-semibold text-foreground">AgriAssist</span>
         </Link>
-        <nav className="ml-auto flex gap-4 sm:gap-6">
+        <nav className="ml-auto flex gap-4 sm:gap-6 items-center">
           <Link
-            href="/dashboard"
+            href="/dashboard#features" // Assuming features are on dashboard or a section there
             className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
             prefetch={false}
           >
             Features
           </Link>
-          <Link
-            href="/dashboard"
+          {/* <Link
+            href="/pricing" // Placeholder for pricing page
             className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
             prefetch={false}
           >
             Pricing
-          </Link>
-          <Link
-            href="/dashboard" // Direct to dashboard for now
-            className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
-            prefetch={false}
-          >
-            Login
-          </Link>
-          <Button asChild>
-            <Link href="/dashboard">Get Started</Link>
-          </Button>
+          </Link> */}
+          {isAuthenticated ? (
+            <>
+              <span className="text-sm text-muted-foreground hidden sm:inline">Welcome, {user?.name || 'Farmer'}!</span>
+              <Button variant="outline" size="sm" onClick={logout}>
+                Logout
+              </Button>
+              <Button asChild size="sm">
+                <Link href="/dashboard">Go to Dashboard</Link>
+              </Button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
+                prefetch={false}
+              >
+                Login
+              </Link>
+              <Button asChild>
+                <Link href="/register">Sign Up</Link>
+              </Button>
+            </>
+          )}
         </nav>
       </header>
       <main className="flex-1">
@@ -48,13 +68,13 @@ export default function LandingPage() {
                     Smart Farming, Simplified with <span className="text-primary">AgriAssist</span>
                   </h1>
                   <p className="max-w-[600px] text-muted-foreground md:text-xl">
-                    Your all-in-one platform for data-driven agriculture. Manage records, track resources, and get AI-powered insights to boost your farm's productivity and sustainability.
+                    Your all-in-one platform for data-driven agriculture. Manage records, track resources, and get AI-powered insights to boost your farm&apos;s productivity and sustainability.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2 min-[400px]:flex-row">
                   <Button size="lg" asChild>
-                    <Link href="/dashboard">
-                      Explore Dashboard
+                    <Link href={isAuthenticated ? "/dashboard" : "/register"}>
+                      {isAuthenticated ? "Explore Dashboard" : "Get Started Free"}
                     </Link>
                   </Button>
                   <Button size="lg" variant="outline" asChild>
@@ -67,7 +87,7 @@ export default function LandingPage() {
               <Image
                 src="https://placehold.co/600x400.png"
                 alt="Farm illustration"
-                data-ai-hint="farm field"
+                data-ai-hint="modern farm technology"
                 width={600}
                 height={400}
                 className="mx-auto aspect-video overflow-hidden rounded-xl object-cover sm:w-full lg:order-last lg:aspect-square shadow-lg"
