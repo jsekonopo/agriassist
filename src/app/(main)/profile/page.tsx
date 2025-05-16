@@ -53,7 +53,7 @@ interface PendingInvitation {
   inviterName?: string; 
   farmName?: string; 
   invitedEmail: string;
-  invitedUserUid: string | null; // Can be null if user doesn't exist yet
+  invitedUserUid: string | null; 
   status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'error_farm_not_found';
   createdAt: Timestamp;
 }
@@ -66,7 +66,7 @@ const planNames: Record<PlanId, string> = {
 
 
 export default function ProfilePage() {
-  const { user, isLoading, updateUserProfile, firebaseUser, inviteStaffMemberByEmail, removeStaffMember, acceptInvitation, declineInvitation, revokeInvitation, refreshUserData } = useAuth();
+  const { user, isLoading: authIsLoading, updateUserProfile, firebaseUser, inviteStaffMemberByEmail, removeStaffMember, acceptInvitation, declineInvitation, revokeInvitation, refreshUserData } = useAuth();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmittingProfile, setIsSubmittingProfile] = useState(false);
@@ -104,69 +104,79 @@ export default function ProfilePage() {
   }, [user, profileForm, isEditing]);
 
   const fetchStaffDetails = useCallback(async () => {
-    if (user?.isFarmOwner && user.staffMembers && user.staffMembers.length > 0) {
-      setIsLoadingStaffDetails(true);
+    if (!user?.isFarmOwner || !user.staffMembers || user.staffMembers.length === 0) {
+      setStaffDetails([]);
+      return;
+    }
+    setIsLoadingStaffDetails(true);
+    try {
       const detailsPromises = user.staffMembers.map(async (staffUid) => {
+        if (staffUid === user.uid) return null; // Should not happen if staffMembers array is managed correctly
         const userDocRef = doc(db, "users", staffUid);
         const userDocSnap = await getDoc(userDocRef);
         if (userDocSnap.exists()) {
           const staffData = userDocSnap.data();
           return { uid: staffUid, name: staffData.name || 'N/A', email: staffData.email || 'N/A' };
         }
-        return { uid: staffUid, name: 'Unknown User', email: 'N/A' };
+        return { uid: staffUid, name: 'Unknown User', email: 'N/A (User data not found)' };
       });
-      try {
-        const resolvedDetails = await Promise.all(detailsPromises);
-        setStaffDetails(resolvedDetails.filter(detail => detail.uid !== user.uid)); // Exclude owner from staff list
-      } catch (error) {
-        console.error("Error fetching staff details:", error);
-        toast({ title: "Error", description: "Could not fetch staff details.", variant: "destructive" });
-      } finally {
-        setIsLoadingStaffDetails(false);
-      }
-    } else {
-      setStaffDetails([]);
+      const resolvedDetails = (await Promise.all(detailsPromises)).filter(Boolean) as StaffMemberDisplay[];
+      setStaffDetails(resolvedDetails);
+    } catch (error) {
+      console.error("Error fetching staff details:", error);
+      toast({ title: "Error", description: "Could not fetch staff details.", variant: "destructive" });
+    } finally {
+      setIsLoadingStaffDetails(false);
     }
   }, [user?.isFarmOwner, user?.staffMembers, user?.uid, toast]);
 
   useEffect(() => {
-    fetchStaffDetails();
-  }, [fetchStaffDetails]);
+    if (user?.isFarmOwner) {
+        fetchStaffDetails();
+    } else {
+        setStaffDetails([]); // Clear staff details if user is not owner or becomes staff
+    }
+  }, [user?.isFarmOwner, fetchStaffDetails]);
 
 
   const fetchMyPendingInvitations = useCallback(async () => {
-    if (user?.uid) {
-      setIsLoadingMyInvitations(true);
-      try {
-        const q = query(
-          collection(db, "pendingInvitations"),
-          where("invitedUserUid", "==", user.uid), // Query by UID if available
-          where("status", "==", "pending")
-        );
-        const qByEmail = query( // Fallback to query by email if UID might be null
-            collection(db, "pendingInvitations"),
-            where("invitedEmail", "==", user.email?.toLowerCase()),
-            where("status", "==", "pending")
-        );
-        
-        const [querySnapshot, querySnapshotByEmail] = await Promise.all([getDocs(q), getDocs(qByEmail)]);
-        
-        const invitesMap = new Map<string, PendingInvitation>();
-        querySnapshot.docs.forEach(docSnap => invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation));
-        querySnapshotByEmail.docs.forEach(docSnap => {
-            if (!invitesMap.has(docSnap.id)) { // Add if not already fetched by UID
-                 invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation);
-            }
-        });
+    if (!user?.uid || !user.email) {
+      setMyPendingInvitations([]);
+      return;
+    }
+    setIsLoadingMyInvitations(true);
+    try {
+      // Query by UID - for users who already had an account when invited
+      const qByUid = query(
+        collection(db, "pendingInvitations"),
+        where("invitedUserUid", "==", user.uid),
+        where("status", "==", "pending")
+      );
+      // Query by email - for users who might not have had an account (invitedUserUid was null)
+      const qByEmail = query(
+        collection(db, "pendingInvitations"),
+        where("invitedEmail", "==", user.email.toLowerCase()),
+        where("status", "==", "pending")
+      );
+      
+      const [uidSnapshot, emailSnapshot] = await Promise.all([getDocs(qByUid), getDocs(qByEmail)]);
+      
+      const invitesMap = new Map<string, PendingInvitation>();
+      uidSnapshot.docs.forEach(docSnap => invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation));
+      emailSnapshot.docs.forEach(docSnap => {
+        // Add if not already present (e.g., if invitedUserUid was null and now matches after signup)
+        if (!invitesMap.has(docSnap.id)) {
+          invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation);
+        }
+      });
 
-        setMyPendingInvitations(Array.from(invitesMap.values()));
+      setMyPendingInvitations(Array.from(invitesMap.values()));
 
-      } catch (error) {
-        console.error("Error fetching user's pending invitations:", error);
-        toast({ title: "Error", description: "Could not fetch your pending invitations.", variant: "destructive" });
-      } finally {
-        setIsLoadingMyInvitations(false);
-      }
+    } catch (error) {
+      console.error("Error fetching user's pending invitations:", error);
+      toast({ title: "Error", description: "Could not fetch your pending invitations.", variant: "destructive" });
+    } finally {
+      setIsLoadingMyInvitations(false);
     }
   }, [user?.uid, user?.email, toast]);
 
@@ -176,46 +186,53 @@ export default function ProfilePage() {
 
 
   const fetchFarmPendingInvitations = useCallback(async () => {
-    if (user?.isFarmOwner && user.farmId) {
-      setIsLoadingFarmInvitations(true);
-      try {
-        const q = query(
-          collection(db, "pendingInvitations"),
-          where("inviterFarmId", "==", user.farmId),
-          where("status", "==", "pending")
-        );
-        const querySnapshot = await getDocs(q);
-        const invites = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation));
-        setFarmPendingInvitations(invites);
-      } catch (error) {
-        console.error("Error fetching farm's pending invitations:", error);
-        toast({ title: "Error", description: "Could not fetch farm's pending invitations.", variant: "destructive" });
-      } finally {
-        setIsLoadingFarmInvitations(false);
-      }
+    if (!user?.isFarmOwner || !user.farmId) {
+      setFarmPendingInvitations([]);
+      return;
+    }
+    setIsLoadingFarmInvitations(true);
+    try {
+      const q = query(
+        collection(db, "pendingInvitations"),
+        where("inviterFarmId", "==", user.farmId),
+        where("status", "==", "pending")
+      );
+      const querySnapshot = await getDocs(q);
+      const invites = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation));
+      setFarmPendingInvitations(invites);
+    } catch (error) {
+      console.error("Error fetching farm's pending invitations:", error);
+      toast({ title: "Error", description: "Could not fetch farm's pending invitations.", variant: "destructive" });
+    } finally {
+      setIsLoadingFarmInvitations(false);
     }
   }, [user?.isFarmOwner, user?.farmId, toast]);
 
   useEffect(() => {
-    fetchFarmPendingInvitations();
-  }, [fetchFarmPendingInvitations]);
+    if (user?.isFarmOwner) {
+        fetchFarmPendingInvitations();
+    } else {
+        setFarmPendingInvitations([]); // Clear farm invites if user is not owner
+    }
+  }, [user?.isFarmOwner, fetchFarmPendingInvitations]);
 
 
   async function onProfileSubmit(values: z.infer<typeof profileFormSchema>) {
-    if (!user) return;
+    if (!user || !firebaseUser) return; // firebaseUser check added
     setIsSubmittingProfile(true);
     try {
+      // updateUserProfile now handles updating farmName in farms collection if user is owner
       await updateUserProfile(values.name, values.farmName);
       toast({
         title: "Profile Updated",
         description: "Your profile information has been successfully updated.",
       });
       setIsEditing(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Profile update error:", error);
       toast({
         title: "Update Failed",
-        description: (error instanceof Error).message || "Could not update your profile. Please try again.",
+        description: error.message || "Could not update your profile. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -231,7 +248,7 @@ export default function ProfilePage() {
     setIsInvitingStaff(true);
     const result = await inviteStaffMemberByEmail(values.staffEmail);
     toast({
-      title: result.success ? "Invitation Logged" : "Invitation Failed",
+      title: result.success ? "Invitation Request Logged" : "Invitation Failed",
       description: result.message,
       variant: result.success ? "default" : "destructive",
     });
@@ -254,8 +271,8 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-        fetchStaffDetails(); 
-        fetchFarmPendingInvitations(); // Also refresh farm owner's view of invites (e.g. if staff member had a pending invite from this farm)
+        await refreshUserData(); // Refresh context user which should re-trigger staff list fetch
+        fetchStaffDetails(); // And explicitly refetch details
     }
   }
 
@@ -268,9 +285,10 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-      fetchMyPendingInvitations(); 
-      fetchFarmPendingInvitations();
-      fetchStaffDetails(); 
+      await refreshUserData(); // Crucial: refresh user data in context to get new farmId, role, etc.
+      fetchMyPendingInvitations(); // Refresh this user's list of pending invites
+      // If user was an owner, they might need to refresh their farm's staff list view (if they had one open)
+      // This is handled by AuthContext update triggering Profile Page re-render
     }
   }
 
@@ -301,7 +319,7 @@ export default function ProfilePage() {
   }
 
 
-  if (isLoading) {
+  if (authIsLoading) {
     return (
       <div className="space-y-6">
         <PageHeader
@@ -315,12 +333,12 @@ export default function ProfilePage() {
             <Skeleton className="h-4 w-1/2" />
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1">
-              <Skeleton className="h-4 w-1/4" />
-              <Skeleton className="h-6 w-3/4" />
-            </div>
-            <Skeleton className="h-10 w-32 mt-4" />
+            {[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full mb-2" />)}
           </CardContent>
+        </Card>
+         <Card className="shadow-lg">
+          <CardHeader><Skeleton className="h-7 w-1/4 mb-2" /></CardHeader>
+          <CardContent><Skeleton className="h-10 w-full" /></CardContent>
         </Card>
       </div>
     );
@@ -362,10 +380,10 @@ export default function ProfilePage() {
             <div>
               <CardTitle>{profileForm.getValues('name') || user.name || 'N/A'}</CardTitle>
               <CardDescription>{user.email || 'No email provided'}</CardDescription>
-               {(user.farmName ) && 
+               {user.farmName && 
                 <p className="text-sm text-muted-foreground mt-1">
-                  Farm: <span className="font-medium text-foreground">{user.farmName}</span> {user.isFarmOwner && `(Owner)`}
-                  {!user.isFarmOwner && user.farmId && `(Staff)`}
+                  Farm: <span className="font-medium text-foreground">{user.farmName}</span>
+                  {user.isFarmOwner ? ` (Owner)` : user.farmId ? ` (Staff Member)` : ''}
                 </p>
                }
                {user.farmId && <p className="text-xs text-muted-foreground">Farm ID: {user.farmId}</p>}
@@ -394,7 +412,7 @@ export default function ProfilePage() {
                     </FormItem>
                   )}
                 />
-                {user.isFarmOwner && ( // Only farm owners can edit the farm name directly here
+                {user.isFarmOwner && (
                   <FormField
                     control={profileForm.control}
                     name="farmName"
@@ -404,6 +422,7 @@ export default function ProfilePage() {
                         <FormControl>
                           <Input placeholder="Your farm's name" {...field} />
                         </FormControl>
+                        <FormDescription>Only farm owners can change the farm name.</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -432,14 +451,13 @@ export default function ProfilePage() {
             <>
               <div>
                 <h3 className="text-sm font-medium text-muted-foreground">Role</h3>
-                <p className="text-lg text-foreground">{user.isFarmOwner ? 'Farm Owner' : 'Staff Member'}</p>
+                <p className="text-lg text-foreground">{user.isFarmOwner ? 'Farm Owner' : (user.farmId ? 'Staff Member' : 'Not associated with a farm')}</p>
               </div>
             </>
           )}
         </CardContent>
       </Card>
 
-      {/* Subscription Information Card */}
       <Card className="shadow-lg">
         <CardHeader>
             <CardTitle>Subscription Plan</CardTitle>
@@ -454,30 +472,69 @@ export default function ProfilePage() {
                 <h3 className="text-sm font-medium text-muted-foreground">Status</h3>
                 <p className="text-lg text-foreground capitalize">{user.subscriptionStatus}</p>
             </div>
+            {user.selectedPlanId !== 'free' && user.subscriptionStatus === 'active' && (
+                <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                        <Button variant="outline">
+                            <Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription (Simulated)
+                        </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will cancel your current paid subscription. Your plan will revert to Free at the end of the current billing period (simulated).
+                        </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                        <AlertDialogCancel>No, Keep Plan</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={async () => {
+                                if (!firebaseUser) return;
+                                const result = await user.cancelSubscription(); // Use cancelSubscription from user object
+                                toast({
+                                    title: result.success ? "Subscription Cancellation Requested" : "Cancellation Failed",
+                                    description: result.message,
+                                    variant: result.success ? "default" : "destructive",
+                                });
+                                if (result.success) {
+                                    refreshUserData();
+                                }
+                            }}
+                            className={buttonVariants({variant: "destructive"})}
+                        >
+                            Yes, Cancel Subscription
+                        </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+            )}
             <Button asChild>
                 <Link href="/pricing">
                     <Icons.Dollar className="mr-2 h-4 w-4" />
-                    View Plans & Upgrade (Simulated)
+                     {user.selectedPlanId === 'free' ? 'Upgrade Plan' : 'View Plans & Manage'} (Simulated)
                 </Link>
             </Button>
             <Alert variant="default">
                 <Icons.Info className="h-4 w-4" />
-                <AlertTitle>Simulation Note</AlertTitle>
+                <AlertTitle>Subscription Simulation Note</AlertTitle>
                 <AlertDescription>
-                    Subscription management and payments are currently simulated. No real charges will occur.
+                    Subscription management and payments are currently simulated. Actual plan changes via Stripe are required for a live system.
                 </AlertDescription>
             </Alert>
         </CardContent>
       </Card>
 
       {/* Section for User's Pending Invitations */}
-      { !isLoadingMyInvitations && myPendingInvitations.length > 0 && (
-        <Card className="shadow-lg">
-          <CardHeader>
-            <CardTitle>My Pending Invitations</CardTitle>
-            <CardDescription>Invitations you have received to join other farms. Accept or decline them here.</CardDescription>
-          </CardHeader>
-          <CardContent>
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle>My Pending Invitations</CardTitle>
+          <CardDescription>Invitations you have received to join other farms.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoadingMyInvitations ? (
+            <Skeleton className="h-20 w-full" />
+          ) : myPendingInvitations.length > 0 ? (
             <ul className="space-y-3">
               {myPendingInvitations.map(invite => (
                 <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
@@ -487,7 +544,7 @@ export default function ProfilePage() {
                     <p className="text-xs text-muted-foreground">Sent: {invite.createdAt?.toDate().toLocaleDateString()}</p>
                   </div>
                   <div className="flex gap-2 mt-2 sm:mt-0 flex-shrink-0">
-                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)}>
+                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={!user.farmId || user.farmId === invite.inviterFarmId}>
                       <Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => handleDeclineInvitation(invite.id)}>
@@ -497,13 +554,17 @@ export default function ProfilePage() {
                 </li>
               ))}
             </ul>
-          </CardContent>
-        </Card>
-      )}
-      { isLoadingMyInvitations && <Skeleton className="h-20 w-full" /> }
+          ) : (
+            <Alert>
+              <Icons.Info className="h-4 w-4" />
+              <AlertTitle>No Pending Invitations</AlertTitle>
+              <AlertDescription>You have no pending invitations to join other farms.</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
 
-
-      {user.isFarmOwner && (
+      {user.isFarmOwner && user.farmId && (
         <Card className="shadow-lg">
           <CardHeader>
             <CardTitle>Farm Management</CardTitle>
@@ -525,12 +586,8 @@ export default function ProfilePage() {
                         </FormControl>
                         <Button type="submit" disabled={isInvitingStaff} className="flex-shrink-0">
                           {isInvitingStaff ? (
-                            <>
-                              <Icons.Search className="mr-2 h-4 w-4 animate-spin" /> Logging Invite...
-                            </>
-                          ) : (
-                            "Log Invitation Request"
-                          )}
+                            <> <Icons.Search className="mr-2 h-4 w-4 animate-spin" /> Logging Invite... </>
+                          ) : ( "Log Invitation Request" )}
                         </Button>
                       </div>
                       <FormMessage />
@@ -541,7 +598,7 @@ export default function ProfilePage() {
                     <Icons.Info className="h-4 w-4" />
                     <AlertTitle>Invitation Process</AlertTitle>
                     <AlertDescription>
-                      This logs an invitation request to Firestore and attempts to send an email (if email service is configured). The invited user must have or create an AgriAssist account. They will see the invitation on their profile page to accept or decline.
+                      This logs an invitation request to Firestore. An email is sent to the invited user if email services are configured. The user must have or create an AgriAssist account with that email and accept the invitation from their profile.
                     </AlertDescription>
                   </Alert>
               </form>
@@ -552,7 +609,7 @@ export default function ProfilePage() {
             <div>
               <h3 className="text-md font-medium mb-2">Current Staff Members ({staffDetails.length})</h3>
               {isLoadingStaffDetails ? (
-                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-20 w-full" />
               ) : staffDetails.length > 0 ? (
                 <ul className="space-y-2">
                   {staffDetails.map(staff => (
@@ -569,9 +626,9 @@ export default function ProfilePage() {
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                            <AlertDialogTitle>Are you sure you want to remove {staff.name}?</AlertDialogTitle>
                             <AlertDialogDescription>
-                              This action will remove {staff.name} from your farm staff. They will be reassigned to a new personal farm. This cannot be undone.
+                              This action will remove {staff.name} from your farm staff. They will be reassigned to their own personal farm space. This cannot be undone.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -586,7 +643,11 @@ export default function ProfilePage() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-muted-foreground">No staff members have been added to this farm yet.</p>
+                <Alert>
+                    <Icons.Info className="h-4 w-4" />
+                    <AlertTitle>No Staff Members</AlertTitle>
+                    <AlertDescription>No staff members have been added to this farm yet.</AlertDescription>
+                </Alert>
               )}
             </div>
              <Separator />
@@ -610,9 +671,9 @@ export default function ProfilePage() {
                   ) : (
                     <Alert>
                         <Icons.Info className="h-4 w-4" />
-                        <AlertTitle>No Pending Invitations</AlertTitle>
+                        <AlertTitle>No Pending Invitations Sent</AlertTitle>
                         <AlertDescription>
-                        There are currently no pending invitations for your farm.
+                        There are currently no pending invitations sent by your farm.
                         </AlertDescription>
                     </Alert>
                   )
@@ -624,3 +685,5 @@ export default function ProfilePage() {
     </div>
   );
 }
+
+    
