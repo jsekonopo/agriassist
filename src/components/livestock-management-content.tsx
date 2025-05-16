@@ -8,6 +8,8 @@ import { Icons } from "./icons";
 import type { LucideIcon } from "lucide-react";
 import { AddAnimalForm } from "./forms/add-animal-form";
 import { AnimalRegistryTable } from "./data-management/animal-registry-table";
+import { AddHealthRecordForm } from "./forms/add-health-record-form"; // Import new form
+import { HealthRecordsTable } from "./data-management/health-records-table"; // Import new table
 import { Separator } from "@/components/ui/separator";
 import { useAuth, type UserRole } from "@/contexts/auth-context"; 
 
@@ -21,31 +23,30 @@ interface LivestockTab {
   requiredRolesForAdd?: UserRole[];
 }
 
-// Define roles that can add new animal records
 const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
-const rolesThatCanAddAnimal: UserRole[] = [...ownerRoles, 'admin', 'editor'];
+const rolesThatCanAdd: UserRole[] = [...ownerRoles, 'admin', 'editor'];
 
 
 const livestockTabs: LivestockTab[] = [
   {
     value: "registry",
     label: "Animal Registry",
-    icon: Icons.ClipboardList, // Using ClipboardList for registry
+    icon: Icons.ClipboardList, 
     description: "Add, view, and manage individual animal records.",
     formComponent: AddAnimalForm,
     tableComponent: AnimalRegistryTable,
-    requiredRolesForAdd: rolesThatCanAddAnimal,
+    requiredRolesForAdd: rolesThatCanAdd,
   },
-  // Future tabs like Health Records, Breeding Records will go here
-  // {
-  //   value: "health",
-  //   label: "Health Records",
-  //   icon: Icons.HeartPulse, // Example, add if needed
-  //   description: "Log and track animal health events, vaccinations, and treatments.",
-  //   // formComponent: AddHealthRecordForm,
-  //   // tableComponent: HealthRecordsTable,
-  //   // requiredRolesForAdd: rolesThatCanAddAnimal,
-  // },
+  {
+    value: "health",
+    label: "Health Records",
+    icon: Icons.HealthRecord, 
+    description: "Log and track animal health events, vaccinations, and treatments.",
+    formComponent: AddHealthRecordForm,
+    tableComponent: HealthRecordsTable,
+    requiredRolesForAdd: rolesThatCanAdd,
+  },
+  // Future tabs like Breeding Records will go here
 ];
 
 export function LivestockManagementContent() {
@@ -62,9 +63,17 @@ export function LivestockManagementContent() {
     return tab.requiredRolesForAdd.includes(user.roleOnCurrentFarm);
   };
 
+  const gridColsClass = () => {
+    const count = livestockTabs.length;
+    if (count <= 1) return "grid-cols-1";
+    if (count === 2) return "grid-cols-1 sm:grid-cols-2";
+    // Adjust if more tabs are added
+    return "grid-cols-1 sm:grid-cols-2 md:grid-cols-2"; // Default for 2 or more tabs
+  };
+
   return (
     <Tabs defaultValue="registry" className="w-full">
-      <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 md:grid-cols-3 mb-6 gap-1 h-auto">
+      <TabsList className={`grid w-full ${gridColsClass()} mb-6 gap-1 h-auto`}>
         {livestockTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value} className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm py-2 px-1 sm:px-3 h-auto min-h-[40px] sm:h-10">
             <tab.icon className="h-4 w-4 flex-shrink-0" />
@@ -93,7 +102,7 @@ export function LivestockManagementContent() {
               {tab.tableComponent && (
                 <>
                   {tab.formComponent && <Separator className="my-8" />}
-                  <h3 className="text-xl font-semibold mb-4">Registered Animals</h3>
+                  <h3 className="text-xl font-semibold mb-4">Logged Entries</h3>
                   <tab.tableComponent refreshTrigger={logRefreshTrigger} onLogDeleted={handleLogSaved} />
                 </>
               )}

@@ -44,7 +44,8 @@ import {
   Package,
   CreditCard,
   Map,
-  Beef, // Added Beef icon for Livestock
+  Beef,
+  ActivitySquare, // Added for Health Records
 } from 'lucide-react';
 
 export const Icons = {
@@ -86,13 +87,14 @@ export const Icons = {
   ClipboardList,
   Recycle,
   FlaskConical,
-  Reporting: FileText,
+  Reporting: FileText, 
   UserCircle,
   FertilizerLog: Archive,
   InputsInventory: Package,
   Expenses: CreditCard,
   Map,
-  Livestock: Beef, // Added Livestock icon
+  Livestock: Beef,
+  HealthRecord: ActivitySquare, // Added HealthRecord icon
 };
 
 export type IconName = keyof typeof Icons;
