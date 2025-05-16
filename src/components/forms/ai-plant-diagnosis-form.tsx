@@ -4,17 +4,26 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { diagnosePlantHealth, type DiagnosePlantHealthOutput } from "@/ai/flows/diagnose-plant-health-flow";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Icons } from "@/components/icons";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, query, where, getDocs, orderBy } from "firebase/firestore";
+
+interface FieldOption {
+  id: string;
+  fieldName: string;
+}
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
@@ -29,24 +38,52 @@ const formSchema = z.object({
       "Only .jpg, .jpeg, .png and .webp formats are supported."
     ),
   description: z.string().min(10, { message: "Description must be at least 10 characters." }).max(1000, {message: "Description must be 1000 characters or less."}),
+  fieldId: z.string().optional(),
 });
 
 export function AiPlantDiagnosisForm() {
   const [result, setResult] = useState<DiagnosePlantHealthOutput | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [previewImage, setPreviewImage] useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const [farmFields, setFarmFields] = useState<FieldOption[]>([]);
+  const [isLoadingFields, setIsLoadingFields] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: { photo: undefined, description: "" },
+    defaultValues: { photo: undefined, description: "", fieldId: undefined },
   });
+
+  useEffect(() => {
+    if (user?.farmId) {
+      setIsLoadingFields(true);
+      const fieldsQuery = query(
+        collection(db, "fields"),
+        where("farmId", "==", user.farmId),
+        orderBy("fieldName", "asc")
+      );
+      getDocs(fieldsQuery)
+        .then((snapshot) => {
+          const fields = snapshot.docs.map(doc => ({ id: doc.id, fieldName: doc.data().fieldName } as FieldOption));
+          setFarmFields(fields);
+        })
+        .catch(error => {
+          console.error("Error fetching farm fields:", error);
+          toast({ title: "Error", description: "Could not load farm fields for context.", variant: "destructive" });
+        })
+        .finally(() => setIsLoadingFields(false));
+    } else {
+      setFarmFields([]);
+    }
+  }, [user?.farmId, toast]);
+
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      form.setValue("photo", event.target.files); // RHF needs the FileList
+      form.setValue("photo", event.target.files); 
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewImage(reader.result as string);
@@ -68,7 +105,13 @@ export function AiPlantDiagnosisForm() {
     reader.onload = async (e) => {
       const photoDataUri = e.target?.result as string;
       try {
-        const output = await diagnosePlantHealth({ photoDataUri, description: values.description });
+        const inputForAI = {
+          photoDataUri,
+          description: values.description,
+          farmId: user?.farmId, // Pass farmId if user is associated
+          fieldId: values.fieldId,
+        };
+        const output = await diagnosePlantHealth(inputForAI);
         setResult(output);
         toast({
           title: "Plant Diagnosis Complete",
@@ -103,7 +146,7 @@ export function AiPlantDiagnosisForm() {
           <FormField
             control={form.control}
             name="photo"
-            render={({ field }) => ( // field prop is not directly used for value/onChange here due to custom handling
+            render={({ field }) => ( 
               <FormItem>
                 <FormLabel className="text-base">Plant Photo</FormLabel>
                 <FormControl>
@@ -121,6 +164,35 @@ export function AiPlantDiagnosisForm() {
                         <Image src={previewImage} alt="Plant preview" layout="fill" objectFit="cover" />
                     </div>
                 )}
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="fieldId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-base">Field (Optional)</FormLabel>
+                <Select 
+                  onValueChange={field.onChange} 
+                  defaultValue={field.value} 
+                  disabled={isLoadingFields || farmFields.length === 0 || !user?.farmId}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (farmFields.length === 0 ? "No fields defined" : "Select field for context")} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {farmFields.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.fieldName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormDescription>Providing the field can give the AI more context.</FormDescription>
+                <FormMessage />
               </FormItem>
             )}
           />
@@ -179,6 +251,7 @@ export function AiPlantDiagnosisForm() {
         <Card className="mt-6 shadow-md animate-in fade-in-50 duration-500">
           <CardHeader>
              <CardTitle className="flex items-center gap-2"><Icons.CheckCircle2 className="h-5 w-5 text-green-500"/>AI Plant Diagnosis Results</CardTitle>
+             {result.fieldName && <CardDescription>For plant in field: {result.fieldName}</CardDescription>}
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
