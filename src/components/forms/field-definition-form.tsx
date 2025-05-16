@@ -55,15 +55,17 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       fieldName: "",
       notes: "",
       fieldSize: undefined,
-      fieldSizeUnit: preferredAreaUnit,
+      fieldSizeUnit: preferredAreaUnit, // Initialize with preferred unit
       latitude: null,
       longitude: null,
     },
   });
 
   useEffect(() => {
+    // If the user's preferred area unit changes and the form field hasn't been touched by the user,
+    // update the form's default.
     if (user?.settings?.preferredAreaUnit && !form.formState.dirtyFields.fieldSizeUnit) {
-      form.setValue("fieldSizeUnit", user.settings.preferredAreaUnit);
+      form.setValue("fieldSizeUnit", user.settings.preferredAreaUnit, { shouldValidate: true });
     }
   }, [user?.settings?.preferredAreaUnit, form]);
 
@@ -82,9 +84,10 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       const fieldData = {
         fieldName: values.fieldName,
         fieldSize: values.fieldSize,
+        // Ensure fieldSizeUnit is only saved if fieldSize is also provided
         fieldSizeUnit: (values.fieldSize !== undefined && values.fieldSize !== null) ? values.fieldSizeUnit : undefined,
-        latitude: values.latitude !== undefined ? values.latitude : null, // Ensure null if undefined
-        longitude: values.longitude !== undefined ? values.longitude : null, // Ensure null if undefined
+        latitude: values.latitude !== undefined && values.latitude !== null ? values.latitude : null,
+        longitude: values.longitude !== undefined && values.longitude !== null ? values.longitude : null,
         notes: values.notes,
         userId: user.uid, 
         farmId: user.farmId, 
@@ -154,7 +157,12 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Unit</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || preferredAreaUnit}>
+                  <Select 
+                    onValueChange={field.onChange} 
+                    // Use form.watch to ensure the Select reflects the current form value,
+                    // which will be the preferredAreaUnit on initial load/reset due to defaultValues and useEffect.
+                    value={form.watch('fieldSizeUnit') || preferredAreaUnit} 
+                  >
                      <FormControl>
                         <SelectTrigger>
                             <SelectValue placeholder="Select unit"/>
