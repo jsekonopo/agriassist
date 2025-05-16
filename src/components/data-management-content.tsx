@@ -10,7 +10,8 @@ import { SoilDataForm } from "./forms/soil-data-form";
 import { WeatherDataForm } from "./forms/weather-data-form";
 import { FieldDefinitionForm } from "./forms/field-definition-form";
 import { TaskLogForm } from "./forms/task-log-form";
-import { FertilizerLogForm } from "./forms/fertilizer-log-form"; // Added
+import { FertilizerLogForm } from "./forms/fertilizer-log-form";
+import { IrrigationLogForm } from "./forms/irrigation-log-form"; // Added
 import { Icons } from "./icons"; 
 import type { LucideIcon } from "lucide-react";
 import { PlantingLogTable } from "./data-management/planting-log-table";
@@ -19,7 +20,8 @@ import { SoilDataLogTable } from "./data-management/soil-data-log-table";
 import { WeatherDataLogTable } from "./data-management/weather-data-log-table";
 import { FieldDefinitionTable } from "./data-management/field-definition-table";
 import { TaskLogTable } from "./data-management/task-log-table";
-import { FertilizerLogTable } from "./data-management/fertilizer-log-table"; // Added
+import { FertilizerLogTable } from "./data-management/fertilizer-log-table";
+import { IrrigationLogTable } from "./data-management/irrigation-log-table"; // Added
 import { Separator } from "@/components/ui/separator";
 
 interface DataTab {
@@ -57,12 +59,20 @@ const dataTabs: DataTab[] = [
     tableComponent: HarvestingLogTable,
   },
   {
-    value: "fertilizer", // Added Fertilizer tab
+    value: "fertilizer",
     label: "Fertilizer",
     icon: Icons.FertilizerLog,
     description: "Log fertilizer applications and details.",
     formComponent: FertilizerLogForm,
     tableComponent: FertilizerLogTable,
+  },
+  {
+    value: "irrigation", // Added Irrigation tab
+    label: "Irrigation",
+    icon: Icons.Water, // Using existing Icons.Water (Droplets)
+    description: "Log water usage and irrigation activities.",
+    formComponent: IrrigationLogForm,
+    tableComponent: IrrigationLogTable,
   },
   {
     value: "soil",
@@ -97,24 +107,24 @@ export function DataManagementContent() {
     setLogRefreshTrigger(prev => prev + 1);
   };
   
-  // Adjust grid columns based on the number of tabs
   const gridColsClass = () => {
     const count = dataTabs.length;
-    if (count <= 2) return "grid-cols-2";
-    if (count <= 3) return "grid-cols-3";
-    if (count <= 4) return "grid-cols-2 sm:grid-cols-4";
-    if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-auto"; // auto might not be what we want
-    // For 7 tabs or more, we might want to make them scrollable or adjust layout more significantly
-    // For now, this should be reasonable up to 7.
-    return `grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-${Math.min(count, 7)}`; // Max 7 visible without scroll, adjust as needed
+    if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
+    if (count <= 3) return "grid-cols-1 sm:grid-cols-3";
+    if (count <= 4) return "grid-cols-2 md:grid-cols-4";
+    if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3"; // Adjusted for 5 or 6
+    // For 7 tabs: 2, 3, then maybe 4 on large. For 8: 2, 4, 4
+    if (count === 7) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4"; // Adjust this as needed
+    if (count >= 8) return "grid-cols-2 sm:grid-cols-4 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4"; // For 8 or more, let it wrap in 4 columns
+    return `grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-${Math.min(count, 8)}`;
   };
 
 
   return (
     <Tabs defaultValue="fields" className="w-full">
-      <TabsList className={`grid w-full ${gridColsClass()} mb-6 gap-1`}>
+      <TabsList className={`grid w-full ${gridColsClass()} mb-6 gap-1 h-auto`}>
         {dataTabs.map((tab) => (
-          <TabsTrigger key={tab.value} value={tab.value} className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm py-2 px-1 sm:px-3 h-auto sm:h-10">
+          <TabsTrigger key={tab.value} value={tab.value} className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm py-2 px-1 sm:px-3 h-auto min-h-[40px] sm:h-10">
             <tab.icon className="h-4 w-4 flex-shrink-0" />
             <span className="text-center sm:text-left">{tab.label}</span>
           </TabsTrigger>
@@ -146,3 +156,5 @@ export function DataManagementContent() {
     </Tabs>
   );
 }
+
+    
