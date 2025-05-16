@@ -8,23 +8,13 @@ import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { Separator } from '@/components/ui/separator';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'; // Using recharts directly
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-
-const sampleYieldData = [
-  { name: 'Corn', yield: 4000, lastYearYield: 3800 },
-  { name: 'Soybeans', yield: 3000, lastYearYield: 2900 },
-  { name: 'Wheat', yield: 2400, lastYearYield: 2500 },
-  { name: 'Canola', yield: 2000, lastYearYield: 2100 },
-];
-
-const sampleResourceData = [
-  { name: 'Water', value: 65 }, // Percentage used
-  { name: 'Fertilizer', value: 40 }, // Percentage used
-];
-const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))'];
+import { useAuth } from '@/contexts/auth-context';
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { format, parseISO } from 'date-fns';
 
 interface WeatherData {
   temperature: number;
@@ -33,58 +23,84 @@ interface WeatherData {
   windspeed: number;
 }
 
+interface Field {
+  id: string;
+  fieldName: string;
+  fieldSize?: number;
+  fieldSizeUnit?: string;
+}
+
+interface PlantingLog {
+  id: string;
+  cropName: string;
+  plantingDate: string; // YYYY-MM-DD
+}
+
+interface HarvestingLog {
+  id: string;
+  cropName: string;
+  yieldAmount?: number;
+  yieldUnit?: string;
+}
+
+interface TaskLog {
+  id: string;
+  taskName: string;
+  dueDate?: string | null; // YYYY-MM-DD or null
+  status: "To Do" | "In Progress" | "Done";
+}
+
+interface CropYieldData {
+  name: string;
+  totalYield: number;
+  unit?: string; // To handle units in tooltip, though chart might just show number
+}
+
+
 // Function to get weather description from WMO code
-// Simplified mapping, a more comprehensive one would be larger
 const getWeatherDescription = (code: number): string => {
   const descriptions: Record<number, string> = {
-    0: 'Clear sky',
-    1: 'Mainly clear',
-    2: 'Partly cloudy',
-    3: 'Overcast',
-    45: 'Fog',
-    48: 'Depositing rime fog',
-    51: 'Light drizzle',
-    53: 'Moderate drizzle',
-    55: 'Dense drizzle',
-    56: 'Light freezing drizzle',
-    57: 'Dense freezing drizzle',
-    61: 'Slight rain',
-    63: 'Moderate rain',
-    65: 'Heavy rain',
-    66: 'Light freezing rain',
-    67: 'Heavy freezing rain',
-    71: 'Slight snow fall',
-    73: 'Moderate snow fall',
-    75: 'Heavy snow fall',
-    77: 'Snow grains',
-    80: 'Slight rain showers',
-    81: 'Moderate rain showers',
-    82: 'Violent rain showers',
-    85: 'Slight snow showers',
-    86: 'Heavy snow showers',
-    95: 'Thunderstorm',
-    96: 'Thunderstorm with slight hail',
+    0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog',
+    48: 'Depositing rime fog', 51: 'Light drizzle', 53: 'Moderate drizzle', 55: 'Dense drizzle',
+    56: 'Light freezing drizzle', 57: 'Dense freezing drizzle', 61: 'Slight rain', 63: 'Moderate rain',
+    65: 'Heavy rain', 66: 'Light freezing rain', 67: 'Heavy freezing rain', 71: 'Slight snow fall',
+    73: 'Moderate snow fall', 75: 'Heavy snow fall', 77: 'Snow grains', 80: 'Slight rain showers',
+    81: 'Moderate rain showers', 82: 'Violent rain showers', 85: 'Slight snow showers',
+    86: 'Heavy snow showers', 95: 'Thunderstorm', 96: 'Thunderstorm with slight hail',
     99: 'Thunderstorm with heavy hail',
   };
   return descriptions[code] || 'Unknown';
 };
 
+const HECTARE_TO_ACRE = 2.47105;
+
+const sampleResourceData = [
+  { name: 'Water (Sample)', value: 65 }, 
+  { name: 'Fertilizer (Sample)', value: 40 },
+];
+const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))'];
+
 
 export default function DashboardPage() {
+  const { user, isLoading: authLoading } = useAuth();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState<string | null>(null);
 
+  const [totalAcreage, setTotalAcreage] = useState<number | undefined>(undefined);
+  const [activeCropsCount, setActiveCropsCount] = useState<number | undefined>(undefined);
+  const [nextHarvestCrop, setNextHarvestCrop] = useState<string | undefined>(undefined);
+  const [cropYieldData, setCropYieldData] = useState<CropYieldData[]>([]);
+  const [upcomingTasks, setUpcomingTasks] = useState<TaskLog[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+
   useEffect(() => {
-    async function fetchWeather() {
+    async function fetchWeatherData() {
+      setWeatherLoading(true);
       try {
-        // Ottawa coordinates
-        const lat = 45.4215;
-        const lon = -75.6972;
+        const lat = 45.4215; const lon = -75.6972; // Ottawa
         const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch weather: ${response.statusText}`);
-        }
+        if (!response.ok) throw new Error(`Failed to fetch weather: ${response.statusText}`);
         const data = await response.json();
         if (data.current_weather) {
           setWeather({
@@ -93,9 +109,7 @@ export default function DashboardPage() {
             description: getWeatherDescription(data.current_weather.weathercode),
             windspeed: data.current_weather.windspeed,
           });
-        } else {
-          throw new Error("Current weather data not available");
-        }
+        } else throw new Error("Current weather data not available");
       } catch (error) {
         console.error("Weather fetch error:", error);
         setWeatherError(error instanceof Error ? error.message : "An unknown error occurred");
@@ -103,8 +117,70 @@ export default function DashboardPage() {
         setWeatherLoading(false);
       }
     }
-    fetchWeather();
+    fetchWeatherData();
   }, []);
+
+  useEffect(() => {
+    if (!user || authLoading) {
+      setDataLoading(true); // Keep loading if auth is still processing or no user
+      return;
+    }
+
+    setDataLoading(true);
+    const fetchData = async () => {
+      try {
+        // Fetch Fields for Total Acreage
+        const fieldsQuery = query(collection(db, "fields"), where("userId", "==", user.uid));
+        const fieldsSnapshot = await getDocs(fieldsQuery);
+        let acreage = 0;
+        fieldsSnapshot.docs.forEach(doc => {
+          const field = doc.data() as Field;
+          if (field.fieldSize && field.fieldSize > 0) {
+            if (!field.fieldSizeUnit || field.fieldSizeUnit.toLowerCase() === 'acres') {
+              acreage += field.fieldSize;
+            } else if (field.fieldSizeUnit.toLowerCase() === 'hectares') {
+              acreage += field.fieldSize * HECTARE_TO_ACRE;
+            }
+          }
+        });
+        setTotalAcreage(acreage > 0 ? parseFloat(acreage.toFixed(1)) : 0);
+
+        // Fetch Planting Logs for Active Crops & Next Harvest
+        const plantingLogsQuery = query(collection(db, "plantingLogs"), where("userId", "==", user.uid), orderBy("plantingDate", "desc"));
+        const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
+        const pLogs = plantingLogsSnapshot.docs.map(doc => doc.data() as PlantingLog);
+        const uniqueCrops = new Set(pLogs.map(log => log.cropName));
+        setActiveCropsCount(uniqueCrops.size);
+        setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
+        
+        // Fetch Harvesting Logs for Crop Yield Overview
+        const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("userId", "==", user.uid));
+        const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
+        const hLogs = harvestingLogsSnapshot.docs.map(doc => doc.data() as HarvestingLog);
+        const yields: { [key: string]: { total: number; unit?: string } } = {};
+        hLogs.forEach(log => {
+          if (log.cropName && typeof log.yieldAmount === 'number') {
+            if (!yields[log.cropName]) yields[log.cropName] = { total: 0, unit: log.yieldUnit };
+            yields[log.cropName].total += log.yieldAmount;
+            if (!yields[log.cropName].unit && log.yieldUnit) yields[log.cropName].unit = log.yieldUnit;
+          }
+        });
+        setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
+
+        // Fetch Task Logs for Upcoming Tasks
+        const tasksQuery = query(collection(db, "taskLogs"), where("userId", "==", user.uid), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
+        const tasksSnapshot = await getDocs(tasksQuery);
+        setUpcomingTasks(tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TaskLog)));
+
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+        // Potentially set an error state here to show in UI
+      } finally {
+        setDataLoading(false);
+      }
+    };
+    fetchData();
+  }, [user, authLoading]);
 
 
   return (
@@ -118,22 +194,23 @@ export default function DashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <DashboardStatsCard
           title="Total Acreage"
-          value="150"
-          unit="acres"
+          value={dataLoading ? undefined : (totalAcreage !== undefined ? totalAcreage : "N/A")}
+          unit={totalAcreage !== undefined && totalAcreage > 0 ? "acres" : ""}
           icon={Icons.Location}
-          trend="+10 acres from last year"
-          trendColor="text-green-600"
+          isLoading={dataLoading}
         />
         <DashboardStatsCard
           title="Active Crops"
-          value="4"
+          value={dataLoading ? undefined : (activeCropsCount !== undefined ? activeCropsCount : "N/A")}
           icon={Icons.Planting}
+          isLoading={dataLoading}
         />
         <DashboardStatsCard
-          title="Next Harvest"
-          value="Corn"
+          title="Next Planned Harvest"
+          value={dataLoading ? undefined : (nextHarvestCrop || "N/A")}
           icon={Icons.Harvesting}
-          trend="In 3 weeks"
+          isLoading={dataLoading}
+          trend={nextHarvestCrop && nextHarvestCrop !== "N/A" ? "Based on latest planting" : ""}
         />
          <Card className="shadow-lg hover:shadow-xl transition-shadow duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -160,7 +237,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-muted-foreground mt-1">{weather.description}</p>
                 <p className="text-xs text-muted-foreground">Wind: {weather.windspeed} km/h</p>
               </>
-            ) : null}
+            ) : <p className="text-xs text-muted-foreground">Weather data unavailable.</p>}
           </CardContent>
         </Card>
       </div>
@@ -168,30 +245,38 @@ export default function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2 shadow-lg">
           <CardHeader>
-            <CardTitle>Crop Yield Overview (kg/acre)</CardTitle>
-            <CardDescription>Comparison of current and last year's yield.</CardDescription>
+            <CardTitle>Crop Yield Overview</CardTitle>
+            <CardDescription>Total harvested yield per crop from your logs.</CardDescription>
           </CardHeader>
           <CardContent className="h-[350px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sampleYieldData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="name" stroke="hsl(var(--foreground))" fontSize={12} />
-                <YAxis stroke="hsl(var(--foreground))" fontSize={12} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
-                  labelStyle={{ color: 'hsl(var(--foreground))' }}
-                />
-                <Legend wrapperStyle={{fontSize: "12px"}}/>
-                <Bar dataKey="yield" fill="hsl(var(--primary))" name="Current Yield" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="lastYearYield" fill="hsl(var(--secondary))" name="Last Year Yield" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {dataLoading ? <Skeleton className="w-full h-full" /> : 
+              cropYieldData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={cropYieldData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="name" stroke="hsl(var(--foreground))" fontSize={12} />
+                    <YAxis stroke="hsl(var(--foreground))" fontSize={12} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+                      labelStyle={{ color: 'hsl(var(--foreground))' }}
+                      formatter={(value, name, props) => [`${value} ${props.payload.unit || ''}`, "Total Yield"]}
+                    />
+                    <Legend wrapperStyle={{fontSize: "12px"}}/>
+                    <Bar dataKey="totalYield" fill="hsl(var(--primary))" name="Total Yield" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-muted-foreground">No harvesting data to display.</p>
+                </div>
+              )
+            }
           </CardContent>
         </Card>
 
         <Card className="shadow-lg">
           <CardHeader>
-            <CardTitle>Resource Usage</CardTitle>
+            <CardTitle>Resource Usage (Sample)</CardTitle>
             <CardDescription>Overview of key resource consumption.</CardDescription>
           </CardHeader>
           <CardContent className="h-[350px]">
@@ -218,6 +303,7 @@ export default function DashboardPage() {
                 <Legend wrapperStyle={{fontSize: "12px"}}/>
               </PieChart>
             </ResponsiveContainer>
+             <p className="text-xs text-center text-muted-foreground mt-2">Note: Resource usage data is currently sample data. Integration with actual logs coming soon.</p>
           </CardContent>
         </Card>
       </div>
@@ -225,33 +311,43 @@ export default function DashboardPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Upcoming Tasks</CardTitle>
-          <CardDescription>Key activities for the upcoming week.</CardDescription>
+          <CardDescription>Key activities for the upcoming period.</CardDescription>
         </CardHeader>
         <CardContent>
-          <ul className="space-y-3">
-            <li className="flex items-center justify-between p-3 bg-muted/50 rounded-md">
-              <div>
-                <p className="font-medium">Soil Testing - Field A</p>
-                <p className="text-sm text-muted-foreground">Scheduled for: Tomorrow</p>
-              </div>
-              <Button variant="outline" size="sm">View Details</Button>
-            </li>
-            <li className="flex items-center justify-between p-3 bg-muted/50 rounded-md">
-              <div>
-                <p className="font-medium">Fertilizer Application - Corn Fields</p>
-                <p className="text-sm text-muted-foreground">Scheduled for: In 3 days</p>
-              </div>
-              <Button variant="outline" size="sm">View Details</Button>
-            </li>
-             <li className="flex items-center justify-between p-3 bg-muted/50 rounded-md">
-              <div>
-                <p className="font-medium">Irrigation Check - All Fields</p>
-                <p className="text-sm text-muted-foreground">Scheduled for: This Friday</p>
-              </div>
-              <Button variant="outline" size="sm">View Details</Button>
-            </li>
-          </ul>
-          <Button variant="link" className="mt-4 px-0">View all tasks</Button>
+          {dataLoading ? (
+            <>
+              <Skeleton className="h-10 w-full mb-2" />
+              <Skeleton className="h-10 w-full mb-2" />
+              <Skeleton className="h-10 w-full" />
+            </>
+          ) : upcomingTasks.length > 0 ? (
+            <ul className="space-y-3">
+              {upcomingTasks.slice(0, 5).map(task => ( // Display up to 5 tasks
+                <li key={task.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-md">
+                  <div>
+                    <p className="font-medium">{task.taskName}</p>
+                    <p className="text-sm text-muted-foreground">
+                      Status: {task.status}
+                      {task.dueDate && ` - Due: ${format(parseISO(task.dueDate), "MMM dd, yyyy")}`}
+                    </p>
+                  </div>
+                  {/* <Button variant="outline" size="sm">View Details</Button> */}
+                </li>
+              ))}
+            </ul>
+          ) : (
+             <p className="text-muted-foreground">No upcoming tasks.</p>
+          )}
+          {upcomingTasks.length > 5 && (
+             <Button variant="link" className="mt-4 px-0" asChild>
+                <Link href="/data-management?tab=tasks">View all tasks</Link>
+             </Button>
+          )}
+           {upcomingTasks.length === 0 && !dataLoading && (
+             <Button variant="link" className="mt-4 px-0" asChild>
+                <Link href="/data-management?tab=tasks">Add a new task</Link>
+             </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -262,19 +358,19 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-4">
                 <Button variant="outline" asChild className="h-auto py-3">
-                    <Link href="/data-management" className="flex flex-col items-center gap-1">
+                    <Link href="/data-management?tab=planting" className="flex flex-col items-center gap-1">
                         <Icons.PlusCircle className="w-6 h-6"/>
                         <span>New Planting Log</span>
                     </Link>
                 </Button>
                 <Button variant="outline" asChild className="h-auto py-3">
-                    <Link href="/data-management" className="flex flex-col items-center gap-1">
+                    <Link href="/data-management?tab=harvesting" className="flex flex-col items-center gap-1">
                         <Icons.PlusCircle className="w-6 h-6"/>
                         <span>New Harvest Log</span>
                     </Link>
                 </Button>
                  <Button variant="outline" asChild className="h-auto py-3">
-                    <Link href="/data-management" className="flex flex-col items-center gap-1">
+                    <Link href="/data-management?tab=soil" className="flex flex-col items-center gap-1">
                         <Icons.PlusCircle className="w-6 h-6"/>
                         <span>Add Soil Data</span>
                     </Link>
@@ -295,11 +391,11 @@ export default function DashboardPage() {
             <CardContent className="space-y-3">
                 <div className="flex items-start gap-3 p-3 bg-primary/10 rounded-md">
                     <Icons.Info className="w-5 h-5 text-primary flex-shrink-0 mt-1"/>
-                    <p className="text-sm">Consider crop rotation for Field B to improve soil health. <Link href="/ai-expert" className="text-primary font-medium underline">Learn more</Link></p>
+                    <p className="text-sm">Consider crop rotation for Field B to improve soil health. <Link href="/ai-expert?tab=sustainable_practices" className="text-primary font-medium underline">Learn more</Link></p>
                 </div>
                  <div className="flex items-start gap-3 p-3 bg-primary/10 rounded-md">
                     <Icons.Dollar className="w-5 h-5 text-primary flex-shrink-0 mt-1"/>
-                    <p className="text-sm">Explore sustainable practices to potentially monetize carbon credits. <Link href="/ai-expert" className="text-primary font-medium underline">Get suggestions</Link></p>
+                    <p className="text-sm">Explore sustainable practices to potentially monetize carbon credits. <Link href="/ai-expert?tab=sustainable_practices" className="text-primary font-medium underline">Get suggestions</Link></p>
                 </div>
             </CardContent>
         </Card>
@@ -307,5 +403,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
-    

@@ -1,15 +1,16 @@
+
 import type { LucideIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
 interface DashboardStatsCardProps {
   title: string;
-  value: string | number;
+  value: string | number | undefined; // Allow undefined for loading
   icon: LucideIcon;
   unit?: string;
   isLoading?: boolean;
-  trend?: string; // e.g., "+5% from last month"
-  trendColor?: 'text-green-600' | 'text-red-600'; // Simplified trend color
+  trend?: string; 
+  trendColor?: 'text-green-600' | 'text-red-600' | 'text-muted-foreground'; 
 }
 
 export function DashboardStatsCard({
@@ -38,14 +39,15 @@ export function DashboardStatsCard({
         ) : (
           <>
             <div className="text-3xl font-bold text-foreground">
-              {value}
-              {unit && <span className="text-xl font-normal ml-1">{unit}</span>}
+              {value !== undefined ? value : <Skeleton className="h-8 w-1/2 inline-block" />}
+              {unit && value !== undefined && <span className="text-xl font-normal ml-1">{unit}</span>}
             </div>
             {trend && (
               <p className={`text-xs ${trendColor} mt-1`}>
                 {trend}
               </p>
             )}
+            {value === undefined && !isLoading && <p className="text-xs text-muted-foreground mt-1">No data available.</p>}
           </>
         )}
       </CardContent>
