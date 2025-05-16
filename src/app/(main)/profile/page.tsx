@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button'; // Added buttonVariants
 import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -17,7 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useState, useEffect } from 'react';
 import { Separator } from '@/components/ui/separator';
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import {
   AlertDialog,
@@ -46,14 +46,32 @@ interface StaffMemberDisplay {
   email: string;
 }
 
+interface PendingInvitation {
+  id: string; // Firestore document ID of the invitation
+  inviterFarmId: string;
+  inviterUid: string;
+  inviterName?: string; // Name of the person/farm that invited
+  farmName?: string; // Name of the farm being invited to
+  invitedEmail: string;
+  invitedUserUid: string;
+  status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'error_farm_not_found';
+  createdAt: Timestamp;
+}
+
+
 export default function ProfilePage() {
-  const { user, isLoading, updateUserProfile, firebaseUser, inviteStaffMemberByEmail, removeStaffMember } = useAuth();
+  const { user, isLoading, updateUserProfile, firebaseUser, inviteStaffMemberByEmail, removeStaffMember, acceptInvitation, declineInvitation, revokeInvitation, refreshUserData } = useAuth();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmittingProfile, setIsSubmittingProfile] = useState(false);
   const [isInvitingStaff, setIsInvitingStaff] = useState(false);
   const [staffDetails, setStaffDetails] = useState<StaffMemberDisplay[]>([]);
   const [isLoadingStaffDetails, setIsLoadingStaffDetails] = useState(false);
+
+  const [myPendingInvitations, setMyPendingInvitations] = useState<PendingInvitation[]>([]);
+  const [isLoadingMyInvitations, setIsLoadingMyInvitations] = useState(false);
+  const [farmPendingInvitations, setFarmPendingInvitations] = useState<PendingInvitation[]>([]);
+  const [isLoadingFarmInvitations, setIsLoadingFarmInvitations] = useState(false);
 
   const profileForm = useForm<z.infer<typeof profileFormSchema>>({
     resolver: zodResolver(profileFormSchema),
@@ -77,8 +95,9 @@ export default function ProfilePage() {
         farmName: user.farmName || "",
       });
     }
-  }, [user, profileForm, isEditing]); // Reset form when user data changes or editing toggles
+  }, [user, profileForm, isEditing]);
 
+  // Fetch staff details for Farm Owner
   useEffect(() => {
     const fetchStaffDetails = async () => {
       if (user?.isFarmOwner && user.staffMembers && user.staffMembers.length > 0) {
@@ -93,15 +112,65 @@ export default function ProfilePage() {
           return { uid: staffUid, name: 'Unknown User', email: 'N/A' };
         });
         const resolvedDetails = await Promise.all(detailsPromises);
-        setStaffDetails(resolvedDetails.filter(detail => detail.uid !== user.uid)); // Filter out owner if somehow listed as staff
+        setStaffDetails(resolvedDetails.filter(detail => detail.uid !== user.uid));
         setIsLoadingStaffDetails(false);
       } else {
         setStaffDetails([]);
       }
     };
-
     fetchStaffDetails();
   }, [user?.staffMembers, user?.isFarmOwner, user?.uid]);
+
+  // Fetch pending invitations for the current user
+  useEffect(() => {
+    const fetchMyPendingInvitations = async () => {
+      if (user?.uid) {
+        setIsLoadingMyInvitations(true);
+        try {
+          const q = query(
+            collection(db, "pendingInvitations"),
+            where("invitedUserUid", "==", user.uid),
+            where("status", "==", "pending")
+          );
+          const querySnapshot = await getDocs(q);
+          const invites = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvitation));
+          setMyPendingInvitations(invites);
+        } catch (error) {
+          console.error("Error fetching user's pending invitations:", error);
+          toast({ title: "Error", description: "Could not fetch your pending invitations.", variant: "destructive" });
+        } finally {
+          setIsLoadingMyInvitations(false);
+        }
+      }
+    };
+    fetchMyPendingInvitations();
+  }, [user?.uid, toast]);
+
+  // Fetch pending invitations for the farm (if user is owner)
+  useEffect(() => {
+    const fetchFarmPendingInvitations = async () => {
+      if (user?.isFarmOwner && user.farmId) {
+        setIsLoadingFarmInvitations(true);
+        try {
+          const q = query(
+            collection(db, "pendingInvitations"),
+            where("inviterFarmId", "==", user.farmId),
+            where("status", "==", "pending")
+          );
+          const querySnapshot = await getDocs(q);
+          const invites = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvitation));
+          setFarmPendingInvitations(invites);
+        } catch (error) {
+          console.error("Error fetching farm's pending invitations:", error);
+          toast({ title: "Error", description: "Could not fetch farm's pending invitations.", variant: "destructive" });
+        } finally {
+          setIsLoadingFarmInvitations(false);
+        }
+      }
+    };
+    fetchFarmPendingInvitations();
+  }, [user?.isFarmOwner, user?.farmId, toast]);
+
 
   async function onProfileSubmit(values: z.infer<typeof profileFormSchema>) {
     if (!user) return;
@@ -126,6 +195,10 @@ export default function ProfilePage() {
   }
 
   async function onInviteStaffSubmit(values: z.infer<typeof inviteStaffFormSchema>) {
+    if (!user || !user.isFarmOwner || !user.farmId) {
+      toast({ title: "Error", description: "Only farm owners can invite staff.", variant: "destructive" });
+      return;
+    }
     setIsInvitingStaff(true);
     const result = await inviteStaffMemberByEmail(values.staffEmail);
     toast({
@@ -135,19 +208,91 @@ export default function ProfilePage() {
     });
     if (result.success) {
       inviteStaffForm.reset();
+      // Re-fetch farm's pending invitations
+      if (user?.isFarmOwner && user.farmId) {
+         setIsLoadingFarmInvitations(true);
+         const q = query(collection(db, "pendingInvitations"), where("inviterFarmId", "==", user.farmId), where("status", "==", "pending"));
+         const querySnapshot = await getDocs(q);
+         setFarmPendingInvitations(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvitation)));
+         setIsLoadingFarmInvitations(false);
+      }
     }
     setIsInvitingStaff(false);
-    // Note: UI for pending invitations would require fetching from a 'pendingInvitations' collection.
   }
   
   async function handleRemoveStaff(staffUid: string) {
+    if (!user || !user.isFarmOwner || !user.farmId) {
+      toast({ title: "Error", description: "Only farm owners can remove staff.", variant: "destructive" });
+      return;
+    }
     const result = await removeStaffMember(staffUid);
      toast({
       title: result.success ? "Staff Member Removed" : "Removal Failed",
       description: result.message,
       variant: result.success ? "default" : "destructive",
     });
-    // The staffDetails list will update via useEffect hook reacting to change in user.staffMembers
+    if (result.success) {
+        // AuthContext's removeStaffMember already calls refreshUserData, which should update the user object,
+        // and useEffect for staffDetails will run.
+    }
+  }
+
+  async function handleAcceptInvitation(invitationId: string) {
+    const result = await acceptInvitation(invitationId);
+    toast({
+      title: result.success ? "Invitation Accepted!" : "Acceptance Failed",
+      description: result.message,
+      variant: result.success ? "default" : "destructive",
+    });
+    if (result.success) {
+      await refreshUserData(); // Refresh all user data, including farm association
+      // Re-fetch user's pending invitations
+       if (user?.uid) {
+         setIsLoadingMyInvitations(true);
+         const q = query(collection(db, "pendingInvitations"), where("invitedUserUid", "==", user.uid), where("status", "==", "pending"));
+         const querySnapshot = await getDocs(q);
+         setMyPendingInvitations(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvitation)));
+         setIsLoadingMyInvitations(false);
+      }
+    }
+  }
+
+  async function handleDeclineInvitation(invitationId: string) {
+    const result = await declineInvitation(invitationId);
+     toast({
+      title: result.success ? "Invitation Declined" : "Decline Failed",
+      description: result.message,
+      variant: result.success ? "default" : "destructive",
+    });
+    if (result.success) {
+      // Re-fetch user's pending invitations
+       if (user?.uid) {
+         setIsLoadingMyInvitations(true);
+         const q = query(collection(db, "pendingInvitations"), where("invitedUserUid", "==", user.uid), where("status", "==", "pending"));
+         const querySnapshot = await getDocs(q);
+         setMyPendingInvitations(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvitation)));
+         setIsLoadingMyInvitations(false);
+      }
+    }
+  }
+
+  async function handleRevokeInvitation(invitationId: string) {
+    const result = await revokeInvitation(invitationId);
+    toast({
+      title: result.success ? "Invitation Revoked" : "Revoke Failed",
+      description: result.message,
+      variant: result.success ? "default" : "destructive",
+    });
+    if (result.success) {
+      // Re-fetch farm's pending invitations
+       if (user?.isFarmOwner && user.farmId) {
+         setIsLoadingFarmInvitations(true);
+         const q = query(collection(db, "pendingInvitations"), where("inviterFarmId", "==", user.farmId), where("status", "==", "pending"));
+         const querySnapshot = await getDocs(q);
+         setFarmPendingInvitations(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvitation)));
+         setIsLoadingFarmInvitations(false);
+      }
+    }
   }
 
 
@@ -212,9 +357,9 @@ export default function ProfilePage() {
             <div>
               <CardTitle>{profileForm.getValues('name') || user.name || 'N/A'}</CardTitle>
               <CardDescription>{user.email || 'No email provided'}</CardDescription>
-               {(user.farmName || (user.isFarmOwner && profileForm.getValues('farmName'))) && 
+               {(user.farmName ) && 
                 <p className="text-sm text-muted-foreground mt-1">
-                  Farm: {user.isFarmOwner ? profileForm.getValues('farmName') : user.farmName}
+                  Farm: {user.farmName} {user.isFarmOwner && "(Owner)"}
                 </p>
                }
             </div>
@@ -288,7 +433,7 @@ export default function ProfilePage() {
               </div>
               <div>
                 <h3 className="text-sm font-medium text-muted-foreground">Farm Name</h3>
-                <p className="text-lg text-foreground">{user.farmName || 'Not set'}</p>
+                <p className="text-lg text-foreground">{user.farmName || 'Not associated with a farm'}</p>
               </div>
               {user.farmId && (
                  <div>
@@ -304,6 +449,39 @@ export default function ProfilePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Section for User's Pending Invitations */}
+      {myPendingInvitations.length > 0 && (
+        <Card className="shadow-lg">
+          <CardHeader>
+            <CardTitle>My Pending Invitations</CardTitle>
+            <CardDescription>Invitations you have received to join other farms.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingMyInvitations ? <Skeleton className="h-10 w-full" /> : (
+              <ul className="space-y-3">
+                {myPendingInvitations.map(invite => (
+                  <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
+                    <div>
+                      <p className="font-medium">Invitation to join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span></p>
+                      <p className="text-sm text-muted-foreground">Invited by: {invite.inviterName || 'Farm Owner'}</p>
+                    </div>
+                    <div className="flex gap-2 mt-2 sm:mt-0 flex-shrink-0">
+                      <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)}>
+                        <Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handleDeclineInvitation(invite.id)}>
+                        <Icons.XCircle className="mr-2 h-4 w-4" /> Decline
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
 
       {user.isFarmOwner && (
         <Card className="shadow-lg">
@@ -343,8 +521,7 @@ export default function ProfilePage() {
                     <Icons.Info className="h-4 w-4" />
                     <AlertTitle>Invitation Process</AlertTitle>
                     <AlertDescription>
-                      This action logs an invitation request. A backend process (e.g., Firebase Cloud Function, not yet implemented) would be needed to send an actual email and handle the invitation acceptance flow.
-                      The invited user must already have an AgriAssist account or create one with the invited email.
+                      This action logs an invitation request to Firestore. A backend process (e.g., Firebase Cloud Function, not implemented here) would be needed to send an actual email and handle the full invitation acceptance flow. The invited user must already have an AgriAssist account or create one with the invited email to be found by the current API.
                     </AlertDescription>
                   </Alert>
               </form>
@@ -389,19 +566,37 @@ export default function ProfilePage() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-muted-foreground">No staff members have been added or accepted invitations yet.</p>
+                <p className="text-sm text-muted-foreground">No staff members have been added to this farm yet.</p>
               )}
             </div>
              <Separator />
              <div>
-                <h3 className="text-md font-medium mb-2">Pending Invitations (Placeholder)</h3>
-                <Alert>
-                    <Icons.Info className="h-4 w-4" />
-                    <AlertTitle>Displaying Pending Invitations</AlertTitle>
-                    <AlertDescription>
-                    This section is a placeholder. A full implementation would query a 'pendingInvitations' collection in Firestore and display users who have been invited but haven't yet accepted. Functionality to resend or revoke pending invitations would also be added here.
-                    </AlertDescription>
-                </Alert>
+                <h3 className="text-md font-medium mb-2">Farm's Pending Invitations</h3>
+                {isLoadingFarmInvitations ? <Skeleton className="h-10 w-full"/> :
+                  farmPendingInvitations.length > 0 ? (
+                     <ul className="space-y-3">
+                        {farmPendingInvitations.map(invite => (
+                          <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
+                            <div>
+                              <p className="font-medium">Invited: <span className="text-primary">{invite.invitedEmail}</span></p>
+                              <p className="text-xs text-muted-foreground">Status: {invite.status} (Sent: {invite.createdAt?.toDate().toLocaleDateString()})</p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={() => handleRevokeInvitation(invite.id)}>
+                                <Icons.XCircle className="mr-2 h-4 w-4" /> Revoke
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                  ) : (
+                    <Alert>
+                        <Icons.Info className="h-4 w-4" />
+                        <AlertTitle>No Pending Invitations</AlertTitle>
+                        <AlertDescription>
+                        There are currently no pending invitations for your farm.
+                        </AlertDescription>
+                    </Alert>
+                  )
+                }
              </div>
           </CardContent>
         </Card>
@@ -410,4 +605,4 @@ export default function ProfilePage() {
   );
 }
 
-```
+    
