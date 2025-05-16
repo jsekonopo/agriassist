@@ -117,7 +117,7 @@ export default function AnalyticsPage() {
         </CardHeader>
         <CardContent className="space-y-3">
             <div className="flex items-start gap-3 p-3 bg-secondary/50 rounded-md">
-                <Icons.Droplets className="w-5 h-5 text-primary flex-shrink-0 mt-1"/>
+                <Icons.Water className="w-5 h-5 text-primary flex-shrink-0 mt-1"/>
                 <p className="text-sm text-muted-foreground">Consider drip irrigation for vegetable plots to reduce water usage by up to 20%.</p>
             </div>
             <div className="flex items-start gap-3 p-3 bg-secondary/50 rounded-md">
