@@ -44,10 +44,10 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
   });
 
   async function onSubmit(values: z.infer<typeof fieldDefinitionSchema>) {
-    if (!user) {
+    if (!user || !user.farmId) { // Check for user and farmId
       toast({
         title: "Authentication Error",
-        description: "You must be logged in to save a field definition.",
+        description: "You must be logged in and associated with a farm to save a field definition.",
         variant: "destructive",
       });
       return;
@@ -56,13 +56,14 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
     try {
       const fieldData = {
         ...values,
-        userId: user.uid,
-        createdAt: serverTimestamp(), // Or new Date() if serverTimestamp gives issues with client-side model
+        userId: user.uid, // Keep userId for individual tracking if needed, or it can be removed if all data is farm-centric
+        farmId: user.farmId, // Associate with the farm
+        createdAt: serverTimestamp(),
       };
       await addDoc(collection(db, "fields"), fieldData);
       toast({
         title: "Field Definition Saved",
-        description: `Field: ${values.fieldName} has been saved to Firestore.`,
+        description: `Field: ${values.fieldName} has been saved to Firestore for farm ${user.farmId}.`,
       });
       form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: "acres", notes: "" });
       if (onLogSaved) {
@@ -143,7 +144,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting || !user}>
+        <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
           {isSubmitting ? (
             <>
               <Icons.User className="mr-2 h-4 w-4 animate-spin" />
@@ -153,7 +154,10 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
             "Save Field Definition"
           )}
         </Button>
+        {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save field definitions.</p>}
       </form>
     </Form>
   );
 }
+
+    

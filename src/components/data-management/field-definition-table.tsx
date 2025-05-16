@@ -26,6 +26,8 @@ interface FieldDefinitionLog {
   fieldSizeUnit?: string;
   notes?: string;
   createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
+  farmId: string;
+  userId: string;
 }
 
 interface FieldDefinitionTableProps {
@@ -41,9 +43,9 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.farmId) { // Ensure user and farmId are available
       setIsLoading(false);
-      setLogs([]); // Clear logs if user logs out
+      setLogs([]); 
       return;
     }
 
@@ -53,14 +55,14 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
       try {
         const q = query(
           collection(db, "fields"),
-          where("userId", "==", user.uid),
+          where("farmId", "==", user.farmId), // Fetch fields for the user's farm
           orderBy("createdAt", "desc")
         );
         const querySnapshot = await getDocs(q);
         const fetchedLogs: FieldDefinitionLog[] = querySnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
-          createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : undefined, // Convert Timestamp to Date
+          createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : undefined,
         } as FieldDefinitionLog));
         setLogs(fetchedLogs);
       } catch (e) {
@@ -83,6 +85,9 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
       toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
       return;
     }
+    // Additional check: Only owner should be able to delete, or implement specific staff permissions.
+    // For now, any authenticated user associated with the farm can delete if they can see it.
+    // This needs to be secured by Firestore rules.
     if (window.confirm("Are you sure you want to delete this field definition? This action cannot be undone.")) {
       try {
         await deleteDoc(doc(db, "fields", logId));
@@ -117,23 +122,23 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     );
   }
 
-  if (!user && !isLoading) {
+  if ((!user || !user.farmId) && !isLoading) {
      return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>Please Log In</AlertTitle>
+        <AlertTitle>Farm Association Required</AlertTitle>
         <AlertDescription>
-          Log in to view and manage your field definitions.
+          Please ensure you are logged in and associated with a farm to view and manage field definitions.
         </AlertDescription>
       </Alert>
     );
   }
 
-  if (logs.length === 0 && user) {
+  if (logs.length === 0 && user && user.farmId) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
-        <AlertTitle>No Fields Defined</AlertTitle>
+        <AlertTitle>No Fields Defined for this Farm</AlertTitle>
         <AlertDescription>
           You haven&apos;t defined any farm fields yet. Add a new field using the form.
         </AlertDescription>
@@ -144,7 +149,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your defined farm fields. Data is stored in Firestore.</TableCaption>
+        <TableCaption>A list of your farm fields. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[200px]">Field Name</TableHead>
@@ -173,3 +178,5 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     </div>
   );
 }
+
+    
