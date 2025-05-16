@@ -13,61 +13,37 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Icons } from "../icons";
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp, query, where, getDocs, Timestamp, doc } from "firebase/firestore";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-// Mock service for saving planting logs
-// In a real app, this would interact with a backend API
-const mockPlantingLogService = {
-  save: async (logData: Omit<PlantingLogData, 'id' | 'submittedAt'>): Promise<PlantingLogData> => {
-    console.log("Mock service: Attempting to save planting log:", logData);
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        try {
-          const existingLogsString = localStorage.getItem('plantingLogs');
-          const existingLogs: PlantingLogData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
-          
-          const newLog: PlantingLogData = { 
-            ...logData, 
-            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
-            submittedAt: new Date().toISOString(),
-            plantingDate: format(logData.plantingDate, "yyyy-MM-dd"), // Ensure date is stored as string
-          };
-          existingLogs.push(newLog);
-          localStorage.setItem('plantingLogs', JSON.stringify(existingLogs));
-          console.log("Mock service: Planting log saved to localStorage:", newLog);
-          resolve(newLog);
-        } catch (error) {
-          console.error("Mock service: Error saving planting log to localStorage:", error);
-          reject(error);
-        }
-      }, 500); // Simulate network delay
-    });
-  }
-};
-
-interface PlantingLogData {
-  id: string;
-  cropName: string;
-  plantingDate: string; // Will be YYYY-MM-DD string after processing
-  fieldId: string;
-  seedsUsed?: string;
-  notes?: string;
-  submittedAt: string;
+interface FieldDefinitionLog {
+  id: string; 
+  fieldName: string;
 }
-
 
 const plantingLogSchema = z.object({
   cropName: z.string().min(1, "Crop name is required."),
   plantingDate: z.date({ required_error: "Planting date is required." }),
-  fieldId: z.string().min(1, "Field ID or name is required."),
+  fieldId: z.string().min(1, "Field selection is required."),
   seedsUsed: z.string().optional(),
   notes: z.string().optional(),
 });
 
-export function PlantingLogForm() {
+interface PlantingLogFormProps {
+  onLogSaved?: () => void;
+}
+
+export function PlantingLogForm({ onLogSaved }: PlantingLogFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { user } = useAuth();
+  const [fields, setFields] = useState<FieldDefinitionLog[]>([]);
+  const [isLoadingFields, setIsLoadingFields] = useState(true);
+
   const form = useForm<z.infer<typeof plantingLogSchema>>({
     resolver: zodResolver(plantingLogSchema),
     defaultValues: {
@@ -78,30 +54,65 @@ export function PlantingLogForm() {
     },
   });
 
+  useEffect(() => {
+    if (!user) {
+      setFields([]);
+      setIsLoadingFields(false);
+      return;
+    }
+    const fetchFields = async () => {
+      setIsLoadingFields(true);
+      try {
+        const q = query(collection(db, "fields"), where("userId", "==", user.uid), orderBy("fieldName", "asc"));
+        const querySnapshot = await getDocs(q);
+        const fetchedFields = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          fieldName: doc.data().fieldName,
+        } as FieldDefinitionLog));
+        setFields(fetchedFields);
+      } catch (error) {
+        console.error("Failed to load fields for planting log form:", error);
+        toast({ title: "Error Loading Fields", description: "Could not load your defined fields.", variant: "destructive" });
+      } finally {
+        setIsLoadingFields(false);
+      }
+    };
+    fetchFields();
+  }, [user, toast]);
+
   async function onSubmit(values: z.infer<typeof plantingLogSchema>) {
+    if (!user) {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to save a planting log.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      // The service expects plantingDate as a Date object, it will handle formatting.
-      await mockPlantingLogService.save(values);
+      const logData = {
+        ...values,
+        userId: user.uid,
+        plantingDate: format(values.plantingDate, "yyyy-MM-dd"),
+        createdAt: serverTimestamp(),
+      };
+      await addDoc(collection(db, "plantingLogs"), logData);
 
       toast({
         title: "Planting Log Saved",
-        description: `Crop: ${values.cropName} on ${format(values.plantingDate, "PPP")} has been saved.`,
+        description: `Crop: ${values.cropName} on ${format(values.plantingDate, "PPP")} has been saved to Firestore.`,
       });
-      form.reset(); 
-      // Potentially trigger a refresh of the log table if it's visible
-      // This might involve a shared state or a callback prop if the table is in the same component tree.
-      // For now, users will see new data on next table load/refresh.
+      form.reset({ cropName: "", fieldId: "", seedsUsed: "", notes: "", plantingDate: undefined });
+      if (onLogSaved) {
+        onLogSaved();
+      }
       
     } catch (error) {
-      console.error("Error saving planting log:", error);
-      let message = "Could not save the planting log.";
-      if (error instanceof Error) {
-        message = `Could not save the planting log: ${error.message}. Please check console for details.`;
-      }
+      console.error("Error saving planting log to Firestore:", error);
       toast({
         title: "Error Saving Log",
-        description: message,
+        description: "Could not save the planting log to Firestore.",
         variant: "destructive",
       });
     } finally {
@@ -172,10 +183,29 @@ export function PlantingLogForm() {
             name="fieldId"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Field ID / Name</FormLabel>
-                <FormControl>
-                  <Input placeholder="e.g., Field A, North Plot" {...field} />
-                </FormControl>
+                <FormLabel>Field</FormLabel>
+                 <Select 
+                    onValueChange={field.onChange} 
+                    defaultValue={field.value}
+                    disabled={isLoadingFields || fields.length === 0}
+                  >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder={isLoadingFields ? "Loading fields..." : (fields.length === 0 ? "No fields defined" : "Select a field")} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {!isLoadingFields && fields.length > 0 ? (
+                      fields.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.fieldName}
+                        </SelectItem>
+                      ))
+                    ) : (
+                       !isLoadingFields && <div className="p-2 text-sm text-muted-foreground">No fields defined. Please add fields first.</div>
+                    )}
+                  </SelectContent>
+                </Select>
                 <FormMessage />
               </FormItem>
             )}
@@ -211,17 +241,20 @@ export function PlantingLogForm() {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" disabled={isSubmitting || !user || isLoadingFields}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> {/* Using User as a placeholder spinner */}
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
               Saving...
             </>
           ) : (
             "Save Planting Log"
           )}
         </Button>
+         {!user && <p className="text-sm text-destructive">Please log in to save planting logs.</p>}
       </form>
     </Form>
   );
 }
+
+    
