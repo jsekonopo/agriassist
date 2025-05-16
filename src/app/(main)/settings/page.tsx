@@ -9,49 +9,77 @@ import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useAuth, type NotificationPreferences } from '@/contexts/auth-context';
+import { useAuth, type UserSettings, type NotificationPreferences, type PreferredAreaUnit, type PreferredWeightUnit } from '@/contexts/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type PreferenceKey = keyof NotificationPreferences;
 
 export default function SettingsPage() {
-  const { user, updateNotificationPreferences, isLoading: authLoading } = useAuth();
+  const { user, updateUserSettings, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
-  const [prefs, setPrefs] = useState<NotificationPreferences>({});
+  
+  const [currentSettings, setCurrentSettings] = useState<UserSettings>({});
   const [isSavingPrefs, setIsSavingPrefs] = useState(false);
 
   useEffect(() => {
-    if (user?.notificationPreferences) {
-      setPrefs(user.notificationPreferences);
-    } else if (user && !user.notificationPreferences) {
-      // Initialize with defaults if not present
-      const defaultPrefs: NotificationPreferences = {
-        taskRemindersEmail: false,
-        weatherAlertsEmail: false,
-        aiSuggestionsInApp: false,
-        staffActivityEmail: false,
+    if (user?.settings) {
+      setCurrentSettings(user.settings);
+    } else if (user && !user.settings) {
+      // Initialize with defaults if not present on user object
+      const defaultPrefs: UserSettings = {
+        notificationPreferences: {
+          taskRemindersEmail: false,
+          weatherAlertsEmail: false,
+          aiSuggestionsInApp: false,
+          staffActivityEmail: false,
+        },
+        preferredAreaUnit: "acres",
+        preferredWeightUnit: "kg",
       };
-      setPrefs(defaultPrefs);
+      setCurrentSettings(defaultPrefs);
     }
-  }, [user?.notificationPreferences, user]);
+  }, [user?.settings, user]);
 
-  const handlePreferenceChange = async (key: PreferenceKey, value: boolean) => {
-    const newPrefs = { ...prefs, [key]: value };
-    setPrefs(newPrefs); // Optimistic UI update
-
+  const handleNotificationPreferenceChange = async (key: PreferenceKey, value: boolean) => {
+    const newNotificationPrefs = { 
+      ...(currentSettings.notificationPreferences || {}), 
+      [key]: value 
+    };
+    const updatedSettings = { ...currentSettings, notificationPreferences: newNotificationPrefs };
+    
+    setCurrentSettings(updatedSettings); // Optimistic UI update
     setIsSavingPrefs(true);
-    const result = await updateNotificationPreferences(newPrefs);
+    const result = await updateUserSettings({ notificationPreferences: newNotificationPrefs });
     if (result.success) {
       toast({ title: "Preferences Updated", description: result.message });
     } else {
       toast({ title: "Update Failed", description: result.message, variant: "destructive" });
-      // Revert optimistic update on failure
-      setPrefs(user?.notificationPreferences || {}); 
+      // Revert optimistic update on failure by re-fetching or using original user.settings
+      setCurrentSettings(user?.settings || {}); 
     }
     setIsSavingPrefs(false);
   };
+
+  const handleUnitPreferenceChange = async (key: 'preferredAreaUnit' | 'preferredWeightUnit', value: string) => {
+    const updatedSettings = { ...currentSettings, [key]: value };
+    
+    setCurrentSettings(updatedSettings); // Optimistic UI update
+    setIsSavingPrefs(true);
+    // Pass only the changed unit preference
+    const settingToUpdate: Partial<UserSettings> = { [key]: value as PreferredAreaUnit | PreferredWeightUnit };
+    const result = await updateUserSettings(settingToUpdate);
+    if (result.success) {
+      toast({ title: "Preferences Updated", description: result.message });
+    } else {
+      toast({ title: "Update Failed", description: result.message, variant: "destructive" });
+      setCurrentSettings(user?.settings || {});
+    }
+    setIsSavingPrefs(false);
+  };
+
 
   if (authLoading && !user) {
     return (
@@ -125,8 +153,8 @@ export default function SettingsPage() {
                 </Label>
                 <Switch 
                   id={item.id} 
-                  checked={prefs[item.id] || false}
-                  onCheckedChange={(value) => handlePreferenceChange(item.id, value)}
+                  checked={currentSettings.notificationPreferences?.[item.id] || false}
+                  onCheckedChange={(value) => handleNotificationPreferenceChange(item.id, value)}
                   disabled={isSavingPrefs || authLoading}
                   aria-label={item.label}
                 />
@@ -135,6 +163,61 @@ export default function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Separator />
+
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle>Measurement Units</CardTitle>
+          <CardDescription>Choose your preferred default units for display and input.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <Alert variant="default">
+            <Icons.Info className="h-4 w-4" />
+            <AlertTitle>Unit Display</AlertTitle>
+            <AlertDescription>
+              These preferences are saved. Implementing unit conversion and display logic throughout the app is a future enhancement.
+            </AlertDescription>
+          </Alert>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <Label htmlFor="areaUnit">Preferred Area Unit</Label>
+              <Select
+                value={currentSettings.preferredAreaUnit || "acres"}
+                onValueChange={(value) => handleUnitPreferenceChange('preferredAreaUnit', value)}
+                disabled={isSavingPrefs || authLoading}
+              >
+                <SelectTrigger id="areaUnit">
+                  <SelectValue placeholder="Select area unit" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="acres">Acres</SelectItem>
+                  <SelectItem value="hectares">Hectares</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="weightUnit">Preferred Weight Unit</Label>
+              <Select
+                value={currentSettings.preferredWeightUnit || "kg"}
+                onValueChange={(value) => handleUnitPreferenceChange('preferredWeightUnit', value)}
+                disabled={isSavingPrefs || authLoading}
+              >
+                <SelectTrigger id="weightUnit">
+                  <SelectValue placeholder="Select weight unit" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="kg">Kilograms (kg)</SelectItem>
+                  <SelectItem value="lbs">Pounds (lbs)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
     </div>
   );
 }
+
+    
