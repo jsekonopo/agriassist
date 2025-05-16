@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useAuth, type PlanId, type User, type UserRole, type StaffMemberInFarmDoc, type StaffMemberWithDetails } from '@/contexts/auth-context';
+import { useAuth, type PlanId, type User, type UserRole, type StaffMemberInFarmDoc, type StaffMemberWithDetails, type StaffRole } from '@/contexts/auth-context';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -45,11 +45,11 @@ const profileFormSchema = z.object({
   ),
 });
 
-const rolesForSelection: Exclude<UserRole, PlanId | null | 'owner'>[] = ['admin', 'editor', 'viewer'];
+const staffRolesForSelection: StaffRole[] = ['admin', 'editor', 'viewer'];
 
 const inviteStaffFormSchema = z.object({
   staffEmail: z.string().email({ message: "Please enter a valid email address." }),
-  role: z.enum(rolesForSelection, { required_error: "Please select a role for the staff member."}),
+  role: z.enum(staffRolesForSelection, { required_error: "Please select a role for the staff member."}),
 });
 
 interface PendingInvitation {
@@ -60,7 +60,7 @@ interface PendingInvitation {
   farmName?: string; 
   invitedEmail: string;
   invitedUserUid: string | null; 
-  invitedRole: Exclude<UserRole, PlanId | null >;
+  invitedRole: StaffRole;
   status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'error_farm_not_found' | 'expired';
   createdAt: Timestamp;
   tokenExpiresAt?: Timestamp;
@@ -80,7 +80,8 @@ export default function ProfilePage() {
     updateUserProfile, 
     firebaseUser, 
     inviteStaffMemberByEmail, 
-    removeStaffMember, 
+    removeStaffMember,
+    updateStaffRole, 
     acceptInvitation, 
     declineInvitation, 
     revokeInvitation, 
@@ -111,13 +112,20 @@ export default function ProfilePage() {
   });
 
   useEffect(() => {
-    if (user && isEditing) { // Only reset form when entering edit mode or user data changes
+    if (user && isEditing) { 
       profileForm.reset({
         name: user.name || "",
         farmName: user.farmName || "",
         farmLatitude: user.farmLatitude !== undefined ? user.farmLatitude : null,
         farmLongitude: user.farmLongitude !== undefined ? user.farmLongitude : null,
       });
+    } else if (user && !isEditing) { // Reset form values if exiting edit mode without saving
+        profileForm.reset({
+            name: user.name || "",
+            farmName: user.farmName || "",
+            farmLatitude: user.farmLatitude !== undefined ? user.farmLatitude : null,
+            farmLongitude: user.farmLongitude !== undefined ? user.farmLongitude : null,
+        });
     }
   }, [user, profileForm, isEditing]);
 
@@ -127,8 +135,8 @@ export default function ProfilePage() {
       return;
     }
     setIsLoadingStaffDetails(true);
-    // user.staff already contains { uid, name, email, role } from AuthContext
-    setStaffDetails(user.staff.filter(staffMember => staffMember.uid !== user.uid));
+    // user.staff from AuthContext already has { uid, name, email, role }
+    setStaffDetails(user.staff.filter(staffMember => staffMember.uid !== user.uid)); // Filter out the owner
     setIsLoadingStaffDetails(false);
   }, [user]); 
 
@@ -143,16 +151,17 @@ export default function ProfilePage() {
     setIsLoadingMyInvitations(true);
     try {
       const invites: PendingInvitation[] = [];
-      // Query by invitedEmail first
       const qByEmail = query( collection(db, "pendingInvitations"),
         where("invitedEmail", "==", user.email.toLowerCase()),
         where("status", "==", "pending")
       );
       const emailSnapshot = await getDocs(qByEmail);
       emailSnapshot.docs.forEach(docSnap => {
-        invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation);
+        const data = docSnap.data();
+        if (!data.tokenExpiresAt || data.tokenExpiresAt.toMillis() > Date.now()) {
+            invites.push({ id: docSnap.id, ...data } as PendingInvitation);
+        }
       });
-      // If user UID is known, also query by that (in case email changed post-invite, though less common)
       if (user.uid) {
           const qByUid = query( collection(db, "pendingInvitations"),
             where("invitedUserUid", "==", user.uid),
@@ -160,12 +169,14 @@ export default function ProfilePage() {
           );
           const uidSnapshot = await getDocs(qByUid);
           uidSnapshot.docs.forEach(docSnap => {
-            if (!invites.find(i => i.id === docSnap.id)) { // Avoid duplicates
-                 invites.push({ id: docSnap.id, ...docSnap.data() } as PendingInvitation);
+            const data = docSnap.data();
+            if (!invites.find(i => i.id === docSnap.id) && 
+                (!data.tokenExpiresAt || data.tokenExpiresAt.toMillis() > Date.now())) {
+                 invites.push({ id: docSnap.id, ...data } as PendingInvitation);
             }
           });
       }
-      setMyPendingInvitations(invites.filter(invite => invite.tokenExpiresAt ? invite.tokenExpiresAt.toMillis() > Date.now() : true));
+      setMyPendingInvitations(invites);
     } catch (error) {
       console.error("Error fetching user's pending invitations:", error);
       toast({ title: "Error", description: "Could not fetch your pending invitations.", variant: "destructive" });
@@ -186,8 +197,9 @@ export default function ProfilePage() {
         where("status", "==", "pending")
       );
       const querySnapshot = await getDocs(q);
-      const invites = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation))
-        .filter(invite => invite.tokenExpiresAt ? invite.tokenExpiresAt.toMillis() > Date.now() : true);
+      const invites = querySnapshot.docs
+        .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation))
+        .filter(invite => !invite.tokenExpiresAt || invite.tokenExpiresAt.toMillis() > Date.now());
       setFarmPendingInvitations(invites);
     } catch (error) {
       console.error("Error fetching farm's pending invitations:", error);
@@ -247,6 +259,16 @@ export default function ProfilePage() {
     if (result.success) { await refreshUserData(); fetchStaffDetails(); fetchFarmPendingInvitations(); }
   }
 
+  async function handleUpdateStaffRole(staffUid: string, newRole: StaffRole) {
+    if (!user || !(user.isFarmOwner || user.roleOnCurrentFarm === 'admin') || !user.farmId ) {
+        toast({ title: "Permission Denied", description: "Only owners/admins can change staff roles.", variant: "destructive" });
+        return;
+    }
+    const result = await updateStaffRole(staffUid, newRole);
+    toast({ title: result.success ? "Role Updated" : "Update Failed", description: result.message, variant: result.success ? "default" : "destructive"});
+    if (result.success) { await refreshUserData(); fetchStaffDetails(); }
+  }
+
   async function handleAcceptInvitation(invitationId: string) {
     if (!firebaseUser) return; 
     const result = await acceptInvitation(invitationId);
@@ -274,9 +296,20 @@ export default function ProfilePage() {
 
   const canManageStaff = user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin';
   const canManageBilling = user?.isFarmOwner;
+  const isOwner = user?.isFarmOwner;
 
-  if (authIsLoading) { /* Skeleton UI */ }
-  if (!user) { /* Not found UI */ }
+  if (authIsLoading || (!user && !authIsLoading)) { 
+    return (
+      <div className="space-y-6">
+        <PageHeader title="User Profile" description="Manage your account, farm, staff, and subscription." icon={Icons.UserCircle}/>
+        <Card><CardHeader><Skeleton className="h-8 w-1/2" /></CardHeader><CardContent><Skeleton className="h-20 w-full" /></CardContent></Card>
+        <Card><CardHeader><Skeleton className="h-6 w-1/3" /></CardHeader><CardContent><Skeleton className="h-20 w-full" /></CardContent></Card>
+      </div>
+    );
+  }
+  if (!user) {
+     return <div className="text-center p-8">User not found. Please log in.</div>;
+  }
   
   return (
     <div className="space-y-6">
@@ -285,9 +318,9 @@ export default function ProfilePage() {
         <CardHeader>
           <div className="flex justify-between items-start">
             <div>
-              <CardTitle>{profileForm.getValues('name') || user.name || 'N/A'}</CardTitle>
+              <CardTitle>{isEditing ? profileForm.getValues('name') : user.name || 'N/A'}</CardTitle>
               <CardDescription>{user.email || 'No email'}</CardDescription>
-               {user.farmName && <p className="text-sm text-muted-foreground mt-1">Farm: <span className="font-medium text-foreground">{user.farmName}</span> ({userRoleDisplay})</p>}
+               {user.farmName && <p className="text-sm text-muted-foreground mt-1">Farm: <span className="font-medium text-foreground">{isEditing ? profileForm.getValues('farmName') : user.farmName}</span> ({userRoleDisplay})</p>}
                {user.farmId && <p className="text-xs text-muted-foreground">Farm ID: {user.farmId}</p>}
             </div>
             {!isEditing && <Button variant="outline" onClick={() => setIsEditing(true)}><Icons.Edit3 className="mr-2 h-4 w-4" /> Edit Profile</Button>}
@@ -305,12 +338,14 @@ export default function ProfilePage() {
                     <FormField control={profileForm.control} name="farmName" render={({ field }) => (
                       <FormItem><FormLabel>Farm Name (as Owner)</FormLabel><FormControl><Input {...field} /></FormControl><FormDescription>Only owners can change farm name.</FormDescription><FormMessage /></FormItem>
                     )}/>
+                     <h3 className="text-md font-medium pt-2">Farm Location (Optional)</h3>
+                     <p className="text-sm text-muted-foreground">Used for localized weather on dashboard.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <FormField control={profileForm.control} name="farmLatitude" render={({ field }) => (
-                          <FormItem><FormLabel>Farm Latitude (Optional)</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., 45.4215" {...field} value={field.value ?? ''} /></FormControl><FormDescription>For localized weather. Approx. center.</FormDescription><FormMessage /></FormItem>
+                          <FormItem><FormLabel>Latitude</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., 45.4215" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                         )}/>
                         <FormField control={profileForm.control} name="farmLongitude" render={({ field }) => (
-                          <FormItem><FormLabel>Farm Longitude (Optional)</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., -75.6972" {...field} value={field.value ?? ''} /></FormControl><FormDescription>For localized weather. Approx. center.</FormDescription><FormMessage /></FormItem>
+                          <FormItem><FormLabel>Longitude</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., -75.6972" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                         )}/>
                     </div>
                   </>
@@ -335,12 +370,12 @@ export default function ProfilePage() {
               <div><h3 className="text-sm font-medium text-muted-foreground">Status</h3><p className="text-lg text-foreground capitalize">{user.subscriptionStatus}</p></div>
               {user.selectedPlanId !== 'free' && user.subscriptionStatus === 'active' && (
                   <AlertDialog>
-                      <AlertDialogTrigger asChild><Button variant="outline"><Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription</Button></AlertDialogTrigger>
+                      <AlertDialogTrigger asChild><Button variant="outline"><Icons.XCircle className="mr-2 h-4 w-4"/> Cancel Subscription (Simulated)</Button></AlertDialogTrigger>
                       <AlertDialogContent>
-                          <AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This will cancel your paid subscription. Your plan will revert to Free.</AlertDialogDescription></AlertDialogHeader>
+                          <AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This will cancel your paid subscription (simulated). Your plan will revert to Free.</AlertDialogDescription></AlertDialogHeader>
                           <AlertDialogFooter>
                           <AlertDialogCancel>No, Keep Plan</AlertDialogCancel>
-                          <AlertDialogAction onClick={async () => { if (!firebaseUser) return; const res = await cancelSubscription(); toast({title: res.success ? "Sub Cancelled" : "Cancel Failed", description: res.message, variant: res.success ? "default" : "destructive"}); if (res.success) refreshUserData();}} className={buttonVariants({variant: "destructive"})}>Yes, Cancel</AlertDialogAction>
+                          <AlertDialogAction onClick={async () => { if (!firebaseUser) return; const res = await cancelSubscription(); toast({title: res.success ? "Sub Cancelled" : "Cancel Failed", description: res.message, variant: res.success ? "default" : "destructive"}); if (res.success) refreshUserData();}} className={buttonVariants({variant: "destructive"})}>Yes, Cancel (Simulated)</AlertDialogAction>
                           </AlertDialogFooter>
                       </AlertDialogContent>
                   </AlertDialog>
@@ -356,30 +391,30 @@ export default function ProfilePage() {
           {isLoadingMyInvitations ? <Skeleton className="h-20 w-full" /> : myPendingInvitations.length > 0 ? (
             <ul className="space-y-3">{myPendingInvitations.map(invite => (
                 <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
-                  <div><p className="font-medium">To join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p><p className="text-sm text-muted-foreground">Invited by: {invite.inviterName || 'Farm Owner'} (Sent: {invite.createdAt?.toDate().toLocaleDateString()})</p></div>
+                  <div><p className="font-medium">To join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p><p className="text-sm text-muted-foreground">Invited by: {invite.inviterName || 'Farm Owner'} (Sent: {invite.createdAt?.toDate().toLocaleDateString()}) {invite.tokenExpiresAt && `Expires: ${invite.tokenExpiresAt.toDate().toLocaleDateString()}`}</p></div>
                   <div className="flex gap-2 mt-2 sm:mt-0 shrink-0">
-                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={user.farmId === invite.inviterFarmId}><Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept</Button>
+                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={user.farmId === invite.inviterFarmId && !user.isFarmOwner}><Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept</Button>
                     <Button variant="outline" size="sm" onClick={() => handleDeclineInvitation(invite.id)}><Icons.XCircle className="mr-2 h-4 w-4" /> Decline</Button>
                   </div>
                 </li>))}
             </ul>
-          ) : (<Alert><Icons.Info className="h-4 w-4" /><AlertTitle>No Pending Invitations</AlertTitle><AlertDescription>You have no pending invitations.</AlertDescription></Alert>)}
+          ) : (<Alert><Icons.Info className="h-4 w-4" /><AlertTitle>No Pending Invitations</AlertTitle><AlertDescription>You have no pending invitations to join other farms.</AlertDescription></Alert>)}
         </CardContent>
       </Card>
 
       {canManageStaff && user.farmId && (
         <Card className="shadow-lg">
-          <CardHeader><CardTitle>Farm Management</CardTitle><CardDescription>Manage farm staff and settings.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Farm Staff Management</CardTitle><CardDescription>Manage staff access to your farm: <span className="font-semibold">{user.farmName}</span></CardDescription></CardHeader>
           <CardContent className="space-y-6">
             <Form {...inviteStaffForm}>
               <form onSubmit={inviteStaffForm.handleSubmit(onInviteStaffSubmit)} className="space-y-4">
                 <h3 className="text-md font-medium">Invite New Staff Member</h3>
                  <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_auto] gap-2 items-end">
                   <FormField control={inviteStaffForm.control} name="staffEmail" render={({ field }) => (<FormItem><FormLabel>Staff Email</FormLabel><FormControl><Input type="email" {...field} /></FormControl><FormMessage /></FormItem>)}/>
-                  <FormField control={inviteStaffForm.control} name="role" render={({ field }) => (<FormItem><FormLabel>Assign Role</FormLabel><Select onValueChange={field.onChange} defaultValue={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger></FormControl><SelectContent>{rolesForSelection.map(rVal => (<SelectItem key={rVal} value={rVal} className="capitalize">{rVal}</SelectItem>))}</SelectContent></Select><FormMessage /></FormItem>)}/>
-                  <Button type="submit" disabled={isInvitingStaff} className="self-end">{isInvitingStaff ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Logging...</> : "Log Invitation"}</Button>
+                  <FormField control={inviteStaffForm.control} name="role" render={({ field }) => (<FormItem><FormLabel>Assign Role</FormLabel><Select onValueChange={field.onChange} defaultValue={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger></FormControl><SelectContent>{staffRolesForSelection.map(rVal => (<SelectItem key={rVal} value={rVal} className="capitalize">{rVal}</SelectItem>))}</SelectContent></Select><FormMessage /></FormItem>)}/>
+                  <Button type="submit" disabled={isInvitingStaff} className="self-end">{isInvitingStaff ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Logging Invite...</> : "Log Invitation Request"}</Button>
                 </div>
-                <Alert><Icons.Info className="h-4 w-4" /><AlertTitle>Invitation Process</AlertTitle><AlertDescription>An email will be sent with an acceptance link. User needs an AgriAssist account with that email.</AlertDescription></Alert>
+                <Alert><Icons.Info className="h-4 w-4" /><AlertTitle>Invitation Process</AlertTitle><AlertDescription>An email will be sent with an acceptance link. The user needs an AgriAssist account (or to create one) with the invited email address.</AlertDescription></Alert>
               </form>
             </Form>
             <Separator />
@@ -387,16 +422,47 @@ export default function ProfilePage() {
               {isLoadingStaffDetails ? <Skeleton className="h-20 w-full" /> : staffDetails.length > 0 ? (
                 <ul className="space-y-2">{staffDetails.map(staff => (
                   <li key={staff.uid} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
-                    <div><p className="font-medium">{staff.name} <span className="text-xs text-muted-foreground capitalize">({staff.role})</span></p><p className="text-sm text-muted-foreground">{staff.email}</p></div>
-                     <AlertDialog>
-                      <AlertDialogTrigger asChild><Button variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10"><Icons.Trash2 className="mr-1 h-4 w-4"/>Remove</Button></AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader><AlertDialogTitle>Remove {staff.name}?</AlertDialogTitle><AlertDialogDescription>This will remove {staff.name} from staff. They'll be reassigned to personal farm space. Cannot be undone.</AlertDialogDescription></AlertDialogHeader>
-                        <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleRemoveStaff(staff.uid)} className={buttonVariants({variant: "destructive"})}>Confirm</AlertDialogAction></AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                    <div>
+                        <p className="font-medium">{staff.name || staff.uid} <span className="text-xs text-muted-foreground capitalize">({staff.role})</span></p>
+                        <p className="text-sm text-muted-foreground">{staff.email}</p>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 sm:mt-0">
+                        <Select 
+                            defaultValue={staff.role} 
+                            onValueChange={(newRole) => {
+                                // Simple confirmation before changing role
+                                if (window.confirm(`Change ${staff.name || 'this staff'}'s role to ${newRole}?`)) {
+                                    handleUpdateStaffRole(staff.uid, newRole as StaffRole);
+                                }
+                            }}
+                            disabled={(!isOwner && staff.role === 'admin') || staff.uid === user.uid } // Admins cannot change other admins or self
+                        >
+                            <SelectTrigger className="w-[120px] h-8 text-xs">
+                                <SelectValue placeholder="Change role" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {staffRolesForSelection.map(rVal => (
+                                    <SelectItem 
+                                        key={rVal} 
+                                        value={rVal} 
+                                        className="capitalize text-xs"
+                                        disabled={!isOwner && rVal === 'admin'} // Admin cannot assign admin role
+                                    >
+                                        {rVal}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild><Button variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 px-2" disabled={staff.uid === user.uid}><Icons.Trash2 className="mr-1 h-3 w-3"/>Remove</Button></AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader><AlertDialogTitle>Remove {staff.name || 'this staff member'}?</AlertDialogTitle><AlertDialogDescription>This will remove their access to this farm. They will be reassigned to their own personal farm space. This action cannot be undone.</AlertDialogDescription></AlertDialogHeader>
+                            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleRemoveStaff(staff.uid)} className={buttonVariants({variant: "destructive"})}>Confirm Removal</AlertDialogAction></AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                    </div>
                   </li>))}
-                </ul>) : (<Alert><Icons.Info className="h-4 w-4" /><AlertTitle>No Staff Members</AlertTitle><AlertDescription>No staff added yet.</AlertDescription></Alert>)}
+                </ul>) : (<Alert><Icons.Info className="h-4 w-4" /><AlertTitle>No Staff Members</AlertTitle><AlertDescription>No staff members have been added to this farm yet.</AlertDescription></Alert>)}
             </div>
              <Separator />
              <div><h3 className="text-md font-medium mb-2">Farm's Pending Invites ({farmPendingInvitations.length})</h3>
@@ -406,7 +472,7 @@ export default function ProfilePage() {
                             <div><p className="font-medium">To: <span className="text-primary">{invite.invitedEmail}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p><p className="text-xs text-muted-foreground">Status: {invite.status} (Sent: {invite.createdAt?.toDate().toLocaleDateString()}) {invite.tokenExpiresAt && `Expires: ${invite.tokenExpiresAt.toDate().toLocaleDateString()}`}</p></div>
                             <Button variant="outline" size="sm" onClick={() => handleRevokeInvitation(invite.id)}><Icons.XCircle className="mr-2 h-4 w-4" /> Revoke</Button>
                           </li>))}
-                      </ul>) : (<Alert><Icons.Info className="h-4 w-4" /><AlertTitle>No Pending Invites Sent</AlertTitle><AlertDescription>No pending invites sent by your farm.</AlertDescription></Alert>)}
+                      </ul>) : (<Alert><Icons.Info className="h-4 w-4" /><AlertTitle>No Pending Invites Sent</AlertTitle><AlertDescription>No pending invitations have been sent by your farm.</AlertDescription></Alert>)}
              </div>
           </CardContent>
         </Card>
@@ -414,3 +480,5 @@ export default function ProfilePage() {
     </div>
   );
 }
+
+    

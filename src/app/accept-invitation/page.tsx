@@ -11,44 +11,41 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 
+type InvitationStatus = 'initial_loading' | 'prompt_login' | 'processing_token' | 'success' | 'error';
+
 function AcceptInvitationContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { firebaseUser, isLoading: authLoading, refreshUserData } = useAuth();
   const { toast } = useToast();
   
-  // More granular status for better UX
-  type InvitationStatus = 'initial_loading' | 'prompt_login' | 'processing_token' | 'success' | 'error';
   const [status, setStatus] = useState<InvitationStatus>('initial_loading');
   const [message, setMessage] = useState<string | null>(null);
-  const [processedApiCall, setProcessedApiCall] = useState(false); // Tracks if the API call to process token has been made
+  const [processedApiCall, setProcessedApiCall] = useState(false);
 
   const token = searchParams.get('token');
 
   useEffect(() => {
     if (authLoading) {
-      setStatus('initial_loading'); // Explicitly set to loading if auth state is still being determined
+      setStatus('initial_loading');
       setMessage('Loading user session...');
       return;
     }
 
-    // Auth is loaded at this point
     if (!token) {
       setStatus('error');
       setMessage('Invitation token is missing or invalid.');
-      setProcessedApiCall(true); // No token, so no API call to make
+      setProcessedApiCall(true);
       return;
     }
 
     if (!firebaseUser) {
       setStatus('prompt_login');
       setMessage('Please log in or register with the invited email address to accept this invitation. Once logged in, please return to this page or click the invitation link again if not redirected automatically.');
-      // No setProcessedApiCall here, as we want to process after login
       return;
     }
 
-    // User is logged in, token is present, auth is not loading
-    if (!processedApiCall) { // Only process if we haven't attempted it yet
+    if (!processedApiCall) {
       setStatus('processing_token');
       setMessage('Verifying your invitation...');
 
@@ -83,27 +80,26 @@ function AcceptInvitationContent() {
           setMessage('An unexpected error occurred while processing your invitation. Please try again later or contact support.');
           toast({ title: 'Error', description: 'An unexpected error occurred.', variant: 'destructive' });
         } finally {
-          setProcessedApiCall(true); // Mark as processed regardless of outcome
+          setProcessedApiCall(true);
         }
       };
       processToken();
     }
   }, [token, firebaseUser, authLoading, router, toast, refreshUserData, processedApiCall]);
 
-
   const getRedirectUrl = () => {
     if (typeof window !== "undefined") {
-      // Ensure the token is included in the redirect path
-      return encodeURIComponent(`/accept-invitation?token=${token}`);
+      // Pass the current URL (including the token) as the redirect target
+      return encodeURIComponent(window.location.pathname + window.location.search);
     }
     return '';
   };
   
-  if (status === 'initial_loading') {
+  if (status === 'initial_loading' || (status === 'processing_token' && !processedApiCall)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[300px]">
         <Icons.Search className="h-12 w-12 text-primary animate-spin mb-4" />
-        <p className="text-muted-foreground">{message || 'Loading user session...'}</p>
+        <p className="text-muted-foreground">{authLoading ? 'Loading user session...' : 'Preparing to process invitation...'}</p>
         <Skeleton className="h-4 w-3/4 mt-4" />
         <Skeleton className="h-4 w-1/2 mt-2" />
       </div>
@@ -112,7 +108,7 @@ function AcceptInvitationContent() {
 
   return (
     <div className="max-w-md mx-auto">
-      {status === 'processing_token' && (
+      {status === 'processing_token' && processedApiCall && ( // Show processing only after API call started
         <div className="flex flex-col items-center justify-center min-h-[200px]">
           <Icons.Search className="h-10 w-10 text-primary animate-spin mb-4" />
           <p className="text-lg font-medium text-center">{message || 'Verifying your invitation...'}</p>
@@ -188,10 +184,11 @@ export default function AcceptInvitationPage() {
           <span className="text-2xl font-semibold">AgriAssist</span>
         </Link>
       </div>
-      <Suspense fallback={<div className="text-center p-8"><Icons.Search className="h-12 w-12 text-primary animate-spin mx-auto" /><p className="mt-2 text-muted-foreground">Loading invitation...</p></div>}>
+      <Suspense fallback={<div className="text-center p-8"><Icons.Search className="h-12 w-12 text-primary animate-spin mx-auto" /><p className="mt-2 text-muted-foreground">Loading invitation details...</p></div>}>
         <AcceptInvitationContent />
       </Suspense>
     </div>
   );
 }
 
+    
