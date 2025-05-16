@@ -43,7 +43,8 @@ import {
   Archive, 
   Package,
   CreditCard,
-  Map, // Added Map icon
+  Map,
+  Beef, // Added Beef icon for Livestock
 } from 'lucide-react';
 
 export const Icons = {
@@ -76,7 +77,7 @@ export const Icons = {
   Calendar: CalendarDays,
   Help: HelpCircle,
   Dollar: DollarSign,
-  Location: MapPin, // Used for individual fields in Data Management
+  Location: MapPin, 
   Water: Droplets,
   Temperature: Thermometer,
   Tractor,
@@ -90,7 +91,8 @@ export const Icons = {
   FertilizerLog: Archive,
   InputsInventory: Package,
   Expenses: CreditCard,
-  Map, // Added Map icon for the new Farm Map view
+  Map,
+  Livestock: Beef, // Added Livestock icon
 };
 
 export type IconName = keyof typeof Icons;
