@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useAuth } from '@/contexts/auth-context';
+import { useAuth, type PlanId } from '@/contexts/auth-context';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,16 +47,22 @@ interface StaffMemberDisplay {
 }
 
 interface PendingInvitation {
-  id: string; // Firestore document ID of the invitation
+  id: string; 
   inviterFarmId: string;
   inviterUid: string;
   inviterName?: string; 
   farmName?: string; 
   invitedEmail: string;
-  invitedUserUid: string;
+  invitedUserUid: string | null; // Can be null if user doesn't exist yet
   status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'error_farm_not_found';
   createdAt: Timestamp;
 }
+
+const planNames: Record<PlanId, string> = {
+  free: "Hobbyist Farmer (Free)",
+  pro: "Pro Farmer",
+  agribusiness: "AgriBusiness",
+};
 
 
 export default function ProfilePage() {
@@ -111,7 +117,7 @@ export default function ProfilePage() {
       });
       try {
         const resolvedDetails = await Promise.all(detailsPromises);
-        setStaffDetails(resolvedDetails.filter(detail => detail.uid !== user.uid));
+        setStaffDetails(resolvedDetails.filter(detail => detail.uid !== user.uid)); // Exclude owner from staff list
       } catch (error) {
         console.error("Error fetching staff details:", error);
         toast({ title: "Error", description: "Could not fetch staff details.", variant: "destructive" });
@@ -134,12 +140,27 @@ export default function ProfilePage() {
       try {
         const q = query(
           collection(db, "pendingInvitations"),
-          where("invitedUserUid", "==", user.uid),
+          where("invitedUserUid", "==", user.uid), // Query by UID if available
           where("status", "==", "pending")
         );
-        const querySnapshot = await getDocs(q);
-        const invites = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation));
-        setMyPendingInvitations(invites);
+        const qByEmail = query( // Fallback to query by email if UID might be null
+            collection(db, "pendingInvitations"),
+            where("invitedEmail", "==", user.email?.toLowerCase()),
+            where("status", "==", "pending")
+        );
+        
+        const [querySnapshot, querySnapshotByEmail] = await Promise.all([getDocs(q), getDocs(qByEmail)]);
+        
+        const invitesMap = new Map<string, PendingInvitation>();
+        querySnapshot.docs.forEach(docSnap => invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation));
+        querySnapshotByEmail.docs.forEach(docSnap => {
+            if (!invitesMap.has(docSnap.id)) { // Add if not already fetched by UID
+                 invitesMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as PendingInvitation);
+            }
+        });
+
+        setMyPendingInvitations(Array.from(invitesMap.values()));
+
       } catch (error) {
         console.error("Error fetching user's pending invitations:", error);
         toast({ title: "Error", description: "Could not fetch your pending invitations.", variant: "destructive" });
@@ -147,7 +168,7 @@ export default function ProfilePage() {
         setIsLoadingMyInvitations(false);
       }
     }
-  }, [user?.uid, toast]);
+  }, [user?.uid, user?.email, toast]);
 
   useEffect(() => {
     fetchMyPendingInvitations();
@@ -194,7 +215,7 @@ export default function ProfilePage() {
       console.error("Profile update error:", error);
       toast({
         title: "Update Failed",
-        description: (error as Error).message || "Could not update your profile. Please try again.",
+        description: (error instanceof Error).message || "Could not update your profile. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -216,7 +237,7 @@ export default function ProfilePage() {
     });
     if (result.success) {
       inviteStaffForm.reset();
-      fetchFarmPendingInvitations(); // Refresh farm's pending invitations
+      fetchFarmPendingInvitations(); 
     }
     setIsInvitingStaff(false);
   }
@@ -233,13 +254,13 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-        await refreshUserData(); // Refresh owner's data to update staff list
-        fetchStaffDetails(); // Explicitly re-fetch staff details
+        fetchStaffDetails(); 
+        fetchFarmPendingInvitations(); // Also refresh farm owner's view of invites (e.g. if staff member had a pending invite from this farm)
     }
   }
 
   async function handleAcceptInvitation(invitationId: string) {
-    if (!firebaseUser) return; // Should not happen if button is visible
+    if (!firebaseUser) return; 
     const result = await acceptInvitation(invitationId);
     toast({
       title: result.success ? "Invitation Accepted!" : "Acceptance Failed",
@@ -247,10 +268,9 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-      await refreshUserData(); // Refresh all user data, including farm association
-      fetchMyPendingInvitations(); // Re-fetch user's pending invitations
-      fetchFarmPendingInvitations(); // Also refresh farm owner's view if they happen to be the same user
-      fetchStaffDetails(); // Refresh staff details if user becomes staff on a new farm
+      fetchMyPendingInvitations(); 
+      fetchFarmPendingInvitations();
+      fetchStaffDetails(); 
     }
   }
 
@@ -263,7 +283,7 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-      fetchMyPendingInvitations(); // Re-fetch user's pending invitations
+      fetchMyPendingInvitations(); 
     }
   }
 
@@ -276,7 +296,7 @@ export default function ProfilePage() {
       variant: result.success ? "default" : "destructive",
     });
     if (result.success) {
-      fetchFarmPendingInvitations(); // Re-fetch farm's pending invitations
+      fetchFarmPendingInvitations(); 
     }
   }
 
@@ -333,7 +353,7 @@ export default function ProfilePage() {
     <div className="space-y-6">
       <PageHeader
         title="User Profile"
-        description="Manage your account details and preferences."
+        description="Manage your account details, farm association, and subscription."
         icon={Icons.UserCircle}
       />
       <Card className="shadow-lg">
@@ -344,10 +364,11 @@ export default function ProfilePage() {
               <CardDescription>{user.email || 'No email provided'}</CardDescription>
                {(user.farmName ) && 
                 <p className="text-sm text-muted-foreground mt-1">
-                  Farm: {user.farmName} {user.isFarmOwner && `(Owner${user.farmId ? ` - ID: ${user.farmId}` : ''})`}
-                  {!user.isFarmOwner && user.farmId && `(Staff - Farm ID: ${user.farmId})`}
+                  Farm: <span className="font-medium text-foreground">{user.farmName}</span> {user.isFarmOwner && `(Owner)`}
+                  {!user.isFarmOwner && user.farmId && `(Staff)`}
                 </p>
                }
+               {user.farmId && <p className="text-xs text-muted-foreground">Farm ID: {user.farmId}</p>}
             </div>
             {!isEditing && (
               <Button variant="outline" onClick={() => setIsEditing(true)}>
@@ -373,7 +394,7 @@ export default function ProfilePage() {
                     </FormItem>
                   )}
                 />
-                {user.isFarmOwner && (
+                {user.isFarmOwner && ( // Only farm owners can edit the farm name directly here
                   <FormField
                     control={profileForm.control}
                     name="farmName"
@@ -410,26 +431,6 @@ export default function ProfilePage() {
           ) : (
             <>
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">Full Name</h3>
-                <p className="text-lg text-foreground">{user.name || 'Not set'}</p>
-              </div>
-              <div>
-                <h3 className="text-sm font-medium text-muted-foreground">Email Address</h3>
-                <p className="text-lg text-foreground">{user.email || 'Not set'}</p>
-              </div>
-              {user.farmName && (
-                <div>
-                  <h3 className="text-sm font-medium text-muted-foreground">Farm Name</h3>
-                  <p className="text-lg text-foreground">{user.farmName}</p>
-                </div>
-              )}
-               {user.farmId && (
-                 <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Associated Farm ID</h3>
-                    <p className="text-xs text-foreground">{user.farmId}</p>
-                </div>
-              )}
-              <div>
                 <h3 className="text-sm font-medium text-muted-foreground">Role</h3>
                 <p className="text-lg text-foreground">{user.isFarmOwner ? 'Farm Owner' : 'Staff Member'}</p>
               </div>
@@ -438,12 +439,43 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
+      {/* Subscription Information Card */}
+      <Card className="shadow-lg">
+        <CardHeader>
+            <CardTitle>Subscription Plan</CardTitle>
+            <CardDescription>Manage your current AgriAssist subscription.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+            <div>
+                <h3 className="text-sm font-medium text-muted-foreground">Current Plan</h3>
+                <p className="text-lg font-semibold text-primary">{planNames[user.selectedPlanId] || 'Unknown Plan'}</p>
+            </div>
+             <div>
+                <h3 className="text-sm font-medium text-muted-foreground">Status</h3>
+                <p className="text-lg text-foreground capitalize">{user.subscriptionStatus}</p>
+            </div>
+            <Button asChild>
+                <Link href="/pricing">
+                    <Icons.Dollar className="mr-2 h-4 w-4" />
+                    View Plans & Upgrade (Simulated)
+                </Link>
+            </Button>
+            <Alert variant="default">
+                <Icons.Info className="h-4 w-4" />
+                <AlertTitle>Simulation Note</AlertTitle>
+                <AlertDescription>
+                    Subscription management and payments are currently simulated. No real charges will occur.
+                </AlertDescription>
+            </Alert>
+        </CardContent>
+      </Card>
+
       {/* Section for User's Pending Invitations */}
       { !isLoadingMyInvitations && myPendingInvitations.length > 0 && (
         <Card className="shadow-lg">
           <CardHeader>
             <CardTitle>My Pending Invitations</CardTitle>
-            <CardDescription>Invitations you have received to join other farms.</CardDescription>
+            <CardDescription>Invitations you have received to join other farms. Accept or decline them here.</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="space-y-3">
@@ -475,7 +507,7 @@ export default function ProfilePage() {
         <Card className="shadow-lg">
           <CardHeader>
             <CardTitle>Farm Management</CardTitle>
-            <CardDescription>Manage your farm staff and settings. Ensure your Firestore Security Rules are correctly configured for these operations.</CardDescription>
+            <CardDescription>Manage your farm staff and settings.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <Form {...inviteStaffForm}>
@@ -509,7 +541,7 @@ export default function ProfilePage() {
                     <Icons.Info className="h-4 w-4" />
                     <AlertTitle>Invitation Process</AlertTitle>
                     <AlertDescription>
-                      This logs an invitation request to Firestore. The invited user must have an AgriAssist account. They will see the invitation on their profile page to accept or decline. No emails are sent in this version.
+                      This logs an invitation request to Firestore and attempts to send an email (if email service is configured). The invited user must have or create an AgriAssist account. They will see the invitation on their profile page to accept or decline.
                     </AlertDescription>
                   </Alert>
               </form>
@@ -592,6 +624,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-    
-
-    

@@ -2,19 +2,22 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import {
-  Auth,
   User as FirebaseUser,
   onAuthStateChanged,
   signOut as firebaseSignOut,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  updateProfile as firebaseUpdateProfile
+  updateProfile as firebaseUpdateProfile,
+  getIdToken,
 } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { doc, setDoc, getDoc, updateDoc, collection, serverTimestamp, writeBatch, FieldValue, arrayUnion, arrayRemove, query, where, getDocs } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, serverTimestamp, writeBatch, FieldValue, arrayUnion, arrayRemove, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+
+export type PlanId = "free" | "pro" | "agribusiness";
+export type SubscriptionStatus = "active" | "trialing" | "cancelled" | "past_due" | "incomplete";
 
 
 interface User {
@@ -24,7 +27,10 @@ interface User {
   farmId?: string | null;
   farmName?: string | null;
   isFarmOwner?: boolean;
-  staffMembers?: string[]; // UIDs of staff, only relevant for farm owners
+  staffMembers?: string[];
+  selectedPlanId: PlanId;
+  subscriptionStatus: SubscriptionStatus;
+  // Potentially: subscriptionEndDate, stripeCustomerId, etc. for real billing
 }
 
 interface AuthContextType {
@@ -32,8 +38,8 @@ interface AuthContextType {
   firebaseUser: FirebaseUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  loginUser: (email: string, password: string) => Promise<FirebaseUserCredential>;
-  registerUser: (name: string, farmNameFromInput: string, email: string, password: string) => Promise<FirebaseUserCredential>;
+  loginUser: (email: string, password: string) => Promise<void>;
+  registerUser: (name: string, farmNameFromInput: string, email: string, password: string) => Promise<void>;
   logoutUser: () => Promise<void>;
   updateUserProfile: (name: string, newFarmName: string) => Promise<void>;
   inviteStaffMemberByEmail: (emailToInvite: string) => Promise<{success: boolean; message: string}>;
@@ -42,10 +48,7 @@ interface AuthContextType {
   declineInvitation: (invitationId: string) => Promise<{success: boolean; message: string}>;
   revokeInvitation: (invitationId: string) => Promise<{success: boolean; message: string}>;
   refreshUserData: () => Promise<void>;
-}
-
-interface FirebaseUserCredential {
-  user: FirebaseUser;
+  updateUserPlan: (planId: PlanId) => Promise<{success: boolean; message: string}>; // For simulated plan change
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -64,11 +67,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const userDocSnap = await getDoc(userDocRef);
 
     if (userDocSnap.exists()) {
-      const appUserDataFromDb = userDocSnap.data() as Omit<User, 'uid' | 'email' | 'name'> & { name: string, email: string }; // Firestore data
+      const appUserDataFromDb = userDocSnap.data() as Partial<Omit<User, 'uid' | 'email' | 'name'>> & { name?: string, email?: string, selectedPlanId?: PlanId, subscriptionStatus?: SubscriptionStatus };
       let currentFarmName: string | null = null;
       let currentStaffMembers: string[] = [];
-      let currentIsFarmOwner = appUserDataFromDb.isFarmOwner;
-      let currentFarmId = appUserDataFromDb.farmId;
+      let currentIsFarmOwner = appUserDataFromDb.isFarmOwner || false;
+      let currentFarmId = appUserDataFromDb.farmId || null;
 
       if (currentFarmId) {
         const farmDocRef = doc(db, "farms", currentFarmId);
@@ -76,41 +79,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (farmDocSnap.exists()) {
           const farmData = farmDocSnap.data();
           currentFarmName = farmData?.farmName || null;
-          currentIsFarmOwner = farmData?.ownerId === fbUser.uid; // Recalculate based on farm doc
+          currentIsFarmOwner = farmData?.ownerId === fbUser.uid;
           if (currentIsFarmOwner) {
             currentStaffMembers = farmData?.staffMembers || [];
           }
         } else {
-          console.warn(`Farm document ${currentFarmId} not found for user ${fbUser.uid}. User may need reassignment.`);
-          // If farm doc is missing, this user might be orphaned or was removed from a farm.
-          // A robust solution might create a new personal farm or reset their farmId.
-          // For now, reflect that they are not associated with this (potentially non-existent) farm.
-          // Their user doc might still have an old farmId.
-          // The crucial part is *isFarmOwner* should be false if their farmId doesn't match ownerId of existing farm
-          currentFarmName = "Farm not found";
-          currentIsFarmOwner = false; // Cannot be owner of a non-existent farm
+          console.warn(`Farm document ${currentFarmId} not found for user ${fbUser.uid}.`);
+          currentFarmName = "Farm data issue";
+          currentIsFarmOwner = false; // User cannot be owner of a non-existent farm
         }
-      } else {
-        // User has no farmId in their user document. Could be a new user mid-registration
-        // or an old user before farmId was standard.
-        // Or a staff member who was removed and their farmId was cleared (though removeStaffMember reassigns).
-        // Let's assume they might need to create/join a farm.
-         console.log(`User ${fbUser.uid} has no farmId in their user document.`);
       }
       
       return {
         uid: fbUser.uid,
         email: fbUser.email,
-        name: appUserDataFromDb.name || fbUser.displayName, // Prioritize name from DB
+        name: appUserDataFromDb.name || fbUser.displayName,
         farmId: currentFarmId,
         farmName: currentFarmName,
         isFarmOwner: currentIsFarmOwner,
         staffMembers: currentIsFarmOwner ? currentStaffMembers : [],
+        selectedPlanId: appUserDataFromDb.selectedPlanId || "free",
+        subscriptionStatus: appUserDataFromDb.subscriptionStatus || "active",
       };
     } else {
-      console.warn(`User document for UID ${fbUser.uid} not found. This user might be new or data is inconsistent.`);
-      // If user doc doesn't exist but they are authenticated, they might be in the process of registration
-      // or an error occurred. For now, return minimal data.
+      // This case is usually during registration before the user doc is fully created
+      // Or if there's a data inconsistency.
+      console.warn(`User document for UID ${fbUser.uid} not found during fetchAppUserData.`);
       return {
         uid: fbUser.uid,
         email: fbUser.email,
@@ -119,6 +113,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         farmName: null,
         isFarmOwner: false,
         staffMembers: [],
+        selectedPlanId: "free", // Default for a new user if doc doesn't exist yet
+        subscriptionStatus: "active", // Default
       };
     }
   }, []);
@@ -126,7 +122,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const refreshUserData = useCallback(async () => {
     if (firebaseUser) {
-      setIsLoading(true);
+      setIsLoading(true); // Can set to true to show loading indicators if needed
       const updatedUser = await fetchAppUserData(firebaseUser);
       setUser(updatedUser);
       setIsLoading(false);
@@ -149,17 +145,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => unsubscribe();
   }, [fetchAppUserData]);
 
-  const loginUser = async (email: string, password: string): Promise<FirebaseUserCredential> => {
-    return signInWithEmailAndPassword(auth, email, password);
+  const loginUser = async (email: string, password: string): Promise<void> => {
+    await signInWithEmailAndPassword(auth, email, password);
+    // onAuthStateChanged will handle fetching user data
   };
 
-  const registerUser = async (name: string, farmNameFromInput: string, email: string, password: string): Promise<FirebaseUserCredential> => {
+  const registerUser = async (name: string, farmNameFromInput: string, email: string, password: string): Promise<void> => {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const fbUser = userCredential.user;
     await firebaseUpdateProfile(fbUser, { displayName: name });
 
     const userDocRef = doc(db, "users", fbUser.uid);
-    const newFarmId = fbUser.uid; // User's initial farmId is their own UID, they own this farm.
+    const newFarmId = doc(collection(db, "farms")).id; // Generate a unique ID for the new farm
 
     const userDataForFirestore = {
       uid: fbUser.uid,
@@ -168,6 +165,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       farmId: newFarmId,
       isFarmOwner: true,
       createdAt: serverTimestamp(),
+      selectedPlanId: "free" as PlanId,
+      subscriptionStatus: "active" as SubscriptionStatus,
     };
 
     const farmDataForFirestore = {
@@ -183,6 +182,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     batch.set(doc(db, "farms", newFarmId), farmDataForFirestore);
     await batch.commit();
 
+    // Manually set user state immediately after registration for faster UI update
+    // as onAuthStateChanged might have a slight delay in picking up the new Firestore docs.
     setUser({
       uid: fbUser.uid,
       email: fbUser.email,
@@ -191,8 +192,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       farmName: farmNameFromInput,
       isFarmOwner: true,
       staffMembers: [],
+      selectedPlanId: "free",
+      subscriptionStatus: "active",
     });
-    return userCredential;
+    // onAuthStateChanged will also run and re-fetch, ensuring consistency.
   };
 
   const updateUserProfile = async (name: string, newFarmName: string): Promise<void> => {
@@ -209,146 +212,105 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     const batch = writeBatch(db);
     const userDocRef = doc(db, "users", firebaseUser.uid);
-    const userUpdateData: { name?: string, updatedAt?: FieldValue } = {};
-    if (name !== user.name && name) userUpdateData.name = name;
+    const userUpdateData: { name?: string, farmName?: string, updatedAt?: FieldValue } = {}; // farmName here is for user's view if they are not owner
 
-    if (Object.keys(userUpdateData).length > 0) {
-        userUpdateData.updatedAt = serverTimestamp();
-        batch.update(userDocRef, userUpdateData); 
-    }
+    if (name !== user.name && name) userUpdateData.name = name;
 
     let updatedLocalFarmName = user.farmName;
     if (user.isFarmOwner && user.farmId && newFarmName !== user.farmName && newFarmName) { 
       const farmDocRef = doc(db, "farms", user.farmId);
       batch.update(farmDocRef, { farmName: newFarmName, updatedAt: serverTimestamp() }); 
       updatedLocalFarmName = newFarmName;
+    } else if (!user.isFarmOwner && newFarmName !== user.farmName && newFarmName){
+      // This case is tricky. A staff member cannot rename the farm.
+      // If farmName on user doc is just a denormalized copy, it might get updated
+      // when owner changes it. For now, user profile update won't change farmName if not owner.
+    }
+
+
+    if (Object.keys(userUpdateData).length > 0 || (user.isFarmOwner && newFarmName !== user.farmName)) {
+        userUpdateData.updatedAt = serverTimestamp(); // Add timestamp if any user data or owned farm name changes
+        if (Object.keys(userUpdateData).length > 0) batch.update(userDocRef, userUpdateData); 
     }
 
     await batch.commit();
-    setUser(prevUser => prevUser ? { ...prevUser, name: name || prevUser.name, farmName: updatedLocalFarmName } : null);
+    // Refresh user data to get all latest, including potentially updated staff list on farm if owner role changed
+    await refreshUserData(); 
+  };
+  
+  const makeApiRequest = async (endpoint: string, body: any) => {
+    if (!firebaseUser) throw new Error("User not authenticated for API request.");
+    const idToken = await firebaseUser.getIdToken();
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify(body),
+    });
+    return response.json();
   };
 
   const inviteStaffMemberByEmail = async (emailToInvite: string): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.isFarmOwner || !user.farmId || !firebaseUser) {
+    if (!user || !user.isFarmOwner || !user.farmId) {
       return { success: false, message: "Only authenticated farm owners can invite staff." };
     }
-    if (!emailToInvite) {
-      return { success: false, message: "Email address is required." };
-    }
-
-    try {
-      const idToken = await firebaseUser.getIdToken();
-      const response = await fetch('/api/farm/invite-staff', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({ 
-          invitedEmail: emailToInvite,
-          // inviterUid is derived from idToken on server
-          inviterFarmId: user.farmId 
-        }),
-      });
-      return await response.json();
-    } catch (error) {
-      console.error("Client-side error inviting staff member:", error);
-      return { success: false, message: "Failed to send invitation request. Please try again."};
-    }
+    return makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite });
   };
   
   const removeStaffMember = async (staffUidToRemove: string): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.isFarmOwner || !user.farmId || !firebaseUser) {
+    if (!user || !user.isFarmOwner || !user.farmId) {
       return { success: false, message: "Only authenticated farm owners can remove staff." };
     }
-     if (user.uid === staffUidToRemove) {
+    if (user.uid === staffUidToRemove) {
          return { success: false, message: "Owner cannot remove themselves as staff." };
     }
-
-    try {
-      const idToken = await firebaseUser.getIdToken();
-      const response = await fetch('/api/farm/remove-staff', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({ 
-          staffUidToRemove,
-          // ownerUid is derived from idToken on server
-          ownerFarmId: user.farmId 
-        }),
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        await refreshUserData(); // Refresh owner's data to update staff list
-      }
-      return result;
-    } catch (error) {
-      console.error("Client-side error removing staff member:", error);
-      return { success: false, message: "Failed to send removal request. Please try again."};
-    }
+    const result = await makeApiRequest('/api/farm/remove-staff', { staffUidToRemove });
+    if (result.success) await refreshUserData();
+    return result;
   };
 
   const acceptInvitation = async (invitationId: string): Promise<{success: boolean; message: string}> => {
     if (!firebaseUser) return { success: false, message: "You must be logged in to accept an invitation." };
-    try {
-      const idToken = await firebaseUser.getIdToken();
-      const response = await fetch('/api/farm/invitations/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-        body: JSON.stringify({ invitationId }),
-      });
-      const result = await response.json();
-      if (result.success) {
-        await refreshUserData(); // Refresh user data to reflect new farm association
-      }
-      return result;
-    } catch (error) {
-      console.error("Error accepting invitation:", error);
-      return { success: false, message: "Failed to accept invitation. Please try again." };
-    }
+    const result = await makeApiRequest('/api/farm/invitations/accept', { invitationId });
+    if (result.success) await refreshUserData();
+    return result;
   };
 
   const declineInvitation = async (invitationId: string): Promise<{success: boolean; message: string}> => {
     if (!firebaseUser) return { success: false, message: "You must be logged in to decline an invitation." };
-    try {
-      const idToken = await firebaseUser.getIdToken();
-      const response = await fetch('/api/farm/invitations/decline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-        body: JSON.stringify({ invitationId }),
-      });
-      // No need to refresh user data here as it doesn't change their farm association
-      return await response.json();
-    } catch (error) {
-      console.error("Error declining invitation:", error);
-      return { success: false, message: "Failed to decline invitation. Please try again." };
-    }
+    return makeApiRequest('/api/farm/invitations/decline', { invitationId });
   };
 
   const revokeInvitation = async (invitationId: string): Promise<{success: boolean; message: string}> => {
     if (!firebaseUser || !user?.isFarmOwner) return { success: false, message: "Only farm owners can revoke invitations." };
+    return makeApiRequest('/api/farm/invitations/revoke', { invitationId });
+  };
+
+  const updateUserPlan = async (planId: PlanId): Promise<{ success: boolean; message: string }> => {
+    if (!user || !firebaseUser) {
+      return { success: false, message: "User not authenticated." };
+    }
     try {
-      const idToken = await firebaseUser.getIdToken();
-      const response = await fetch('/api/farm/invitations/revoke', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-        body: JSON.stringify({ invitationId }),
+      const userDocRef = doc(db, "users", firebaseUser.uid);
+      await updateDoc(userDocRef, {
+        selectedPlanId: planId,
+        subscriptionStatus: "active", // Simulate successful "upgrade"
+        updatedAt: serverTimestamp(),
       });
-      // No need to refresh user data here typically, but might refresh pending list on profile page.
-      return await response.json();
+      await refreshUserData(); // Refresh local user state
+      toast({ title: "Plan Updated (Simulated)", description: `Your plan has been set to ${planId}. In a real app, payment would be processed.` });
+      return { success: true, message: `Plan updated to ${planId}.` };
     } catch (error) {
-      console.error("Error revoking invitation:", error);
-      return { success: false, message: "Failed to revoke invitation. Please try again." };
+      console.error("Error updating user plan (simulated):", error);
+      toast({ title: "Error", description: "Could not update your plan.", variant: "destructive" });
+      return { success: false, message: "Failed to update plan." };
     }
   };
 
-
   const logoutUser = async () => {
     await firebaseSignOut(auth);
-    // setUser(null) and setFirebaseUser(null) are handled by onAuthStateChanged
     router.push('/login'); 
   };
 
@@ -369,7 +331,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         acceptInvitation,
         declineInvitation,
         revokeInvitation,
-        refreshUserData
+        refreshUserData,
+        updateUserPlan,
     }}>
       {children}
     </AuthContext.Provider>

@@ -1,5 +1,6 @@
+
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, Database, BarChart3, BrainCircuit, Leaf, Wheat, Layers3, CloudSun, Settings, FileText } from 'lucide-react';
+import { Settings } from 'lucide-react';
 import { Icons } from '@/components/icons'; // Import Icons object
 
 export interface NavItem {
@@ -34,16 +35,14 @@ export const mainNavItems: NavItem[] = [
   {
     title: 'Reporting',
     href: '/reporting',
-    icon: Icons.Reporting, // Use the new Reporting icon
+    icon: Icons.Reporting, 
+  },
+  {
+    title: 'Pricing', // New Pricing Nav Item
+    href: '/pricing',
+    icon: Icons.Dollar, 
   },
 ];
-
-export const dataManagementIcons = {
-  planting: Leaf,
-  harvesting: Wheat,
-  soil: Layers3,
-  weather: CloudSun,
-};
 
 export const settingsNavItem: NavItem = {
   title: 'Settings',
