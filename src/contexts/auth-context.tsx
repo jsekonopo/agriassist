@@ -112,11 +112,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           }
         } else {
           console.warn(`Farm document ${currentFarmId} not found for user ${fbUser.uid}. Potential data inconsistency.`);
-          currentFarmId = fbUser.uid; // Fallback to personal farm ID
+          currentFarmId = fbUser.uid; 
           currentFarmName = appUserDataFromDb.name ? `${appUserDataFromDb.name}'s Personal Farm (Fallback)` : `${fbUser.displayName || "User"}'s Personal Farm (Fallback)`;
           currentIsFarmOwner = true;
           currentStaffMembers = [];
-           // Attempt to fix missing farm association
           await updateDoc(userDocRef, { farmId: currentFarmId, farmName: currentFarmName, isFarmOwner: true });
           const personalFarmRef = doc(db, "farms", currentFarmId);
           const personalFarmSnap = await getDoc(personalFarmRef);
@@ -173,7 +172,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.warn(`Firestore document for user ${fbUser.uid} not found.`);
         return null; 
     }
-  }, []);
+  }, []); // Empty dependency array as it uses no props/state from AuthProvider directly
 
   const refreshUserData = useCallback(async () => {
     const currentFbUser = auth.currentUser; 
@@ -192,15 +191,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(null);
       setFirebaseUser(null);
     }
-  }, [fetchAppUserDataFromDb]); // Removed setUser, setFirebaseUser, router, pathname, toast as direct dependencies
-                               // fetchAppUserDataFromDb is stable.
+  }, [fetchAppUserDataFromDb, setUser, setFirebaseUser]); 
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUserInstance) => {
       setIsLoading(true);
       if (fbUserInstance) {
         setFirebaseUser(fbUserInstance); 
-        await refreshUserData(); // Call the stable refreshUserData
+        await refreshUserData();
       } else {
         setUser(null);
         setFirebaseUser(null);
@@ -208,11 +206,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoading(false);
     });
     return () => unsubscribe();
-  }, [refreshUserData]); // refreshUserData is now a stable dependency
+  }, [refreshUserData]);
 
   const loginUser = useCallback(async (email: string, password: string): Promise<void> => {
     await signInWithEmailAndPassword(auth, email, password);
-    await refreshUserData();
+    await refreshUserData(); // Call refreshUserData after successful login
   }, [refreshUserData]);
 
   const registerUser = useCallback(async (name: string, farmNameFromInput: string, email: string, password: string): Promise<void> => {
@@ -222,7 +220,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const batch = writeBatch(db);
     const userDocRef = doc(db, "users", fbUser.uid);
-    const newFarmId = doc(collection(db, "farms")).id;
+    const newFarmId = doc(collection(db, "farms")).id; 
     const actualFarmName = farmNameFromInput.trim() || `${name}'s Personal Farm`;
     const defaultNotificationPreferences: NotificationPreferences = {
         taskRemindersEmail: false, weatherAlertsEmail: false, aiSuggestionsInApp: false, staffActivityEmail: false
@@ -275,7 +273,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     
     await refreshUserData(); 
-    // router.push("/dashboard"); // This was here, removed to ensure redirect to /accept-invitation works
+    router.push("/dashboard");
   }, [refreshUserData, toast, router]);
   
   const updateUserProfile = useCallback(async (nameUpdate: string, newFarmName: string): Promise<void> => {
@@ -326,87 +324,59 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!user || !user.isFarmOwner || !user.farmId) {
       return { success: false, message: "Only authenticated farm owners can invite staff." };
     }
-    return makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite });
+    const result = await makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite });
+    // No refreshUserData here as this doesn't change current user's data directly.
+    // The profile page will re-fetch pending invites.
+    return result;
   }, [user, makeApiRequest]);
   
   const removeStaffMember = useCallback(async (staffUidToRemove: string): Promise<{success: boolean; message: string}> => {
-    const currentFbUser = auth.currentUser;
-    if (!user || !user.isFarmOwner || !user.farmId || !currentFbUser) {
+    if (!user || !user.isFarmOwner || !user.farmId) {
       return { success: false, message: "Only authenticated farm owners can remove staff." };
     }
     if (user.uid === staffUidToRemove) {
          return { success: false, message: "Owner cannot remove themselves as staff via this method." };
     }
     const result = await makeApiRequest('/api/farm/remove-staff', { staffUidToRemove, ownerUid: user.uid, ownerFarmId: user.farmId });
-    if (result.success) await refreshUserData();
+    if (result.success) await refreshUserData(); // Refresh owner's data (staff list might have changed if it was on user obj)
     return result;
   }, [user, makeApiRequest, refreshUserData]);
 
   const acceptInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
-    const currentFbUser = auth.currentUser;
-    if (!currentFbUser) return { success: false, message: "You must be logged in to accept an invitation." };
     const result = await makeApiRequest('/api/farm/invitations/accept', { invitationId });
-    if (result.success) await refreshUserData();
+    if (result.success) await refreshUserData(); // Crucial to refresh user state
     return result;
   }, [makeApiRequest, refreshUserData]);
 
   const declineInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
-    const currentFbUser = auth.currentUser;
-    if (!currentFbUser) return { success: false, message: "You must be logged in to decline an invitation." };
+    // Declining doesn't change the current user's core data, so no refreshUserData needed here.
+    // The profile page will re-fetch its list of pending invites.
     return makeApiRequest('/api/farm/invitations/decline', { invitationId });
   }, [makeApiRequest]);
 
   const revokeInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
-    const currentFbUser = auth.currentUser;
-    if (!currentFbUser || !user?.isFarmOwner) return { success: false, message: "Only farm owners can revoke invitations." };
+    // Revoking doesn't change the current user's core data.
+    // The profile page will re-fetch its list of farm's pending invites.
     return makeApiRequest('/api/farm/invitations/revoke', { invitationId });
-  }, [user, makeApiRequest]);
+  }, [makeApiRequest]);
 
-  const updateUserPlan = useCallback(async (planId: PlanId): Promise<{success: boolean; message: string; sessionId?: string; error?: string}> => {
-    const currentFbUser = auth.currentUser;
-    if (!user || !currentFbUser) {
-      return { success: false, message: "User not authenticated." };
-    }
-    if (planId === 'free') { 
-      if (user.selectedPlanId !== 'free') {
-        // The cancelSubscription function will internally call refreshUserData
-        return cancelSubscription(); // cancelSubscription needs to be defined before this call.
-      } else {
-        return { success: true, message: "You are already on the Free plan." };
-      }
-    }
-    try {
-      const response = await makeApiRequest('/api/billing/create-checkout-session', { planId });
-      if (response.success && response.sessionId) {
-        return { success: true, message: 'Checkout session created.', sessionId: response.sessionId };
-      } else {
-        return { success: false, message: response.message || 'Failed to create checkout session.', error: response.message };
-      }
-    } catch (error) {
-      console.error("Error calling create-checkout-session API:", error);
-      const message = error instanceof Error ? error.message : "Could not initiate plan change.";
-      return { success: false, message, error: message };
-    }
-  }, [user, makeApiRequest, cancelSubscription]); // Added cancelSubscription
-
+  // --- Define cancelSubscription BEFORE updateUserPlan ---
   const cancelSubscription = useCallback(async (): Promise<{success: boolean; message: string}> => {
-    const currentContextUser = user; 
-    const currentFbUser = auth.currentUser;
-    if (!currentContextUser || !currentFbUser) {
+    if (!user || !firebaseUser) { // Use firebaseUser for null check if needed
         return { success: false, message: "User not authenticated." };
     }
     
-    if (!currentContextUser.stripeSubscriptionId && currentContextUser.selectedPlanId === 'free') {
+    if (!user.stripeSubscriptionId && user.selectedPlanId === 'free') {
          return { success: true, message: "You are already on the Free plan." };
     }
-     if (!currentContextUser.stripeSubscriptionId && currentContextUser.selectedPlanId !== 'free') {
-        const userDocRef = doc(db, "users", currentContextUser.uid);
+     if (!user.stripeSubscriptionId && user.selectedPlanId !== 'free') {
+        const userDocRef = doc(db, "users", user.uid);
         try {
             await updateDoc(userDocRef, {
-                selectedPlanId: 'free',
-                subscriptionStatus: 'active', // Or 'cancelled' if you want to reflect that they were on a paid plan
+                selectedPlanId: 'free' as PlanId,
+                subscriptionStatus: 'active' as SubscriptionStatus,
                 stripeSubscriptionId: null,
-                stripeCustomerId: currentContextUser.stripeCustomerId, // Keep customer ID
+                // stripeCustomerId: user.stripeCustomerId, // Keep customer ID
                 subscriptionCurrentPeriodEnd: null,
                 updatedAt: serverTimestamp(),
             });
@@ -421,8 +391,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     try {
       const response = await makeApiRequest('/api/billing/cancel-subscription', {});
-      toast({ title: response.success ? "Subscription Cancellation Requested" : "Cancellation Failed", description: response.message });
-      if(response.success) await refreshUserData();
+      // refreshUserData will be called by the component if needed, or after Stripe webhook updates DB.
+      if(response.success) {
+        toast({ title: "Subscription Cancellation Requested", description: response.message });
+        await refreshUserData(); // Refresh after successful API call
+      } else {
+        toast({ title: "Cancellation Failed", description: response.message, variant: "destructive" });
+      }
       return response;
     } catch (error) {
         console.error("Error calling cancel-subscription API:", error);
@@ -430,15 +405,41 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         toast({ title: "Error", description: message, variant: "destructive"});
         return { success: false, message };
     }
-  }, [user, makeApiRequest, toast, refreshUserData]);
+  }, [user, firebaseUser, makeApiRequest, toast, refreshUserData]); 
+
+  const updateUserPlan = useCallback(async (planId: PlanId): Promise<{success: boolean; message: string; sessionId?: string; error?: string}> => {
+    if (!user) { // Removed firebaseUser check as user state should be sufficient
+      return { success: false, message: "User not authenticated." };
+    }
+    if (planId === 'free') { 
+      if (user.selectedPlanId !== 'free') {
+        return cancelSubscription(); // cancelSubscription is now defined
+      } else {
+        return { success: true, message: "You are already on the Free plan." };
+      }
+    }
+    try {
+      const response = await makeApiRequest('/api/billing/create-checkout-session', { planId });
+      if (response.success && response.sessionId) {
+        // refreshUserData might be called by Stripe webhook after successful payment.
+        // Or client can call it after redirection if needed.
+        return { success: true, message: 'Checkout session created.', sessionId: response.sessionId };
+      } else {
+        return { success: false, message: response.message || 'Failed to create checkout session.', error: response.message };
+      }
+    } catch (error) {
+      console.error("Error calling create-checkout-session API:", error);
+      const message = error instanceof Error ? error.message : "Could not initiate plan change.";
+      return { success: false, message, error: message };
+    }
+  }, [user, makeApiRequest, cancelSubscription]); // Added cancelSubscription
 
   const updateNotificationPreferences = useCallback(async (preferences: NotificationPreferences): Promise<{success: boolean; message: string}> => {
-    const currentFbUser = auth.currentUser;
-    if (!user || !currentFbUser) {
+    if (!user || !firebaseUser) { // Use firebaseUser if direct Firebase SDK interaction occurs here
       return { success: false, message: "User not authenticated." };
     }
     try {
-      const userDocRef = doc(db, "users", currentFbUser.uid);
+      const userDocRef = doc(db, "users", user.uid); // user.uid should be reliable if user object exists
       await updateDoc(userDocRef, {
         notificationPreferences: preferences,
         updatedAt: serverTimestamp(),
@@ -450,7 +451,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const message = error instanceof Error ? error.message : "Could not update preferences.";
       return { success: false, message };
     }
-  }, [user, refreshUserData]);
+  }, [user, firebaseUser, refreshUserData]); // Added firebaseUser dependency
 
   const logoutUser = useCallback(async () => {
     try {
@@ -510,5 +511,3 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
-
-    
