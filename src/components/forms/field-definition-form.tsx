@@ -10,43 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { Icons } from "../icons";
-import { format } from "date-fns";
-
-interface FieldDefinitionData {
-  id: string;
-  fieldName: string;
-  fieldSize?: number;
-  fieldSizeUnit?: string;
-  notes?: string;
-  submittedAt: string; // ISO string
-}
-
-const mockFieldDefinitionService = {
-  save: async (logData: Omit<FieldDefinitionData, 'id' | 'submittedAt'>): Promise<FieldDefinitionData> => {
-    console.log("Mock service: Attempting to save field definition:", logData);
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        try {
-          const existingLogsString = localStorage.getItem('fieldDefinitions');
-          const existingLogs: FieldDefinitionData[] = existingLogsString ? JSON.parse(existingLogsString) : [];
-          
-          const newLog: FieldDefinitionData = { 
-            ...logData, 
-            id: new Date().toISOString() + '_' + Math.random().toString(36).substring(2, 9),
-            submittedAt: new Date().toISOString(),
-          };
-          existingLogs.push(newLog);
-          localStorage.setItem('fieldDefinitions', JSON.stringify(existingLogs));
-          console.log("Mock service: Field definition saved to localStorage:", newLog);
-          resolve(newLog);
-        } catch (error) {
-          console.error("Mock service: Error saving field definition to localStorage:", error);
-          reject(error);
-        }
-      }, 500);
-    });
-  }
-};
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const fieldDefinitionSchema = z.object({
   fieldName: z.string().min(1, "Field name is required."),
@@ -65,6 +31,8 @@ interface FieldDefinitionFormProps {
 export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { user } = useAuth();
+
   const form = useForm<z.infer<typeof fieldDefinitionSchema>>({
     resolver: zodResolver(fieldDefinitionSchema),
     defaultValues: {
@@ -76,22 +44,35 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
   });
 
   async function onSubmit(values: z.infer<typeof fieldDefinitionSchema>) {
+    if (!user) {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to save a field definition.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      await mockFieldDefinitionService.save(values);
+      const fieldData = {
+        ...values,
+        userId: user.uid,
+        createdAt: serverTimestamp(), // Or new Date() if serverTimestamp gives issues with client-side model
+      };
+      await addDoc(collection(db, "fields"), fieldData);
       toast({
         title: "Field Definition Saved",
-        description: `Field: ${values.fieldName} has been saved.`,
+        description: `Field: ${values.fieldName} has been saved to Firestore.`,
       });
       form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: "acres", notes: "" });
       if (onLogSaved) {
         onLogSaved();
       }
     } catch (error) {
-      console.error("Error saving field definition:", error);
+      console.error("Error saving field definition to Firestore:", error);
       toast({
         title: "Error Saving Field",
-        description: "Could not save the field definition.",
+        description: "Could not save the field definition to Firestore.",
         variant: "destructive",
       });
     } finally {
@@ -162,10 +143,10 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" disabled={isSubmitting || !user}>
           {isSubmitting ? (
             <>
-              <Icons.User className="mr-2 h-4 w-4 animate-spin" /> {/* Using User as a placeholder spinner */}
+              <Icons.User className="mr-2 h-4 w-4 animate-spin" />
               Saving Field...
             </>
           ) : (

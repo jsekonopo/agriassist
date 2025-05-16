@@ -14,16 +14,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
+import { db } from "@/lib/firebase";
+import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
 interface FieldDefinitionLog {
-  id: string;
+  id: string; // Firestore document ID
   fieldName: string;
   fieldSize?: number;
   fieldSizeUnit?: string;
   notes?: string;
-  submittedAt: string; // ISO string
+  createdAt?: Timestamp | Date; // Firestore Timestamp or converted Date
 }
 
 interface FieldDefinitionTableProps {
@@ -36,49 +38,65 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) {
+      setIsLoading(false);
+      setLogs([]); // Clear logs if user logs out
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
-    try {
-      const storedLogs = localStorage.getItem("fieldDefinitions");
-      if (storedLogs) {
-        const parsedLogs = JSON.parse(storedLogs) as FieldDefinitionLog[];
-        parsedLogs.sort((a, b) => parseISO(b.submittedAt).getTime() - parseISO(a.submittedAt).getTime());
-        setLogs(parsedLogs);
-      } else {
-        setLogs([]);
+    const fetchFieldDefinitions = async () => {
+      try {
+        const q = query(
+          collection(db, "fields"),
+          where("userId", "==", user.uid),
+          orderBy("createdAt", "desc")
+        );
+        const querySnapshot = await getDocs(q);
+        const fetchedLogs: FieldDefinitionLog[] = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : undefined, // Convert Timestamp to Date
+        } as FieldDefinitionLog));
+        setLogs(fetchedLogs);
+      } catch (e) {
+        console.error("Failed to load field definitions from Firestore:", e);
+        setError("Could not load field definitions. Please try again.");
+        toast({
+          title: "Error Loading Fields",
+          description: "Failed to load field definitions from Firestore.",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
       }
-    } catch (e) {
-      console.error("Failed to load field definitions:", e);
-      setError("Could not load field definitions. Data might be corrupted.");
-      toast({
-        title: "Error Loading Fields",
-        description: "Failed to load field definitions from local storage.",
-        variant: "destructive"
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [refreshTrigger, toast]);
+    };
+    fetchFieldDefinitions();
+  }, [user, refreshTrigger, toast]);
 
-  const handleDeleteLog = (logId: string) => {
+  const handleDeleteLog = async (logId: string) => {
+    if (!user) {
+      toast({ title: "Not Authenticated", description: "You must be logged in.", variant: "destructive" });
+      return;
+    }
     if (window.confirm("Are you sure you want to delete this field definition? This action cannot be undone.")) {
       try {
-        const updatedLogs = logs.filter(log => log.id !== logId);
-        localStorage.setItem("fieldDefinitions", JSON.stringify(updatedLogs));
-        setLogs(updatedLogs);
+        await deleteDoc(doc(db, "fields", logId));
         toast({
           title: "Field Deleted",
-          description: "The field definition has been removed.",
+          description: "The field definition has been removed from Firestore.",
         });
-        onLogDeleted();
+        onLogDeleted(); // Trigger refresh
       } catch (e) {
-        console.error("Failed to delete field definition:", e);
+        console.error("Failed to delete field definition from Firestore:", e);
         setError("Could not delete the field definition.");
         toast({
           title: "Error Deleting Field",
-          description: "Failed to delete the field definition.",
+          description: "Failed to delete the field definition from Firestore.",
           variant: "destructive"
         });
       }
@@ -99,7 +117,19 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     );
   }
 
-  if (logs.length === 0) {
+  if (!user && !isLoading) {
+     return (
+      <Alert className="mt-4">
+        <Icons.Info className="h-4 w-4" />
+        <AlertTitle>Please Log In</AlertTitle>
+        <AlertDescription>
+          Log in to view and manage your field definitions.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (logs.length === 0 && user) {
     return (
       <Alert className="mt-4">
         <Icons.Info className="h-4 w-4" />
@@ -114,7 +144,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
   return (
     <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
       <Table>
-        <TableCaption>A list of your defined farm fields. Data is stored locally in your browser.</TableCaption>
+        <TableCaption>A list of your defined farm fields. Data is stored in Firestore.</TableCaption>
         <TableHeader>
           <TableRow>
             <TableHead className="min-w-[200px]">Field Name</TableHead>
