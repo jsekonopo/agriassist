@@ -1,4 +1,3 @@
-
 "use client";
 
 import { PageHeader } from '@/components/layout/page-header';
@@ -21,14 +20,13 @@ export default function SettingsPage() {
   const { user, updateUserSettings, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
-  // Local state for UI interaction before saving
   const [currentSettings, setCurrentSettings] = useState<UserSettings | undefined>(undefined);
   const [isSavingPrefs, setIsSavingPrefs] = useState(false);
 
   useEffect(() => {
     if (user?.settings) {
       setCurrentSettings(user.settings);
-    } else if (user && !user.settings) {
+    } else if (user && !user.settings) { // User loaded but has no settings object yet
       const defaultPrefs: UserSettings = {
         notificationPreferences: {
           taskRemindersEmail: false, weatherAlertsEmail: false, aiSuggestionsInApp: false, staffActivityEmail: false,
@@ -39,32 +37,39 @@ export default function SettingsPage() {
       };
       setCurrentSettings(defaultPrefs);
     }
-  }, [user]); // Re-sync local state if user object changes (e.g., after refresh)
+  }, [user]);
 
   const handleSettingChange = async (updatedPart: Partial<UserSettings>) => {
-    if (!currentSettings) return;
+    if (!user || !currentSettings) return; // Ensure user and currentSettings are available
 
-    const newSettings = { ...currentSettings, ...updatedPart };
-    if (updatedPart.notificationPreferences) {
-        newSettings.notificationPreferences = {
-            ...(currentSettings.notificationPreferences || {}),
-            ...updatedPart.notificationPreferences,
-        }
-    }
+    // Create a new settings object by merging
+    const newSettings = { 
+        ...currentSettings, // Start with existing settings
+        ...updatedPart, // Apply the specific change
+        // Deep merge notificationPreferences if that's what changed
+        ...(updatedPart.notificationPreferences && {
+            notificationPreferences: {
+                ...(currentSettings.notificationPreferences || {}),
+                ...updatedPart.notificationPreferences,
+            }
+        })
+    };
     
-    setCurrentSettings(newSettings); // Optimistic UI update for local state
+    setCurrentSettings(newSettings); // Optimistic UI update
     setIsSavingPrefs(true);
-    const result = await updateUserSettings(newSettings); // Pass the entire updated settings object
+    const result = await updateUserSettings(newSettings); 
     
     if (result.success) {
       toast({ title: "Preferences Updated", description: result.message });
     } else {
       toast({ title: "Update Failed", description: result.message, variant: "destructive" });
       // Revert optimistic update by re-setting from the source of truth (user context)
-      setCurrentSettings(user?.settings); 
+      // This ensures UI consistency if save fails.
+      if (user?.settings) setCurrentSettings(user.settings);
     }
     setIsSavingPrefs(false);
   };
+
 
   if (authLoading && !user) {
     return (
@@ -85,20 +90,27 @@ export default function SettingsPage() {
       </div>
     );
   }
-
-  if (!currentSettings) { // Handles case where user or user.settings might still be initially undefined
-    return (
+  
+  if (!currentSettings && !authLoading) { // Handle case where user is loaded but currentSettings is not yet initialized
+     return (
       <div className="space-y-8">
         <PageHeader
           title="Settings"
           description="Manage your account settings, preferences, and security."
           icon={Icons.Settings}
         />
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-60 w-full" />
+        <Card className="shadow-lg">
+          <CardHeader><CardTitle>Loading Settings...</CardTitle></CardHeader>
+          <CardContent><Skeleton className="h-40 w-full" /></CardContent>
+        </Card>
       </div>
     );
   }
+  // Ensure currentSettings is defined before trying to access its properties
+  if (!currentSettings) {
+      return <div className="text-center p-8">Loading settings...</div>; // Or a more sophisticated loader
+  }
+
 
   const notificationItems: { id: NotificationPreferenceKey; label: string; description: string }[] = [
     { id: "taskRemindersEmail", label: "Email for Task Reminders", description: "Receive email notifications for upcoming or overdue tasks." },
@@ -152,7 +164,7 @@ export default function SettingsPage() {
                 <Switch 
                   id={item.id} 
                   checked={currentSettings.notificationPreferences?.[item.id] || false}
-                  onCheckedChange={(value) => handleSettingChange({ notificationPreferences: { [item.id]: value } })}
+                  onCheckedChange={(value) => handleSettingChange({ notificationPreferences: { ...currentSettings.notificationPreferences, [item.id]: value } })}
                   disabled={isSavingPrefs || authLoading}
                   aria-label={item.label}
                 />
@@ -167,14 +179,14 @@ export default function SettingsPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Measurement Units</CardTitle>
-          <CardDescription>Choose your preferred default units for display and input.</CardDescription>
+          <CardDescription>Choose your preferred default units for display and input. (Note: Display conversion is not yet implemented app-wide)</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <Alert variant="default">
             <Icons.Info className="h-4 w-4" />
             <AlertTitle>Unit Display</AlertTitle>
             <AlertDescription>
-              These preferences are saved to Firestore. Implementing unit conversion and consistent display logic throughout the app is a future enhancement.
+              These preferences are saved to Firestore. Implementing unit conversion and consistent display logic throughout the app based on these settings is a future enhancement.
             </AlertDescription>
           </Alert>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

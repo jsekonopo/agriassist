@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
 
 interface WeatherData {
@@ -28,7 +28,7 @@ interface Field {
   fieldName: string;
   fieldSize?: number;
   fieldSizeUnit?: string;
-  farmId: string; // Added farmId
+  farmId: string;
   userId: string;
 }
 
@@ -92,6 +92,7 @@ export default function DashboardPage() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState<string | null>(null);
+  const [weatherLocationDisplay, setWeatherLocationDisplay] = useState("Ottawa");
 
   const [totalAcreage, setTotalAcreage] = useState<number | undefined>(undefined);
   const [activeCropsCount, setActiveCropsCount] = useState<number | undefined>(undefined);
@@ -101,10 +102,31 @@ export default function DashboardPage() {
   const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
-    async function fetchWeatherData() {
+    async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
+      let lat = 45.4215; // Default Ottawa latitude
+      let lon = -75.6972; // Default Ottawa longitude
+      let locationName = "Ottawa";
+
+      if (user?.farmId) {
+        try {
+          const farmDocRef = doc(db, "farms", user.farmId);
+          const farmDocSnap = await getDoc(farmDocRef);
+          if (farmDocSnap.exists()) {
+            const farmData = farmDocSnap.data();
+            if (farmData && typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
+              lat = farmData.latitude;
+              lon = farmData.longitude;
+              locationName = farmData.farmName || "Your Farm Location";
+            }
+          }
+        } catch (error) {
+          console.warn("Could not fetch farm specific location, defaulting to Ottawa:", error);
+        }
+      }
+      setWeatherLocationDisplay(locationName);
+
       try {
-        const lat = 45.4215; const lon = -75.6972; // Ottawa
         const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
         if (!response.ok) throw new Error(`Failed to fetch weather: ${response.statusText}`);
         const data = await response.json();
@@ -116,21 +138,25 @@ export default function DashboardPage() {
             windspeed: data.current_weather.windspeed,
           });
         } else throw new Error("Current weather data not available");
+        setWeatherError(null);
       } catch (error) {
         console.error("Weather fetch error:", error);
         setWeatherError(error instanceof Error ? error.message : "An unknown error occurred");
+        setWeather(null);
       } finally {
         setWeatherLoading(false);
       }
     }
-    fetchWeatherData();
-  }, []);
+    if (user !== undefined) { // Fetch weather once user state is determined (null or User object)
+        fetchFarmLocationAndWeather();
+    }
+  }, [user?.farmId]); // Re-fetch if farmId changes
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
       setDataLoading(true);
-      if (!authLoading && user && !user.farmId) { // User loaded but no farmId
-        setDataLoading(false); // Stop loading to show N/A or relevant messages
+      if (!authLoading && user && !user.farmId) { 
+        setDataLoading(false); 
         setTotalAcreage(0);
         setActiveCropsCount(0);
         setNextHarvestCrop("N/A");
@@ -143,23 +169,21 @@ export default function DashboardPage() {
     setDataLoading(true);
     const fetchData = async () => {
       try {
-        // Fetch Fields for Total Acreage
         const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
         let acreage = 0;
         fieldsSnapshot.docs.forEach(doc => {
           const field = doc.data() as Field;
           if (field.fieldSize && field.fieldSize > 0) {
-            if (!field.fieldSizeUnit || field.fieldSizeUnit.toLowerCase() === 'acres') {
+            if (!field.fieldSizeUnit || field.fieldSizeUnit.toLowerCase().includes('acre')) {
               acreage += field.fieldSize;
-            } else if (field.fieldSizeUnit.toLowerCase() === 'hectares') {
+            } else if (field.fieldSizeUnit.toLowerCase().includes('hectare')) {
               acreage += field.fieldSize * HECTARE_TO_ACRE;
             }
           }
         });
         setTotalAcreage(acreage > 0 ? parseFloat(acreage.toFixed(1)) : 0);
 
-        // Fetch Planting Logs for Active Crops & Next Harvest
         const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
         const pLogs = plantingLogsSnapshot.docs.map(doc => doc.data() as PlantingLog);
@@ -167,7 +191,6 @@ export default function DashboardPage() {
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
 
-        // Fetch Harvesting Logs for Crop Yield Overview
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
         const hLogs = harvestingLogsSnapshot.docs.map(doc => doc.data() as HarvestingLog);
@@ -181,7 +204,6 @@ export default function DashboardPage() {
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
 
-        // Fetch Task Logs for Upcoming Tasks
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
         setUpcomingTasks(tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TaskLog)));
@@ -228,7 +250,7 @@ export default function DashboardPage() {
          <Card className="shadow-lg hover:shadow-xl transition-shadow duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Current Weather (Ottawa)
+              Weather ({weatherLocationDisplay})
             </CardTitle>
             <Icons.Weather className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
