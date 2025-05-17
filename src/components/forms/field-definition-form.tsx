@@ -24,14 +24,23 @@ const fieldDefinitionSchema = z.object({
     z.number({invalid_type_error: "Field size must be a number"}).positive("Field size must be positive.").optional()
   ),
   fieldSizeUnit: z.enum(areaUnits).optional(),
-  latitude: z.preprocess(
-    (val) => (val === "" || val === undefined || val === null ? undefined : parseFloat(String(val))),
-    z.number({invalid_type_error: "Latitude must be a number."}).min(-90, "Latitude must be between -90 and 90.").max(90, "Latitude must be between -90 and 90.").optional().nullable()
-  ),
-  longitude: z.preprocess(
-    (val) => (val === "" || val === undefined || val === null ? undefined : parseFloat(String(val))),
-    z.number({invalid_type_error: "Longitude must be a number."}).min(-180, "Longitude must be between -180 and 180.").max(180, "Longitude must be between -180 and 180.").optional().nullable()
-  ),
+  geojsonBoundary: z.string().optional().refine((data) => {
+    if (!data || data.trim() === "") return true; // Optional field
+    try {
+      JSON.parse(data);
+      // Basic check, could be more thorough for GeoJSON structure
+      // For example, check if it's an object with a 'type' and 'coordinates'
+      const parsed = JSON.parse(data);
+      if (typeof parsed !== 'object' || parsed === null) return false;
+      if (!parsed.type || !parsed.coordinates) {
+        // A more specific check might be needed depending on allowed GeoJSON types
+        // For now, just ensuring it parses and has common GeoJSON top-level keys
+      }
+    } catch (e) {
+      return false;
+    }
+    return true;
+  }, { message: "Must be valid GeoJSON string or empty." }),
   notes: z.string().optional(),
 }).refine(data => (data.fieldSize !== undefined && data.fieldSize !== null) ? data.fieldSizeUnit !== undefined : true, {
   message: "Unit is required if field size is provided.",
@@ -55,15 +64,12 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       fieldName: "",
       notes: "",
       fieldSize: undefined,
-      fieldSizeUnit: preferredAreaUnit, // Initialize with preferred unit
-      latitude: null,
-      longitude: null,
+      fieldSizeUnit: preferredAreaUnit,
+      geojsonBoundary: "",
     },
   });
 
   useEffect(() => {
-    // If the user's preferred area unit changes and the form field hasn't been touched by the user,
-    // update the form's default.
     if (user?.settings?.preferredAreaUnit && !form.formState.dirtyFields.fieldSizeUnit) {
       form.setValue("fieldSizeUnit", user.settings.preferredAreaUnit, { shouldValidate: true });
     }
@@ -81,18 +87,24 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
     }
     setIsSubmitting(true);
     try {
-      const fieldData = {
+      const fieldData: any = { // Use 'any' temporarily for conditional properties
         fieldName: values.fieldName,
-        fieldSize: values.fieldSize,
-        // Ensure fieldSizeUnit is only saved if fieldSize is also provided
-        fieldSizeUnit: (values.fieldSize !== undefined && values.fieldSize !== null) ? values.fieldSizeUnit : undefined,
-        latitude: values.latitude !== undefined && values.latitude !== null ? values.latitude : null,
-        longitude: values.longitude !== undefined && values.longitude !== null ? values.longitude : null,
-        notes: values.notes,
         userId: user.uid, 
         farmId: user.farmId, 
         createdAt: serverTimestamp(),
       };
+
+      if (values.fieldSize !== undefined && values.fieldSize !== null) {
+        fieldData.fieldSize = values.fieldSize;
+        fieldData.fieldSizeUnit = values.fieldSizeUnit;
+      }
+      if (values.geojsonBoundary && values.geojsonBoundary.trim() !== "") {
+        fieldData.geojsonBoundary = values.geojsonBoundary;
+      }
+       if (values.notes && values.notes.trim() !== "") {
+        fieldData.notes = values.notes;
+      }
+
       await addDoc(collection(db, "fields"), fieldData);
       toast({
         title: "Field Definition Saved",
@@ -102,8 +114,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
         fieldName: "", 
         fieldSize: undefined, 
         fieldSizeUnit: preferredAreaUnit, 
-        latitude: null,
-        longitude: null,
+        geojsonBoundary: "",
         notes: "" 
       });
       if (onLogSaved) {
@@ -159,8 +170,6 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
                   <FormLabel>Unit</FormLabel>
                   <Select 
                     onValueChange={field.onChange} 
-                    // Use form.watch to ensure the Select reflects the current form value,
-                    // which will be the preferredAreaUnit on initial load/reset due to defaultValues and useEffect.
                     value={form.watch('fieldSizeUnit') || preferredAreaUnit} 
                   >
                      <FormControl>
@@ -178,36 +187,28 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
               )}
             />
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-           <FormField
-            control={form.control}
-            name="latitude"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Latitude (Optional)</FormLabel>
-                <FormControl>
-                  <Input type="number" step="any" placeholder="e.g., 45.4215" {...field} value={field.value ?? ''} />
-                </FormControl>
-                <FormDescription>For map marker placement.</FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="longitude"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Longitude (Optional)</FormLabel>
-                <FormControl>
-                  <Input type="number" step="any" placeholder="e.g., -75.6972" {...field} value={field.value ?? ''} />
-                </FormControl>
-                <FormDescription>For map marker placement.</FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+        
+        <FormField
+          control={form.control}
+          name="geojsonBoundary"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>GeoJSON Boundary Data (Optional)</FormLabel>
+              <FormControl>
+                <Textarea
+                  placeholder='Paste GeoJSON Polygon coordinates here. e.g., {"type":"Polygon","coordinates":[[[...]]]}'
+                  className="resize-y min-h-[120px] font-mono text-xs"
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>
+                Provide boundary data as a GeoJSON string. For advanced users or data import. Drawing tools coming soon.
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         <FormField
           control={form.control}
           name="notes"
@@ -240,6 +241,4 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
     </Form>
   );
 }
-    
-
     

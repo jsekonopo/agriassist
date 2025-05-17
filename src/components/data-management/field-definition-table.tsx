@@ -25,8 +25,7 @@ interface FieldDefinitionLog {
   fieldName: string;
   fieldSize?: number;
   fieldSizeUnit?: string; 
-  latitude?: number | null;
-  longitude?: number | null;
+  geojsonBoundary?: string; // Added
   notes?: string;
   createdAt?: Timestamp | Date; 
   farmId: string;
@@ -186,8 +185,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
           <TableRow>
             <TableHead className="min-w-[150px]">Field Name</TableHead>
             <TableHead className="min-w-[120px]">Size ({preferredAreaUnit})</TableHead>
-            <TableHead className="min-w-[100px]">Latitude</TableHead>
-            <TableHead className="min-w-[100px]">Longitude</TableHead>
+            <TableHead className="min-w-[120px]">Boundary Data</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
             {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
@@ -197,8 +195,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
             <TableRow key={log.id}>
               <TableCell className="font-medium">{log.fieldName}</TableCell>
               <TableCell>{formatFieldSize(log.fieldSize, log.fieldSizeUnit, preferredAreaUnit)}</TableCell>
-              <TableCell>{log.latitude !== undefined && log.latitude !== null ? log.latitude.toFixed(4) : "N/A"}</TableCell>
-              <TableCell>{log.longitude !== undefined && log.longitude !== null ? log.longitude.toFixed(4) : "N/A"}</TableCell>
+              <TableCell>{log.geojsonBoundary && log.geojsonBoundary.trim() !== "" ? "Yes" : "No"}</TableCell>
               <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
               {canUserDelete && (
                 <TableCell className="text-right">
@@ -214,5 +211,4 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     </div>
   );
 }
-
     

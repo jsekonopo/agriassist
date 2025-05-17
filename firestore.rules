@@ -23,7 +23,7 @@ service cloud.firestore {
 
     function isOwnerOfFarm(farmId, userId) {
       let farmDocData = getFarmData(farmId);
-      return isAuthenticated() && userId != null && farmDocData != null && farmDocData.ownerId == userId;
+      return userId != null && farmDocData != null && farmDocData.ownerId == userId;
     }
     
     function hasRoleOnFarm(userId, currentFarmId, targetRole) {
@@ -35,23 +35,23 @@ service cloud.firestore {
                userData.roleOnCurrentFarm == targetRole;
     }
     
-    function isAdminOnFarm(currentFarmId) { // Checks for the requesting user
+    function isAdminOnFarm(currentFarmId) { // Implicitly for request.auth.uid
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'admin');
     }
 
-    function isEditorOnFarm(currentFarmId) { // Checks for the requesting user
+    function isEditorOnFarm(currentFarmId) { // Implicitly for request.auth.uid
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'editor');
     }
     
-    function isViewerOnFarm(currentFarmId) { // Checks for the requesting user
+    function isViewerOnFarm(currentFarmId) { // Implicitly for request.auth.uid
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'viewer');
     }
-
+    
     function hasGeneralAccessToFarm(userId, currentFarmId) {
         let authUserData = getAuthenticatedUserData(); 
         return isAuthenticated() &&
                authUserData != null &&
-               authUserData.uid == userId &&
+               authUserData.uid == userId && // Ensure we are checking for the authenticated user
                authUserData.farmId == currentFarmId && 
                (isOwnerOfFarm(currentFarmId, userId) || 
                 isAdminOnFarm(currentFarmId) || 
@@ -60,16 +60,15 @@ service cloud.firestore {
     }
 
     function isAssociatedWithAndHasAccessToDocFarm(docFarmId, userId) {
-      let authUserData = getAuthenticatedUserData();
-      return isAuthenticated() && 
-             authUserData != null &&
-             authUserData.farmId == docFarmId && 
+      return isAuthenticated() &&
+             getAuthenticatedUserData() != null &&
+             getAuthenticatedUserData().farmId == docFarmId &&
              hasGeneralAccessToFarm(userId, docFarmId);
     }
     
     function newDocFarmIdMatchesUserCurrentFarm(userId) {
       let authUserData = getAuthenticatedUserData();
-      return isAuthenticated() && 
+      return isAuthenticated() &&
              authUserData != null &&
              request.resource.data.farmId == authUserData.farmId;
     }
@@ -116,24 +115,25 @@ service cloud.firestore {
              (isOwnerOfFarm(docFarmId, request.auth.uid) || isAdminOnFarm(docFarmId) || isEditorOnFarm(docFarmId));
     }
     function canUpdateFarmSpecificDoc(docFarmId) {
-      return isAssociatedWithAndHasAccessToDocFarm(docFarmId, request.auth.uid) &&
-             request.resource.data.farmId == resource.data.farmId && 
-             (isOwnerOfFarm(docFarmId, request.auth.uid) || isAdminOnFarm(docFarmId) || isEditorOnFarm(docFarmId));
+      // For update, check against existing resource's farmId
+      let existingDoc = resource.data;
+      return isAssociatedWithAndHasAccessToDocFarm(existingDoc.farmId, request.auth.uid) &&
+             request.resource.data.farmId == existingDoc.farmId && // FarmId of doc cannot change
+             (isOwnerOfFarm(existingDoc.farmId, request.auth.uid) || isAdminOnFarm(existingDoc.farmId) || isEditorOnFarm(existingDoc.farmId));
     }
     function canDeleteFarmSpecificDoc(docFarmId) {
       return isAssociatedWithAndHasAccessToDocFarm(docFarmId, request.auth.uid) &&
              (isOwnerOfFarm(docFarmId, request.auth.uid) || isAdminOnFarm(docFarmId));
     }
 
+    // Applying generic rules to each collection
     match /fields/{docId} {
       allow list: if isAuthenticated();
       allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      // Allow latitude and longitude to be written on create and update
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId) &&
-                      request.resource.data.keys().hasAll(['fieldName', 'farmId', 'userId', 'createdAt']) &&
-                      request.resource.data.keys().hasOnly(['fieldName', 'farmId', 'userId', 'createdAt', 'fieldSize', 'fieldSizeUnit', 'latitude', 'longitude', 'notes']);
+      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+      // For update, ensure the 'geojsonBoundary' field is among the allowed updatable fields
       allow update: if canUpdateFarmSpecificDoc(resource.data.farmId) &&
-                      request.resource.data.keys().hasOnly(['fieldName', 'fieldSize', 'fieldSizeUnit', 'latitude', 'longitude', 'notes', 'updatedAt']); // farmId, userId, createdAt should not change
+                      request.resource.data.keys().hasOnly(['fieldName', 'fieldSize', 'fieldSizeUnit', 'notes', 'geojsonBoundary', 'farmId', 'userId', 'createdAt', 'updatedAt']);
       allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
     }
     match /plantingLogs/{docId} {
@@ -213,7 +213,7 @@ service cloud.firestore {
       allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
       allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
     }
-    match /livestockAnimals/{docId} {
+     match /livestockAnimals/{docId} {
       allow list: if isAuthenticated();
       allow read: if canReadFarmSpecificDoc(resource.data.farmId);
       allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
@@ -249,20 +249,20 @@ service cloud.firestore {
       allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
     }
 
+
     // Pending Invitations Collection (/pendingInvitations/{invitationId})
     match /pendingInvitations/{invitationId} {
       allow create: if isAuthenticated() &&
-                      (isOwnerOfFarm(request.resource.data.inviterFarmId, request.auth.uid) || isAdminOnFarm(request.resource.data.inviterFarmId) ) &&
+                      (isOwnerOf(request.resource.data.inviterFarmId, request.auth.uid) || isAdminOnFarm(request.resource.data.inviterFarmId) ) &&
                       request.resource.data.inviterUid == request.auth.uid;
       allow read: if isAuthenticated() && authenticatedUserData() != null &&
                     ( (resource.data.invitedUserUid == request.auth.uid && resource.data.status == 'pending') ||
                       (resource.data.invitedEmail.lower() == authenticatedUserData().email.lower() && resource.data.status == 'pending') || 
-                      ( (isOwnerOfFarm(resource.data.inviterFarmId, request.auth.uid) || isAdminOnFarm(resource.data.inviterFarmId)) && resource.data.inviterUid == request.auth.uid) );
+                      ( (isOwnerOf(resource.data.inviterFarmId, request.auth.uid) || isAdminOnFarm(resource.data.inviterFarmId)) && resource.data.inviterUid == request.auth.uid) );
       allow update: if false; 
       allow delete: if false; 
       allow list: if isAuthenticated();
     }
   }
 }
-
     
