@@ -15,7 +15,7 @@ import { useAuth, type UserRole, type PreferredAreaUnit } from '@/contexts/auth-
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
-import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow"; // Corrected import
+import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
 import { useToast } from "@/hooks/use-toast";
 
 interface WeatherData {
@@ -95,7 +95,7 @@ const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
 const rolesThatCanAddData: UserRole[] = [...ownerRoles, 'admin', 'editor'];
 
 export default function DashboardPage() {
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, isLoading: authLoading, makeApiRequest } = useAuth(); // Added makeApiRequest
   const { toast } = useToast();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
@@ -121,9 +121,9 @@ export default function DashboardPage() {
       setWeatherLoading(true);
       let lat = 45.4215; 
       let lon = -75.6972; 
-      let locationName = "Ottawa (Default)"; 
+      let locationName = "Current Weather (Ottawa - Default)"; 
 
-      if (user?.farmId && user?.isFarmOwner) { // Check if farm owner to use farm-specific location
+      if (user?.farmId) { 
         const farmDocRef = doc(db, "farms", user.farmId);
         const farmDocSnap = await getDoc(farmDocRef);
         if (farmDocSnap.exists()) {
@@ -131,13 +131,11 @@ export default function DashboardPage() {
           if (typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
             lat = farmData.latitude;
             lon = farmData.longitude;
-            locationName = `${farmData.farmName || 'Your Farm'} (Custom Location)`;
+            locationName = `Current Weather (${farmData.farmName || 'Your Farm Location'})`;
           } else if (farmData.farmName) {
-            locationName = `${farmData.farmName} (Defaulting to Ottawa)`;
+            locationName = `Current Weather (${farmData.farmName} - Using Ottawa Default)`;
           }
         }
-      } else if (user?.farmName) { // For staff, use farmName if available, but default to Ottawa for coords
-         locationName = `${user.farmName} (Defaulting to Ottawa)`;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -165,7 +163,7 @@ export default function DashboardPage() {
     if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user?.farmId, user?.farmName, user?.isFarmOwner]); // Re-fetch if farmId, farmName or owner status changes
+  }, [user?.farmId, user?.farmLatitude, user?.farmLongitude]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -240,8 +238,8 @@ export default function DashboardPage() {
   }, [user, authLoading, preferredAreaUnit]);
 
   const handleGetProactiveInsights = useCallback(async () => {
-    if (!user?.farmId) {
-      toast({ title: "Error", description: "Farm ID is missing. Cannot fetch insights.", variant: "destructive" });
+    if (!user?.farmId || !user.uid) { // Added user.uid check
+      toast({ title: "Error", description: "Farm ID or User ID is missing. Cannot fetch insights.", variant: "destructive" });
       return;
     }
     setIsLoadingInsights(true);
@@ -250,13 +248,37 @@ export default function DashboardPage() {
       const insights = await proactiveFarmInsights({ farmId: user.farmId });
       setProactiveInsights(insights);
       toast({ title: "Insights Generated", description: "Proactive insights for your farm are ready." });
+
+      // Trigger notification if insights are significant
+      if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
+        const notificationTitle = "New Proactive Farm Insight Available";
+        let notificationMessage = "The AI Farm Expert has generated new insights for your farm. ";
+        if (insights.identifiedOpportunities) notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,100)}... `;
+        if (insights.identifiedRisks) notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,100)}...`;
+        
+        try {
+          await makeApiRequest('/api/notifications/create', {
+            userId: user.uid, // Notification is for the current user
+            farmId: user.farmId,
+            type: 'ai_insight',
+            title: notificationTitle,
+            message: notificationMessage.trim(),
+            link: '/dashboard' // Link back to the dashboard where insights are shown
+          });
+          toast({ title: "Notification Created", description: "An in-app notification for the new insight has been created."});
+        } catch (notifError) {
+          console.error("Error creating notification for AI insight:", notifError);
+          toast({ title: "Notification Error", description: "Could not create a notification for the new insight.", variant: "destructive"});
+        }
+      }
+
     } catch (error) {
       console.error("Error fetching proactive insights:", error);
       toast({ title: "Error", description: "Could not fetch proactive insights. Please try again.", variant: "destructive" });
     } finally {
       setIsLoadingInsights(false);
     }
-  }, [user?.farmId, toast]);
+  }, [user?.farmId, user?.uid, toast, makeApiRequest]); // Added user.uid and makeApiRequest
 
 
   return (
@@ -534,6 +556,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
-
-    
