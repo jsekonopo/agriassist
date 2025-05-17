@@ -125,6 +125,15 @@ export default function DashboardPage() {
   const triggerWeatherAlertNotification = useCallback(async (alertTitle: string, alertMessage: string) => {
     if (!user || !user.farmId || !user.uid) return;
     try {
+      // Simple check: don't send same type of alert too often
+      const lastAlertKey = `lastWeatherAlert_${alertTitle.replace(/\s+/g, '_')}`;
+      const lastAlertTime = localStorage.getItem(lastAlertKey);
+      const now = Date.now();
+      if (lastAlertTime && (now - parseInt(lastAlertTime) < 6 * 60 * 60 * 1000)) { // e.g., 6 hours cooldown
+        console.log("Weather alert cooldown active for:", alertTitle);
+        return;
+      }
+
       await makeApiRequest('/api/notifications/create', {
         userId: user.uid,
         farmId: user.farmId,
@@ -134,6 +143,7 @@ export default function DashboardPage() {
         link: '/dashboard' 
       });
       toast({ title: alertTitle, description: `${alertMessage} A notification has been sent.`, variant: "default" });
+      localStorage.setItem(lastAlertKey, now.toString());
     } catch (error) {
       console.error("Error creating weather alert notification:", error);
       // Toast already shown by makeApiRequest or handled more globally
@@ -143,18 +153,11 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
-      let lat: number | null | undefined = user?.farmLatitude;
-      let lon: number | null | undefined = user?.farmLongitude;
-      let locationName = "Current Weather";
+      let lat: number | null | undefined = null;
+      let lon: number | null | undefined = null;
+      let locationName = "Current Weather (Ottawa - Default)"; // Default
 
-      // If user context already has farm lat/lon (fetched from farms doc by AuthContext)
-      if (user?.farmLatitude != null && user?.farmLongitude != null) {
-        lat = user.farmLatitude;
-        lon = user.farmLongitude;
-        locationName = `Weather for ${user.farmName || 'Your Farm Location'}`;
-      } else if (user?.farmId) { // If no specific lat/lon on user object, but they have a farmId
-        // Attempt to fetch from farm document if not already loaded on user object
-        // This path might be redundant if AuthContext always populates farmLat/Lon on user
+      if (user?.farmId) {
         try {
             const farmDocRef = doc(db, "farms", user.farmId);
             const farmDocSnap = await getDoc(farmDocRef);
@@ -163,22 +166,23 @@ export default function DashboardPage() {
                 if (farmData.latitude != null && farmData.longitude != null) {
                     lat = farmData.latitude;
                     lon = farmData.longitude;
-                    locationName = `Weather for ${farmData.farmName || 'Your Farm Location'}`;
+                    locationName = `Weather for ${farmData.farmName || 'Your Farm'}`;
                 } else {
-                     locationName = `Current Weather (${user.farmName || 'Farm'} - Default Location)`;
-                     lat = 45.4215; lon = -75.6972; // Ottawa default
+                     locationName = `Current Weather (${farmData.farmName || 'Your Farm'} - Default Location)`;
+                     lat = 45.4215; lon = -75.6972; // Ottawa default if no farm coords
                 }
             } else {
-                 locationName = `Current Weather (${user.farmName || 'Farm'} - Default Location)`;
-                 lat = 45.4215; lon = -75.6972; // Ottawa default
+                // Farm doc doesn't exist, which is unexpected if user.farmId is set.
+                // This path might indicate a data consistency issue.
+                console.warn(`Farm document ${user.farmId} not found. Defaulting weather.`);
+                lat = 45.4215; lon = -75.6972; 
             }
         } catch (e) {
             console.error("Error fetching farm doc for weather location:", e);
-            locationName = `Current Weather (${user.farmName || 'Farm'} - Default Location)`;
-            lat = 45.4215; lon = -75.6972; // Ottawa default
+            lat = 45.4215; lon = -75.6972; 
         }
-      } else { 
-        locationName = "Current Weather (Ottawa - Default)";
+      } else {
+        // No farmId, use absolute default
         lat = 45.4215; lon = -75.6972;
       }
       setWeatherLocationDisplay(locationName);
@@ -219,10 +223,10 @@ export default function DashboardPage() {
         setWeatherLoading(false);
       }
     }
-    if (user !== undefined) { // Ensure user object is resolved (not null or undefined initially)
+    if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user, triggerWeatherAlertNotification]); // Re-fetch if user (and thus farmLat/Lon) changes
+  }, [user, triggerWeatherAlertNotification]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -268,7 +272,7 @@ export default function DashboardPage() {
         const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog);
         const uniqueCrops = new Set(pLogs.map(log => log.cropName));
         setActiveCropsCount(uniqueCrops.size);
-        setNextHarvestCrop(pLogs[0]?.cropName || "N/A"); // Simplistic: next harvest is just the latest planted crop
+        setNextHarvestCrop(pLogs[0]?.cropName || "N/A"); 
 
         // Fetch Harvesting Logs
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
@@ -279,7 +283,7 @@ export default function DashboardPage() {
           if (log.cropName && typeof log.yieldAmount === 'number') {
             if (!yields[log.cropName]) yields[log.cropName] = { total: 0, unit: log.yieldUnit };
             yields[log.cropName].total += log.yieldAmount;
-            if (!yields[log.cropName].unit && log.yieldUnit) yields[log.cropName].unit = log.yieldUnit; // Take first unit encountered for that crop
+            if (!yields[log.cropName].unit && log.yieldUnit) yields[log.cropName].unit = log.yieldUnit; 
           }
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
@@ -300,14 +304,13 @@ export default function DashboardPage() {
   }, [user, authLoading, preferredAreaUnit, toast]);
 
   useEffect(() => {
-    // Trigger onboarding modal if user exists, not loading, and onboarding isn't complete
     if (user && !authLoading && user.onboardingCompleted === false) {
       setShowOnboardingModal(true);
     }
   }, [user, authLoading]);
 
   const handleCompleteOnboarding = async () => {
-    await markOnboardingComplete(); // This function is from AuthContext
+    await markOnboardingComplete(); 
     setShowOnboardingModal(false); 
   };
 
@@ -324,7 +327,6 @@ export default function DashboardPage() {
       setProactiveInsights(insights);
       toast({ title: "Insights Generated", description: "Proactive insights for your farm are ready." });
 
-      // Create an in-app notification for the new insight
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
         let notificationTitle = "AI Farm Alert";
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
@@ -352,7 +354,6 @@ export default function DashboardPage() {
           toast({ title: "Notification Logged", description: "An in-app notification for the new insight has been created."});
         } catch (notifError) {
           console.error("Error creating notification for AI insight:", notifError);
-          // Toast for this specific error already handled by makeApiRequest
         }
       }
 
@@ -385,7 +386,6 @@ export default function DashboardPage() {
           message = `The task "${task.taskName || 'Unnamed Task'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
         } else if (isPast(dueDate) && differenceInDays(today, dueDate) <= 7 && task.status !== "Done") { 
-          // Example: Remind for tasks overdue by up to 7 days
           title = `Task Overdue: "${task.taskName}"`;
           message = `The task "${task.taskName || 'Unnamed Task'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
@@ -393,9 +393,6 @@ export default function DashboardPage() {
         
         if (shouldNotify && title && message) {
           try {
-            // To prevent duplicate notifications for the same task on the same day/period,
-            // a more robust system would check if a reminder was recently sent for this task.
-            // For simplicity, this version might send a notification each time the button is clicked if conditions are met.
             await makeApiRequest('/api/notifications/create', {
               userId: user.uid,
               farmId: user.farmId,
@@ -407,7 +404,6 @@ export default function DashboardPage() {
             remindersSentCount++;
           } catch (error) {
             console.error(`Failed to create reminder for task ${task.id}:`, error);
-            // Error already toasted by makeApiRequest
           }
         }
       }
@@ -421,14 +417,14 @@ export default function DashboardPage() {
   }, [user, upcomingTasks, makeApiRequest, toast]);
 
 
-  if (authLoading && !user) { // Show full page skeleton if initial auth is still loading
+  if (authLoading && !user) { 
     return (
         <div className="space-y-6">
             <PageHeader title="Farm Dashboard" description="Loading your farm's overview..." icon={Icons.Dashboard}/>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-[120px] rounded-lg" />)}
             </div>
-            <div className="grid gap-6 lg:grid-cols-3">
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                 <Skeleton className="lg:col-span-2 h-[350px] rounded-lg" />
                 <Skeleton className="h-[350px] rounded-lg" />
             </div>
@@ -446,7 +442,7 @@ export default function DashboardPage() {
         icon={Icons.Dashboard}
       />
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <DashboardStatsCard
           title="Total Acreage"
           value={dataLoading || authLoading ? undefined : (totalAcreage !== undefined ? totalAcreage : "N/A")}
@@ -461,7 +457,7 @@ export default function DashboardPage() {
           isLoading={dataLoading || authLoading}
         />
         <DashboardStatsCard
-          title="Next Planned Harvest" // This is a simplification, actual next harvest depends on more factors
+          title="Next Planned Harvest" 
           value={dataLoading || authLoading ? undefined : (nextHarvestCrop || "N/A")}
           icon={Icons.Harvesting}
           isLoading={dataLoading || authLoading}
@@ -565,7 +561,7 @@ export default function DashboardPage() {
 
       <Card className="shadow-lg">
         <CardHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
             <div>
               <CardTitle>Upcoming Tasks</CardTitle>
               <CardDescription>Key activities for your farm. Click button to generate reminders for due/overdue tasks.</CardDescription>
@@ -667,7 +663,7 @@ export default function DashboardPage() {
             <CardHeader>
                 <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-4">
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {canUserAddData ? (
                 <>
                   <Button variant="outline" asChild className="h-auto py-3">
@@ -690,7 +686,7 @@ export default function DashboardPage() {
                   </Button>
                 </>
               ) : (
-                <p className="text-sm text-muted-foreground col-span-2 text-center">Data entry actions are restricted for your role.</p>
+                <p className="text-sm text-muted-foreground col-span-1 sm:col-span-2 text-center">Data entry actions are restricted for your role.</p>
               )}
                <Button variant="outline" asChild className="h-auto py-3">
                     <Link href="/ai-expert" className="flex flex-col items-center gap-1">

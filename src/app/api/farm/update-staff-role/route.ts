@@ -2,12 +2,12 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
-import type { StaffRole, StaffMemberInFarmDoc } from '@/contexts/auth-context';
+import type { StaffRole, StaffMemberInFarmDoc, User } from '@/contexts/auth-context';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { staffUidToUpdate, newRole } = body as { staffUidToUpdate: string, newRole: StaffRole };
+    const body = await request.json() as { staffUidToUpdate: string, newRole: StaffRole };
+    const { staffUidToUpdate, newRole } = body;
     const idToken = request.headers.get('Authorization')?.split('Bearer ')[1];
 
     if (!idToken) {
@@ -30,14 +30,14 @@ export async function POST(request: NextRequest) {
     }
     const requesterUid = decodedToken.uid;
 
-    const requesterUserDoc = await adminDb.collection('users').doc(requesterUid).get();
-    if (!requesterUserDoc.exists || !requesterUserDoc.data()?.farmId) {
+    const requesterUserDocSnap = await adminDb.collection('users').doc(requesterUid).get();
+    if (!requesterUserDocSnap.exists || !requesterUserDocSnap.data()?.farmId) {
       return NextResponse.json({ success: false, message: 'Requester not associated with a farm.' }, { status: 403 });
     }
-    const farmId = requesterUserDoc.data()?.farmId;
-    const requesterRole = requesterUserDoc.data()?.roleOnCurrentFarm;
-    const isRequesterOwner = requesterUserDoc.data()?.isFarmOwner;
-
+    const requesterUserData = requesterUserDocSnap.data() as User;
+    const farmId = requesterUserData.farmId!; // farmId must exist at this point based on check
+    const requesterRole = requesterUserData.roleOnCurrentFarm;
+    const isRequesterOwner = requesterUserData.isFarmOwner;
 
     const farmDocRef = adminDb.collection('farms').doc(farmId);
     const farmDocSnap = await farmDocRef.get();
@@ -47,22 +47,15 @@ export async function POST(request: NextRequest) {
     }
     const farmData = farmDocSnap.data()!;
 
-    // Permission checks
+    // Permission Check: Only Owner or Admin of the farm can update roles
     if (!isRequesterOwner && requesterRole !== 'admin') {
         return NextResponse.json({ success: false, message: 'Unauthorized: Only owners or admins can update staff roles.' }, { status: 403 });
     }
+    // Farm owner check is also part of isRequesterOwner
+
     if (farmData.ownerId === staffUidToUpdate) {
         return NextResponse.json({ success: false, message: 'Cannot change the role of the farm owner.'}, { status: 400 });
     }
-    if (requesterRole === 'admin' && farmData.ownerId !== requesterUid && newRole === 'admin') {
-        // An admin cannot promote others to admin or change another admin's role (unless we allow it)
-        // For now, let's say an admin cannot create other admins or demote/change other admins.
-        const targetStaffCurrentRole = (farmData.staff as StaffMemberInFarmDoc[]).find(s => s.uid === staffUidToUpdate)?.role;
-        if (targetStaffCurrentRole === 'admin') {
-             return NextResponse.json({ success: false, message: 'Admins cannot modify other admins roles.' }, { status: 403 });
-        }
-    }
-
 
     const currentStaffArray = (farmData.staff || []) as StaffMemberInFarmDoc[];
     const staffIndex = currentStaffArray.findIndex(s => s.uid === staffUidToUpdate);
@@ -70,6 +63,21 @@ export async function POST(request: NextRequest) {
     if (staffIndex === -1) {
       return NextResponse.json({ success: false, message: 'Staff member not found on this farm.' }, { status: 404 });
     }
+    
+    const staffToUpdateCurrentRole = currentStaffArray[staffIndex].role;
+
+    // Admin Permission Logic:
+    // - An admin cannot change the role of another admin.
+    // - An admin cannot promote anyone to 'admin'.
+    if (requesterRole === 'admin') { // and not owner
+        if (staffToUpdateCurrentRole === 'admin') {
+            return NextResponse.json({ success: false, message: 'Admins cannot modify the role of other admins.' }, { status: 403 });
+        }
+        if (newRole === 'admin') {
+            return NextResponse.json({ success: false, message: 'Admins cannot promote other staff to an admin role.' }, { status: 403 });
+        }
+    }
+    // Owners have full permission to change any staff role on their farm.
 
     const updatedStaffArray = [...currentStaffArray];
     updatedStaffArray[staffIndex] = { ...updatedStaffArray[staffIndex], role: newRole };
@@ -82,7 +90,7 @@ export async function POST(request: NextRequest) {
 
     await batch.commit();
 
-    return NextResponse.json({ success: true, message: `Staff member ${staffUidToUpdate}'s role updated to ${newRole}.` });
+    return NextResponse.json({ success: true, message: `Staff member's role updated to ${newRole}.` });
 
   } catch (error) {
     console.error('Error in /api/farm/update-staff-role:', error);
@@ -90,5 +98,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }
-
-    

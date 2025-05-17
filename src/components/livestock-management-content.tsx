@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Icons } from "./icons"; 
@@ -12,10 +12,10 @@ import { AddHealthRecordForm } from "./forms/add-health-record-form";
 import { HealthRecordsTable } from "./data-management/health-records-table";
 import { AddBreedingRecordForm } from "./forms/add-breeding-record-form";
 import { BreedingRecordsTable } from "./data-management/breeding-records-table";
-import { AddFeedLogForm } from "./forms/add-feed-log-form"; // New
-import { FeedLogTable } from "./data-management/feed-log-table"; // New
-import { AddWeightLogForm } from "./forms/add-weight-log-form"; // New
-import { WeightLogTable } from "./data-management/weight-log-table"; // New
+import { AddFeedLogForm } from "./forms/add-feed-log-form"; 
+import { FeedLogTable } from "./data-management/feed-log-table"; 
+import { AddWeightLogForm } from "./forms/add-weight-log-form"; 
+import { WeightLogTable } from "./data-management/weight-log-table"; 
 import { Separator } from "@/components/ui/separator";
 import { useAuth, type UserRole } from "@/contexts/auth-context"; 
 
@@ -95,19 +95,19 @@ export function LivestockManagementContent() {
     return tab.requiredRolesForAdd.includes(user.roleOnCurrentFarm);
   };
 
-  const gridColsClass = () => {
+  const gridColsClass = useMemo(() => {
     const count = livestockTabs.length;
-    if (count <= 1) return "grid-cols-1";
-    if (count === 2) return "grid-cols-1 sm:grid-cols-2";
+    if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
     if (count === 3) return "grid-cols-1 sm:grid-cols-3"; 
     if (count === 4) return "grid-cols-2 md:grid-cols-4";
     if (count === 5) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-5";
-    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"; // Default for many tabs
-  };
+    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"; 
+  }, []);
+
 
   return (
     <Tabs defaultValue="registry" className="w-full">
-      <TabsList className={`grid w-full ${gridColsClass()} mb-6 gap-1 h-auto`}>
+      <TabsList className={`grid w-full ${gridColsClass} mb-6 gap-1 h-auto`}>
         {livestockTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value} className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm py-2 px-1 sm:px-3 h-auto min-h-[40px] sm:h-10">
             <tab.icon className="h-4 w-4 flex-shrink-0" />
@@ -135,7 +135,7 @@ export function LivestockManagementContent() {
               )}
               {tab.tableComponent && (
                 <>
-                  {tab.formComponent && <Separator className="my-8" />}
+                  {tab.formComponent && canUserAdd(tab) && <Separator className="my-8" />}
                   <h3 className="text-xl font-semibold mb-4">Logged Entries</h3>
                   <tab.tableComponent refreshTrigger={logRefreshTrigger} onLogDeleted={handleLogSaved} />
                 </>

@@ -18,7 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useState, useEffect, useCallback } from 'react';
 import { Separator } from '@/components/ui/separator';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, collection, query, where, getDocs, Timestamp, or } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, Timestamp, or, orderBy } from 'firebase/firestore';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import {
   AlertDialog,
@@ -36,11 +36,11 @@ const profileFormSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters." }),
   farmName: z.string().min(2, { message: "Farm name must be at least 2 characters." }),
   farmLatitude: z.preprocess(
-    (val) => (val === "" || val === undefined || val === null ? null : parseFloat(String(val))), // Ensure empty string becomes null
+    (val) => (val === "" || val === undefined || val === null ? null : parseFloat(String(val))), 
     z.number({invalid_type_error: "Latitude must be a number."}).min(-90).max(90).optional().nullable()
   ),
   farmLongitude: z.preprocess(
-    (val) => (val === "" || val === undefined || val === null ? null : parseFloat(String(val))), // Ensure empty string becomes null
+    (val) => (val === "" || val === undefined || val === null ? null : parseFloat(String(val))), 
     z.number({invalid_type_error: "Longitude must be a number."}).min(-180).max(180).optional().nullable()
   ),
 });
@@ -133,26 +133,31 @@ export default function ProfilePage() {
     }
     setIsLoadingStaffDetails(true);
     try {
-        const farmDocRef = doc(db, "farms", user.farmId);
-        const farmDocSnap = await getDoc(farmDocRef);
-        if (farmDocSnap.exists()) {
-            const farmData = farmDocSnap.data();
-            const staffArrayFromFarm = (farmData.staff || []) as StaffMemberInFarmDoc[];
-            
-            const detailsPromises = staffArrayFromFarm
-                .filter(staffMember => staffMember.uid !== user.uid) // Exclude the owner/admin themselves
-                .map(async (staffMember) => {
-                    const staffUserDoc = await getDoc(doc(db, "users", staffMember.uid));
-                    const staffUserData = staffUserDoc.exists() ? staffUserDoc.data() : null;
-                    return {
-                        uid: staffMember.uid,
-                        name: staffUserData?.name || staffMember.uid,
-                        email: staffUserData?.email || 'N/A',
-                        role: staffMember.role
-                    };
-                });
-            const resolvedStaffDetails = await Promise.all(detailsPromises);
-            setStaffDetails(resolvedStaffDetails);
+        // Staff details are now directly on the user object from AuthContext if the current user is an owner
+        if (user.isFarmOwner && user.staffMembers) {
+             setStaffDetails(user.staffMembers.filter(staff => staff.uid !== user.uid)); // Exclude self if listed (should not happen)
+        } else if (user.roleOnCurrentFarm === 'admin') { // Admins might need to see staff, but not edit roles like owner
+             const farmDocRef = doc(db, "farms", user.farmId);
+             const farmDocSnap = await getDoc(farmDocRef);
+             if (farmDocSnap.exists()) {
+                 const farmData = farmDocSnap.data();
+                 const staffArrayFromFarm = (farmData.staff || []) as {uid: string, role: StaffRole}[]; // Using the new staff array structure
+                 
+                 const detailsPromises = staffArrayFromFarm
+                     .filter(staffMember => staffMember.uid !== user.uid) 
+                     .map(async (staffMember) => {
+                         const staffUserDoc = await getDoc(doc(db, "users", staffMember.uid));
+                         const staffUserData = staffUserDoc.exists() ? staffUserDoc.data() : null;
+                         return {
+                             uid: staffMember.uid,
+                             name: staffUserData?.name || staffMember.uid,
+                             email: staffUserData?.email || 'N/A',
+                             role: staffMember.role
+                         };
+                     });
+                 const resolvedStaffDetails = await Promise.all(detailsPromises);
+                 setStaffDetails(resolvedStaffDetails);
+             } else { setStaffDetails([]); }
         } else {
             setStaffDetails([]);
         }
@@ -163,12 +168,12 @@ export default function ProfilePage() {
     } finally {
         setIsLoadingStaffDetails(false);
     }
-  }, [user?.farmId, user?.isFarmOwner, user?.roleOnCurrentFarm, user?.uid, toast]); 
+  }, [user, toast]); 
 
   useEffect(() => {
-    if (user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin') { fetchStaffDetails(); } 
+    if (user?.farmId && (user.isFarmOwner || user.roleOnCurrentFarm === 'admin')) { fetchStaffDetails(); } 
     else { setStaffDetails([]); }
-  }, [user?.isFarmOwner, user?.roleOnCurrentFarm, fetchStaffDetails]);
+  }, [user?.farmId, user?.isFarmOwner, user?.roleOnCurrentFarm, fetchStaffDetails]);
 
 
   const fetchMyPendingInvitations = useCallback(async () => {
@@ -176,10 +181,10 @@ export default function ProfilePage() {
     setIsLoadingMyInvitations(true);
     try {
       const invites: PendingInvitation[] = [];
-      
       const qByEmail = query( collection(db, "pendingInvitations"),
         where("invitedEmail", "==", user.email.toLowerCase()),
-        where("status", "==", "pending")
+        where("status", "==", "pending"),
+        orderBy("createdAt", "desc")
       );
       const emailSnapshot = await getDocs(qByEmail);
       emailSnapshot.docs.forEach(docSnap => {
@@ -192,7 +197,8 @@ export default function ProfilePage() {
       if (user.uid) {
           const qByUid = query( collection(db, "pendingInvitations"),
             where("invitedUserUid", "==", user.uid),
-            where("status", "==", "pending")
+            where("status", "==", "pending"),
+            orderBy("createdAt", "desc")
           );
           const uidSnapshot = await getDocs(qByUid);
           uidSnapshot.docs.forEach(docSnap => {
@@ -252,9 +258,8 @@ export default function ProfilePage() {
     if (!user || !firebaseUser) return;
     setIsSubmittingProfile(true);
     try {
-      // Ensure null is passed if values are NaN (from parseFloat on empty string)
-      const lat = isNaN(values.farmLatitude as number) ? null : values.farmLatitude;
-      const lon = isNaN(values.farmLongitude as number) ? null : values.farmLongitude;
+      const lat = values.farmLatitude === null || isNaN(values.farmLatitude) ? null : values.farmLatitude;
+      const lon = values.farmLongitude === null || isNaN(values.farmLongitude) ? null : values.farmLongitude;
 
       await updateUserProfile(
         values.name, 
@@ -312,6 +317,7 @@ export default function ProfilePage() {
     if (result.success) { 
         await refreshUserData(); 
         fetchStaffDetails(); 
+        fetchFarmPendingInvitations(); // Also refresh pending in case related
     }
   }
 
@@ -326,12 +332,12 @@ export default function ProfilePage() {
         return;
     }
     
-    if (user.roleOnCurrentFarm === 'admin') {
-        if (staffToUpdate.role === 'admin' || newRole === 'admin') {
-            toast({ title: "Permission Denied", description: "Admins cannot modify other admin roles or promote to admin.", variant: "destructive" });
-            return;
-        }
+    // Admins cannot modify other admin roles or promote to admin
+    if (user.roleOnCurrentFarm === 'admin' && (staffToUpdate.role === 'admin' || newRole === 'admin')) {
+        toast({ title: "Permission Denied", description: "Admins cannot modify other admin roles or promote to admin.", variant: "destructive" });
+        return;
     }
+
 
     const result = await updateStaffRole(staffUid, newRole);
     toast({ title: result.success ? "Role Updated" : "Update Failed", description: result.message, variant: result.success ? "default" : "destructive"});
@@ -346,9 +352,12 @@ export default function ProfilePage() {
     const result = await acceptInvitation(invitationId);
     toast({ title: result.success ? "Invitation Accepted!" : "Acceptance Failed", description: result.message, variant: result.success ? "default" : "destructive" });
     if (result.success) { 
-      await refreshUserData(); 
-      fetchMyPendingInvitations(); 
-      if (user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin') fetchFarmPendingInvitations(); 
+      await refreshUserData(); // This is key to update farmId, roleOnCurrentFarm etc.
+      fetchMyPendingInvitations(); // Refresh this user's pending list
+      // If current user became owner/admin by accepting, they might need to see farm invites
+      if (user?.farmId && (user.isFarmOwner || user.roleOnCurrentFarm === 'admin')) {
+        fetchFarmPendingInvitations(); 
+      }
     }
   }
 
@@ -372,7 +381,6 @@ export default function ProfilePage() {
 
   const canManageStaff = user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin';
   const canManageBilling = user?.isFarmOwner;
-  const isOwner = user?.isFarmOwner;
 
 
   if (authIsLoading || (!user && !authIsLoading)) { 
@@ -393,7 +401,7 @@ export default function ProfilePage() {
       <PageHeader title="User Profile" description="Manage your account, farm, staff, and subscription." icon={Icons.UserCircle}/>
       <Card className="shadow-lg">
         <CardHeader>
-          <div className="flex justify-between items-start">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
             <div>
               <CardTitle>{isEditing ? profileForm.getValues('name') : user.name || 'N/A'}</CardTitle>
               <CardDescription>{user.email || 'No email'}</CardDescription>
@@ -401,7 +409,7 @@ export default function ProfilePage() {
                {user.farmId && <p className="text-xs text-muted-foreground">Farm ID: {user.farmId}</p>}
                <p className="text-sm text-muted-foreground">Role on Farm: <span className="font-medium text-foreground">{userRoleDisplay}</span></p>
             </div>
-            {!isEditing && <Button variant="outline" onClick={() => setIsEditing(true)}><Icons.Edit3 className="mr-2 h-4 w-4" /> Edit Profile</Button>}
+            {!isEditing && <Button variant="outline" onClick={() => setIsEditing(true)} className="mt-2 sm:mt-0"><Icons.Edit3 className="mr-2 h-4 w-4" /> Edit Profile</Button>}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -411,26 +419,22 @@ export default function ProfilePage() {
                 <FormField control={profileForm.control} name="name" render={({ field }) => (
                   <FormItem><FormLabel>Full Name</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
                 )}/>
-                {(user.isFarmOwner || user.roleOnCurrentFarm === 'admin') && ( // Admins can also edit farm name if we decide so, owner for sure
+                {user.isFarmOwner && (
                   <>
                     <FormField control={profileForm.control} name="farmName" render={({ field }) => (
                       <FormItem><FormLabel>Farm Name</FormLabel><FormControl><Input {...field} /></FormControl>
-                      <FormDescription>{user.isFarmOwner ? "Only owners can change farm name." : "Admins can change farm name (if enabled in future)."}</FormDescription><FormMessage /></FormItem>
+                      <FormDescription>Only owners can change the farm name.</FormDescription><FormMessage /></FormItem>
                     )}/>
-                     {user.isFarmOwner && ( // Only owners can set farm location
-                        <>
-                            <h3 className="text-md font-medium pt-2">Farm Location (Optional)</h3>
-                            <p className="text-sm text-muted-foreground">Used for localized weather on dashboard. Leave blank to clear.</p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <FormField control={profileForm.control} name="farmLatitude" render={({ field }) => (
-                                <FormItem><FormLabel>Latitude</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., 45.4215" {...field} value={field.value === null ? '' : field.value} /></FormControl><FormMessage /></FormItem>
-                                )}/>
-                                <FormField control={profileForm.control} name="farmLongitude" render={({ field }) => (
-                                <FormItem><FormLabel>Longitude</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., -75.6972" {...field} value={field.value === null ? '' : field.value} /></FormControl><FormMessage /></FormItem>
-                                )}/>
-                            </div>
-                        </>
-                     )}
+                    <h3 className="text-md font-medium pt-2">Farm Location (Optional)</h3>
+                    <p className="text-sm text-muted-foreground">Used for localized weather on dashboard. Leave blank to clear.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField control={profileForm.control} name="farmLatitude" render={({ field }) => (
+                        <FormItem><FormLabel>Latitude</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., 45.4215" {...field} value={field.value === null ? '' : String(field.value)} /></FormControl><FormMessage /></FormItem>
+                        )}/>
+                        <FormField control={profileForm.control} name="farmLongitude" render={({ field }) => (
+                        <FormItem><FormLabel>Longitude</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., -75.6972" {...field} value={field.value === null ? '' : String(field.value)} /></FormControl><FormMessage /></FormItem>
+                        )}/>
+                    </div>
                   </>
                 )}
                 <div className="flex gap-2">
@@ -486,7 +490,7 @@ export default function ProfilePage() {
                 <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
                   <div><p className="font-medium">To join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p><p className="text-sm text-muted-foreground">Invited by: {invite.inviterName || 'Farm Owner'} (Sent: {invite.createdAt?.toDate().toLocaleDateString()}) {invite.tokenExpiresAt && `Expires: ${invite.tokenExpiresAt.toDate().toLocaleDateString()}`}</p></div>
                   <div className="flex gap-2 mt-2 sm:mt-0 shrink-0">
-                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={(user.farmId === invite.inviterFarmId && !user.isFarmOwner && user.roleOnCurrentFarm !== null) || (user.isFarmOwner && user.farmId !== invite.inviterFarmId && user.farmId !== null)}><Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept</Button>
+                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={(user.farmId === invite.inviterFarmId && user.roleOnCurrentFarm !== null) || (user.isFarmOwner && user.farmId !== invite.inviterFarmId && user.farmId !== null && user.farmId !== undefined)}><Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept</Button>
                     <Button variant="outline" size="sm" onClick={() => handleDeclineInvitation(invite.id)}><Icons.XCircle className="mr-2 h-4 w-4" /> Decline</Button>
                   </div>
                 </li>))}
@@ -537,10 +541,13 @@ export default function ProfilePage() {
                     </div>
                     <div className="flex items-center gap-2 mt-2 sm:mt-0">
                         <Select 
-                            value={staff.role} // Controlled component
+                            value={staff.role} 
                             onValueChange={async (newRole) => {
                                 const roleToUpdate = newRole as StaffRole;
-                                handleUpdateStaffRole(staff.uid, roleToUpdate);
+                                // Confirmation Dialog before updating role
+                                if (window.confirm(`Are you sure you want to change ${staff.name || staff.email}'s role to ${roleToUpdate}?`)) {
+                                  handleUpdateStaffRole(staff.uid, roleToUpdate);
+                                }
                             }}
                             disabled={ staff.uid === user.uid || // Cannot change own role
                                        (user.roleOnCurrentFarm === 'admin' && staff.role === 'admin') // Admin cannot modify another admin
@@ -555,7 +562,7 @@ export default function ProfilePage() {
                                         key={rVal} 
                                         value={rVal} 
                                         className="capitalize text-xs"
-                                        disabled={user.roleOnCurrentFarm === 'admin' && rVal === 'admin'} // Admin cannot promote to admin
+                                        disabled={(user.roleOnCurrentFarm === 'admin' && rVal === 'admin')} // Admin cannot promote to admin
                                     >
                                         {rVal.charAt(0).toUpperCase() + rVal.slice(1)}
                                     </SelectItem>
@@ -591,4 +598,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-

@@ -176,21 +176,23 @@ export function DataManagementContent() {
 
   const handleStartEditField = (fieldId: string) => {
     setEditingFieldId(fieldId);
-    // Potentially switch to the "fields" tab if not already there, or scroll to form
   };
 
   const handleFormActionComplete = () => {
-    setEditingFieldId(null); // Clear editing mode
-    handleLogSaved(); // Refresh table
+    setEditingFieldId(null); 
+    handleLogSaved(); 
   };
   
   const gridColsClass = useMemo(() => {
     const count = dataTabs.length;
-    if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
+    if (count <= 3) return "grid-cols-1 sm:grid-cols-3";
     if (count <= 4) return "grid-cols-2 md:grid-cols-4";
     if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"; 
+    if (count <= 8) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5";
+    // Adjust as needed for more tabs, ensuring readability
     return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6";
   }, []);
+
 
   const canUserAdd = (tab: DataTab): boolean => {
     if (!user || !user.roleOnCurrentFarm) return false;
@@ -199,7 +201,7 @@ export function DataManagementContent() {
   };
 
   return (
-    <Tabs defaultValue={initialTab} className="w-full" onValueChange={() => setEditingFieldId(null)}> {/* Reset editing mode on tab change */}
+    <Tabs defaultValue={initialTab} className="w-full" onValueChange={() => setEditingFieldId(null)}> 
       <TabsList className={`grid w-full ${gridColsClass} mb-6 gap-1 h-auto`}>
         {dataTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value} className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm py-2 px-1 sm:px-3 h-auto min-h-[40px] sm:h-10">
@@ -234,7 +236,7 @@ export function DataManagementContent() {
               )}
               {tab.tableComponent && (
                 <>
-                  <Separator className="my-8" />
+                  {tab.formComponent && canUserAdd(tab) && <Separator className="my-8" />}
                   <h3 className="text-xl font-semibold mb-4">Recorded Entries</h3>
                    {tab.value === "fields" ? (
                     <tab.tableComponent 
