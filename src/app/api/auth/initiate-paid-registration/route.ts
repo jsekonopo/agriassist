@@ -1,12 +1,11 @@
 
 import { type NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
-import { stripe, getURL } from '@/lib/stripe'; // Assuming getURL is for constructing redirect URLs
+import { stripe, getURL } from '@/lib/stripe';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import type { PlanId, SubscriptionStatus, UserSettings, NotificationPreferences } from '@/contexts/auth-context';
+import type { PlanId, SubscriptionStatus, UserSettings, NotificationPreferences, User } from '@/contexts/auth-context';
 
-// Reusable utility function to create a Stripe Checkout Session
-// This can be shared between this new route and the existing upgrade route
+
 async function createStripeCheckoutSession(
     firebaseUID: string, 
     email: string | undefined, 
@@ -26,6 +25,8 @@ async function createStripeCheckoutSession(
         // Update user document with the new Stripe Customer ID immediately
         // This is important if the user doc is already partially created
         const userDocRefForStripeId = adminDb.collection('users').doc(firebaseUID);
+        // Use set with merge:true to ensure document is created if it doesn't exist yet,
+        // or merged if it does (e.g. from the minimal doc creation in initiate-paid-registration)
         await userDocRefForStripeId.set({ stripeCustomerId: stripeCustomerId, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     }
 
@@ -47,15 +48,19 @@ async function createStripeCheckoutSession(
         mode: 'subscription',
         allow_promotion_codes: true,
         subscription_data: {
-            metadata: {
+            metadata: { // Metadata for the subscription object
                 firebaseUID: firebaseUID,
                 planId: planId,
             }
         },
-        // Using client_reference_id to pass Firebase UID for easier retrieval in webhook
-        client_reference_id: firebaseUID, 
-        success_url: `${appBaseUrl}/dashboard?payment_success=true&session_id={CHECKOUT_SESSION_ID}`, // Redirect to dashboard after success
-        cancel_url: `${appBaseUrl}/register?payment_cancelled=true`, // Redirect back to register if cancelled
+        // Metadata for the checkout session object itself
+        metadata: {
+            firebaseUID: firebaseUID, // Redundant but good for access in session object
+            planId: planId,
+        },
+        client_reference_id: firebaseUID, // For linking session back to Firebase UID in webhook
+        success_url: `${appBaseUrl}/pricing?payment_success=true&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${appBaseUrl}/register?payment_cancelled=true`, 
     });
 
     if (!session.id) throw new Error('Failed to create Stripe session ID');
@@ -89,7 +94,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: 'Name and Farm Name are required.' }, { status: 400 });
     }
 
-    // Create a minimal user document first to store initial details and pending status
     const userDocRef = adminDb.collection('users').doc(firebaseUID);
     const defaultNotificationPreferences: NotificationPreferences = {
         taskRemindersEmail: true, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false,
@@ -99,20 +103,21 @@ export async function POST(request: NextRequest) {
         preferredAreaUnit: "acres", preferredWeightUnit: "kg", theme: "system",
     };
 
+    // Create a minimal user document. The webhook will finalize it.
     await userDocRef.set({
         uid: firebaseUID,
         email: userEmail?.toLowerCase(),
         name: name,
-        farmName: farmName, // Store farm name from registration form
+        farmName: farmName, // Store farm name for webhook to use when creating farm doc
         selectedPlanId: planId,
         subscriptionStatus: 'pending_payment' as SubscriptionStatus,
-        isFarmOwner: false, // Will be set to true by webhook after successful payment & farm creation
-        farmId: null, // Will be set by webhook after successful payment & farm creation
+        isFarmOwner: false, // Will be set to true by webhook
+        farmId: null,       // Will be set by webhook
         settings: defaultSettings,
         onboardingCompleted: false,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true }); // Merge true in case a very minimal auth user record exists somehow
+    }, { merge: true }); // Merge true in case Firebase Auth trigger already created a shell user doc
 
     // Now create the Stripe Checkout Session
     const sessionId = await createStripeCheckoutSession(firebaseUID, userEmail, name, planId, null);
@@ -126,7 +131,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Export the utility function if it's also used by the other checkout session route
 export { createStripeCheckoutSession };
 
     

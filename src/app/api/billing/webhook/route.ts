@@ -1,17 +1,18 @@
+
 import { type NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe'; // Your initialized Stripe server-side instance
 import { adminDb } from '@/lib/firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
-import type { PlanId, SubscriptionStatus } from '@/contexts/auth-context';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import type { PlanId, SubscriptionStatus, User } from '@/contexts/auth-context';
 
 const relevantEvents = new Set([
   'checkout.session.completed',
-  'customer.subscription.created', // Good for initial setup if checkout.session.completed metadata is missed
-  'customer.subscription.updated', // Handles upgrades, downgrades, cancellations by user in Stripe portal
-  'customer.subscription.deleted', // Handles cancellations
-  'invoice.paid',                  // Confirms payment for ongoing subscriptions
-  'invoice.payment_failed',        // Handles failed payments
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+  'invoice.paid',
+  'invoice.payment_failed',
 ]);
 
 export async function POST(request: NextRequest) {
@@ -37,35 +38,77 @@ export async function POST(request: NextRequest) {
       switch (event.type) {
         case 'checkout.session.completed': {
           const session = event.data.object as Stripe.Checkout.Session;
+          
+          const firebaseUID = session.client_reference_id || session.metadata?.firebaseUID; // Prefer client_reference_id for new registrations
+          const planIdFromMetadata = session.metadata?.planId as PlanId; // Get planId from session metadata if present
+
+          if (!firebaseUID) {
+            console.error('Webhook Error: Firebase UID not found in session metadata or client_reference_id for checkout.session.completed', session.id);
+            break;
+          }
+          
           if (session.mode === 'subscription' && session.subscription && session.customer) {
             const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
             const customerId = session.customer as string;
-            const firebaseUID = session.metadata?.firebaseUID || subscription.metadata?.firebaseUID; // Get UID from session or subscription
-            const planId = session.metadata?.planId || subscription.metadata?.planId as PlanId; // Get planId
-
-            if (!firebaseUID) {
-                console.error('Webhook Error: Firebase UID not found in session metadata for checkout.session.completed', session.id);
-                break;
-            }
-            if (!planId) {
-                console.error('Webhook Error: Plan ID not found in session metadata for checkout.session.completed', session.id);
-                break;
-            }
-
+            
             const userDocRef = adminDb.collection('users').doc(firebaseUID);
-            await userDocRef.update({
-              stripeCustomerId: customerId,
-              stripeSubscriptionId: subscription.id,
-              selectedPlanId: planId,
-              subscriptionStatus: 'active' as SubscriptionStatus,
-              subscriptionCurrentPeriodEnd: FieldValue.serverTimestamp(), // Or: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
-              updatedAt: FieldValue.serverTimestamp(),
-            });
-            console.log(`Updated user ${firebaseUID} for checkout.session.completed`);
+            const userDocSnap = await userDocRef.get();
+
+            if (!userDocSnap.exists()) {
+                console.error(`Webhook Error: User document for UID ${firebaseUID} not found during checkout.session.completed.`);
+                break;
+            }
+            const userDataFromDb = userDocSnap.data() as User;
+            const planIdToSet = planIdFromMetadata || userDataFromDb.selectedPlanId || 'free'; // Fallback strategy for planId
+
+            const batch = adminDb.batch();
+
+            // Check if this is likely a new registration completion
+            if (userDataFromDb.subscriptionStatus === 'pending_payment') {
+              // Create farm document if it doesn't exist (idempotency for farm creation)
+              const farmDocRef = adminDb.collection('farms').doc(firebaseUID); // Assuming farmId is user's UID for new owner
+              const farmDocSnap = await farmDocRef.get();
+              if (!farmDocSnap.exists) {
+                  batch.set(farmDocRef, {
+                      farmId: firebaseUID, // Farm ID is the owner's UID initially
+                      farmName: userDataFromDb.farmName || `${userDataFromDb.name || 'User'}'s Farm`,
+                      ownerId: firebaseUID,
+                      staff: [], // Initialize with empty staff array
+                      latitude: null,
+                      longitude: null,
+                      createdAt: FieldValue.serverTimestamp(),
+                      updatedAt: FieldValue.serverTimestamp(),
+                  });
+              }
+              // Update user document to finalize registration
+              batch.update(userDocRef, {
+                stripeCustomerId: customerId,
+                stripeSubscriptionId: subscription.id,
+                selectedPlanId: planIdToSet,
+                subscriptionStatus: 'active' as SubscriptionStatus,
+                farmId: firebaseUID, // User's farmId is their UID if they are the owner
+                isFarmOwner: true,
+                subscriptionCurrentPeriodEnd: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
+                updatedAt: FieldValue.serverTimestamp(),
+              });
+              console.log(`New user registration finalized for ${firebaseUID}, plan ${planIdToSet}. Farm created/confirmed.`);
+            } else {
+              // Existing user, likely an upgrade/change
+              batch.update(userDocRef, {
+                stripeCustomerId: customerId,
+                stripeSubscriptionId: subscription.id,
+                selectedPlanId: planIdToSet,
+                subscriptionStatus: 'active' as SubscriptionStatus,
+                subscriptionCurrentPeriodEnd: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
+                updatedAt: FieldValue.serverTimestamp(),
+              });
+              console.log(`Subscription updated for existing user ${firebaseUID} to plan ${planIdToSet}.`);
+            }
+            await batch.commit();
           }
           break;
         }
-        case 'customer.subscription.created': { // Often redundant if checkout.session.completed is handled well
+        case 'customer.subscription.created': {
           const subscription = event.data.object as Stripe.Subscription;
           const firebaseUID = subscription.metadata?.firebaseUID;
           const planId = subscription.metadata?.planId as PlanId;
@@ -75,41 +118,46 @@ export async function POST(request: NextRequest) {
             break;
           }
           const userDocRef = adminDb.collection('users').doc(firebaseUID);
-            await userDocRef.update({
-              stripeSubscriptionId: subscription.id,
-              stripeCustomerId: subscription.customer as string,
-              selectedPlanId: planId,
-              subscriptionStatus: 'active' as SubscriptionStatus,
-              subscriptionCurrentPeriodEnd: FieldValue.serverTimestamp(), // Or: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
-              updatedAt: FieldValue.serverTimestamp(),
-            });
-          console.log(`Subscription created for user ${firebaseUID}`);
+          // This event might be redundant if checkout.session.completed is well-handled,
+          // but can serve as a fallback or for subscriptions created directly in Stripe.
+          await userDocRef.update({
+            stripeSubscriptionId: subscription.id,
+            stripeCustomerId: subscription.customer as string,
+            selectedPlanId: planId,
+            subscriptionStatus: 'active' as SubscriptionStatus,
+            subscriptionCurrentPeriodEnd: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          console.log(`Subscription created/confirmed for user ${firebaseUID}`);
           break;
         }
         case 'customer.subscription.updated': {
           const subscription = event.data.object as Stripe.Subscription;
           const firebaseUID = subscription.metadata?.firebaseUID;
-           // Determine new planId, might need to map from Stripe Price ID
           const newPlanId = subscription.metadata?.planId || 
                             (subscription.items.data[0]?.price.id === process.env.STRIPE_PRICE_ID_PRO ? 'pro' : 
-                            (subscription.items.data[0]?.price.id === process.env.STRIPE_PRICE_ID_AGRIBUSINESS ? 'agribusiness' : 'free')) as PlanId;
+                            (subscription.items.data[0]?.price.id === process.env.STRIPE_PRICE_ID_AGRIBUSINESS ? 'agribusiness' : 
+                            (subscription.status === 'canceled' || subscription.status === 'incomplete_expired' ? 'free' : undefined))) as PlanId | undefined;
 
           if (!firebaseUID) {
              console.error('Webhook Error: Missing firebaseUID in customer.subscription.updated metadata', subscription.id);
              break;
           }
-          const userDocRef = adminDb.collection('users').doc(firebaseUID);
-          await userDocRef.update({
-            selectedPlanId: newPlanId,
-            subscriptionStatus: subscription.status as SubscriptionStatus, // e.g. 'active', 'past_due', 'canceled'
-            stripeSubscriptionId: subscription.id, // ensure it's up to date
-            // subscriptionCurrentPeriodEnd: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
+          const updateData: any = {
+            subscriptionStatus: subscription.status as SubscriptionStatus,
+            stripeSubscriptionId: subscription.id,
+            subscriptionCurrentPeriodEnd: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
             updatedAt: FieldValue.serverTimestamp(),
-          });
-          console.log(`Subscription updated for user ${firebaseUID} to plan ${newPlanId}, status ${subscription.status}`);
+          };
+          if (newPlanId) {
+            updateData.selectedPlanId = newPlanId;
+          }
+          const userDocRef = adminDb.collection('users').doc(firebaseUID);
+          await userDocRef.update(updateData);
+          console.log(`Subscription updated for user ${firebaseUID}${newPlanId ? ` to plan ${newPlanId}` : ''}, status ${subscription.status}`);
           break;
         }
-        case 'customer.subscription.deleted': { // Handles cancellations
+        case 'customer.subscription.deleted': { 
           const subscription = event.data.object as Stripe.Subscription;
           const firebaseUID = subscription.metadata?.firebaseUID;
           if (!firebaseUID) {
@@ -120,15 +168,17 @@ export async function POST(request: NextRequest) {
           await userDocRef.update({
             selectedPlanId: 'free' as PlanId,
             subscriptionStatus: 'cancelled' as SubscriptionStatus,
-            // stripeSubscriptionId: null, // Optional: clear the subscription ID or keep for history
+            // stripeSubscriptionId: null, // Keep for history or clear based on preference
             updatedAt: FieldValue.serverTimestamp(),
           });
-          console.log(`Subscription deleted for user ${firebaseUID}`);
+          console.log(`Subscription deleted for user ${firebaseUID}. Plan set to free.`);
           break;
         }
         case 'invoice.paid': {
           const invoice = event.data.object as Stripe.Invoice;
           const subscriptionId = invoice.subscription as string;
+          if (!subscriptionId) break; 
+
           const subscription = await stripe.subscriptions.retrieve(subscriptionId);
           const firebaseUID = subscription.metadata?.firebaseUID;
 
@@ -138,17 +188,17 @@ export async function POST(request: NextRequest) {
           }
           const userDocRef = adminDb.collection('users').doc(firebaseUID);
           await userDocRef.update({
-            subscriptionStatus: 'active' as SubscriptionStatus, // Re-activate if they were past_due
-            // subscriptionCurrentPeriodEnd: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
+            subscriptionStatus: 'active' as SubscriptionStatus,
+            subscriptionCurrentPeriodEnd: Timestamp.fromDate(new Date(subscription.current_period_end * 1000)),
             updatedAt: FieldValue.serverTimestamp(),
           });
-          console.log(`Invoice paid for user ${firebaseUID}`);
+          console.log(`Invoice paid for user ${firebaseUID}, subscription active.`);
           break;
         }
         case 'invoice.payment_failed': {
           const invoice = event.data.object as Stripe.Invoice;
           const subscriptionId = invoice.subscription as string;
-          if (subscriptionId) { // Only update if related to a subscription
+          if (subscriptionId) {
             const subscription = await stripe.subscriptions.retrieve(subscriptionId);
             const firebaseUID = subscription.metadata?.firebaseUID;
 
@@ -158,11 +208,10 @@ export async function POST(request: NextRequest) {
             }
             const userDocRef = adminDb.collection('users').doc(firebaseUID);
             await userDocRef.update({
-              subscriptionStatus: 'past_due' as SubscriptionStatus, // Or 'unpaid' or 'incomplete'
+              subscriptionStatus: 'past_due' as SubscriptionStatus,
               updatedAt: FieldValue.serverTimestamp(),
             });
-            console.log(`Invoice payment failed for user ${firebaseUID}`);
-            // You might want to send an email to the user here.
+            console.log(`Invoice payment failed for user ${firebaseUID}. Status set to past_due.`);
           }
           break;
         }
@@ -186,3 +235,5 @@ export const config = {
     bodyParser: false,
   },
 };
+
+    
