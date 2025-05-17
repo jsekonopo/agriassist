@@ -56,7 +56,7 @@ export const publicNavItems: NavItem[] = [
   {
     title: 'Features',
     href: '/features',
-    icon: Icons.ListChecksFeatures, // Assuming this icon exists and is appropriate
+    icon: Icons.ListChecksFeatures,
   },
   {
     title: 'Pricing', 
@@ -73,6 +73,11 @@ export const publicNavItems: NavItem[] = [
     href: '/contact',
     icon: Icons.Mail, 
   },
+  {
+    title: 'Help/FAQ',
+    href: '/help',
+    icon: Icons.Help,
+  },
 ];
 
 
@@ -82,3 +87,4 @@ export const settingsNavItem: NavItem = {
   icon: Settings,
   disabled: false, 
 };
+
