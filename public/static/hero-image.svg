@@ -1,0 +1,29 @@
+<svg width="550" height="550" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background gradient -->
+  <rect width="200" height="200" rx="30" fill="url(#bgGradient)"/>
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="200" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="hsl(120, 25%, 92%)"/> 
+      <stop offset="1" stop-color="hsl(120, 25%, 85%)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Stylized Sprout/Growth Element - Primary Color -->
+  <path d="M100 150 C80 140, 70 110, 80 90 S90 60, 100 50 C110 60, 120 80, 120 90 S120 140, 100 150 Z" fill="hsl(120, 25%, 65%)" opacity="0.8"/>
+  <path d="M100 55 C105 70, 115 80, 125 85 L120 90 C110 80, 100 70, 100 55 Z" fill="hsl(120, 25%, 55%)" opacity="0.7"/>
+  <path d="M100 55 C95 70, 85 80, 75 85 L80 90 C90 80, 100 70, 100 55 Z" fill="hsl(120, 25%, 55%)" opacity="0.7"/>
+  
+  <!-- Abstract Data/Technology Lines - Accent Color -->
+  <path d="M60 130 Q80 110, 100 130 T140 130" stroke="hsl(19, 56%, 40%)" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <path d="M50 140 Q75 125, 100 140 T150 140" stroke="hsl(19, 56%, 40%)" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.5"/>
+  <path d="M70 120 Q85 105, 100 120 T130 120" stroke="hsl(19, 56%, 40%)" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/>
+
+  <!-- Subtle Sun/Horizon Element -->
+  <circle cx="100" cy="70" r="15" fill="hsl(60, 50%, 80%)" opacity="0.3"/>
+  
+  <!-- Fields/Land representation -->
+  <path d="M30 160 Q50 150, 100 155 T170 160 L170 170 L30 170 Z" fill="hsl(120, 25%, 75%)" opacity="0.5"/>
+  <path d="M35 155 Q60 148, 100 152 T165 155" stroke="hsl(120, 25%, 60%)" stroke-width="1.5" fill="none" opacity="0.4"/>
+</svg>
+
+    

@@ -9,6 +9,7 @@ export interface NavItem {
   icon: LucideIcon;
   label?: string;
   disabled?: boolean;
+  isPublicPage?: boolean; // To differentiate public marketing pages if needed for sidebar
 }
 
 export const mainNavItems: NavItem[] = [
@@ -28,7 +29,7 @@ export const mainNavItems: NavItem[] = [
     icon: Icons.DataManagement,
   },
   {
-    title: 'Livestock', // New Livestock Item
+    title: 'Livestock',
     href: '/livestock',
     icon: Icons.Livestock,
   },
@@ -47,10 +48,30 @@ export const mainNavItems: NavItem[] = [
     href: '/reporting',
     icon: Icons.Reporting, 
   },
+  // Public facing pages also added here for now, could be separated later
+  {
+    title: 'Features',
+    href: '/features',
+    icon: Icons.ListChecks, // Using ListChecks for features
+    isPublicPage: true,
+  },
   {
     title: 'Pricing', 
     href: '/pricing',
     icon: Icons.Dollar, 
+    isPublicPage: true,
+  },
+  {
+    title: 'About Us',
+    href: '/about',
+    icon: Icons.Users, // Using Users for About Us
+    isPublicPage: true,
+  },
+  {
+    title: 'Contact',
+    href: '/contact',
+    icon: Icons.Mail, // Using Mail for Contact
+    isPublicPage: true,
   },
 ];
 
@@ -60,3 +81,5 @@ export const settingsNavItem: NavItem = {
   icon: Settings,
   disabled: false, 
 };
+
+    

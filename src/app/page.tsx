@@ -17,9 +17,9 @@ export default function LandingPage() {
           <Icons.Logo className="h-8 w-8 text-primary" />
           <span className="ml-2 text-xl font-semibold text-foreground">AgriAssist</span>
         </Link>
-        <nav className="ml-auto flex gap-4 sm:gap-6 items-center">
+        <nav className="ml-auto flex gap-2 sm:gap-4 items-center">
           <Link
-            href="/#features" 
+            href="/features" 
             className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
             prefetch={false}
           >
@@ -32,14 +32,28 @@ export default function LandingPage() {
           >
             Pricing
           </Link>
+           <Link
+            href="/about" 
+            className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
+            prefetch={false}
+          >
+            About
+          </Link>
+          <Link
+            href="/contact" 
+            className="text-sm font-medium hover:underline underline-offset-4 text-foreground"
+            prefetch={false}
+          >
+            Contact
+          </Link>
           {isAuthenticated ? (
             <>
-              <span className="text-sm text-muted-foreground hidden sm:inline">Welcome, {user?.name || 'Farmer'}!</span>
+              <span className="text-sm text-muted-foreground hidden md:inline">Welcome, {user?.name || 'Farmer'}!</span>
               <Button variant="outline" size="sm" onClick={logoutUser}> 
                 Logout
               </Button>
               <Button asChild size="sm">
-                <Link href="/dashboard">Go to Dashboard</Link>
+                <Link href="/dashboard">Dashboard</Link>
               </Button>
             </>
           ) : (
@@ -52,73 +66,94 @@ export default function LandingPage() {
                 Login
               </Link>
               <Button asChild>
-                <Link href="/register">Sign Up</Link>
+                <Link href="/register">Sign Up Free</Link>
               </Button>
             </>
           )}
         </nav>
       </header>
       <main className="flex-1">
-        <section className="w-full py-12 md:py-24 lg:py-32 xl:py-48">
+        <section className="w-full py-12 md:py-24 lg:py-32 xl:py-40">
           <div className="container px-4 md:px-6">
-            <div className="grid gap-6 lg:grid-cols-[1fr_400px] lg:gap-12 xl:grid-cols-[1fr_600px]">
-              <div className="flex flex-col justify-center space-y-4">
-                <div className="space-y-2">
+            <div className="grid gap-6 lg:grid-cols-[1fr_450px] lg:gap-12 xl:grid-cols-[1fr_550px]">
+              <div className="flex flex-col justify-center space-y-6">
+                <div className="space-y-3">
                   <h1 className="text-4xl font-bold tracking-tighter sm:text-5xl xl:text-6xl/none text-foreground">
-                    Smart Farming, Simplified with <span className="text-primary">AgriAssist</span>
+                    Unlock Your Farm's Potential with <span className="text-primary">AgriAssist</span>
                   </h1>
                   <p className="max-w-[600px] text-muted-foreground md:text-xl">
-                    Your all-in-one platform for data-driven agriculture. Manage records, track resources, and get AI-powered insights to boost your farm&apos;s productivity and sustainability.
+                    The all-in-one platform empowering modern farmers. Seamlessly manage data, optimize resources, leverage AI-driven insights, and cultivate sustainability for a more profitable and efficient farm.
                   </p>
                 </div>
-                <div className="flex flex-col gap-2 min-[400px]:flex-row">
-                  <Button size="lg" asChild>
+                <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                  <Button size="lg" asChild className="shadow-lg hover:shadow-primary/30 transition-shadow">
                     <Link href={isAuthenticated ? "/dashboard" : "/register"}>
-                      {isAuthenticated ? "Explore Dashboard" : "Get Started Free"}
+                      {isAuthenticated ? "Go to Dashboard" : "Start Farming Smarter"}
                     </Link>
                   </Button>
-                  <Button size="lg" variant="outline" asChild>
-                     <Link href="/ai-expert">
-                      Try AI Expert
+                  <Button size="lg" variant="outline" asChild className="shadow-lg hover:shadow-accent/30 transition-shadow">
+                     <Link href="/features">
+                      Explore Features
                     </Link>
                   </Button>
                 </div>
               </div>
               <Image
-                src="https://placehold.co/600x400.png"
-                alt="Farm illustration with modern technology"
-                data-ai-hint="modern farm technology"
-                width={600}
-                height={400}
-                className="mx-auto aspect-video overflow-hidden rounded-xl object-cover sm:w-full lg:order-last lg:aspect-square shadow-2xl"
+                src="/static/hero-image.svg"
+                alt="Illustration of modern farming technology integrating with nature"
+                width={550}
+                height={550}
+                className="mx-auto aspect-square overflow-hidden rounded-xl object-contain sm:w-full lg:order-last"
               />
             </div>
           </div>
         </section>
         
-        <section id="features" className="w-full py-12 md:py-24 lg:py-32 border-t bg-background">
+        <section id="why-agriassist" className="w-full py-12 md:py-24 lg:py-32 bg-muted/50 border-t">
+          <div className="container px-4 md:px-6">
+            <div className="flex flex-col items-center justify-center space-y-4 text-center mb-12">
+              <div className="inline-block rounded-lg bg-secondary px-3 py-1 text-sm text-secondary-foreground shadow">Why Choose AgriAssist?</div>
+              <h2 className="text-3xl font-bold tracking-tighter sm:text-5xl text-foreground">
+                Your Partner in Smart & Sustainable Farming
+              </h2>
+              <p className="max-w-[900px] text-muted-foreground md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
+                We provide intuitive tools to overcome modern agricultural challenges, helping you increase yield, optimize resource use, and embrace sustainable practices with confidence.
+              </p>
+            </div>
+            <div className="mx-auto grid max-w-5xl items-start gap-8 sm:grid-cols-2 md:gap-12 lg:grid-cols-3 lg:max-w-none">
+              <BenefitCard icon={Icons.DataManagement} title="Unified Data Hub" description="Centralize all your farm records – from field activities to finances – in one accessible platform. Say goodbye to scattered spreadsheets."/>
+              <BenefitCard icon={Icons.AIExpert} title="AI-Powered Insights" description="Leverage our Farm Expert for tailored advice on crop health, optimization strategies, and sustainable practices, turning data into actionable decisions."/>
+              <BenefitCard icon={Icons.Recycle} title="Sustainability Focused" description="Easily track and implement sustainable practices. We provide tools to help you work towards environmental stewardship and potential carbon credit opportunities."/>
+              <BenefitCard icon={Icons.Dollar} title="Cost-Effective Solution" description="Access powerful AgTech features without the hefty price tag. Our affordable plans are designed for small to medium-sized farms."/>
+              <BenefitCard icon={Icons.Smartphone} title="User-Friendly & Accessible" description="Designed for ease of use, regardless of your tech expertise. Access your farm data anytime, anywhere with our mobile-responsive platform."/>
+              <BenefitCard icon={Icons.TrendingUp} title="Future-Ready Farming" description="Build a foundation for data-driven decisions, preparing your farm for advanced precision agriculture and emerging market opportunities."/>
+            </div>
+          </div>
+        </section>
+
+        <section id="features-overview" className="w-full py-12 md:py-24 lg:py-32 border-t bg-background">
           <div className="container px-4 md:px-6">
             <div className="flex flex-col items-center justify-center space-y-4 text-center">
-              <div className="space-y-2">
-                <div className="inline-block rounded-lg bg-secondary px-3 py-1 text-sm text-secondary-foreground">Key Features</div>
-                <h2 className="text-3xl font-bold tracking-tighter sm:text-5xl text-foreground">
-                  Everything Your Farm Needs to Thrive
-                </h2>
-                <p className="max-w-[900px] text-muted-foreground md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
-                  From data management to AI-driven advice, AgriAssist provides the tools to optimize your farming operations.
-                </p>
-              </div>
+              <div className="inline-block rounded-lg bg-secondary px-3 py-1 text-sm text-secondary-foreground shadow">Core Features</div>
+              <h2 className="text-3xl font-bold tracking-tighter sm:text-5xl text-foreground">
+                Tools to Cultivate Success
+              </h2>
+              <p className="max-w-[900px] text-muted-foreground md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
+                AgriAssist provides a comprehensive suite of features to streamline every aspect of your farm management.
+              </p>
             </div>
             <div className="mx-auto grid max-w-5xl items-start gap-8 sm:grid-cols-2 md:gap-12 lg:grid-cols-3 lg:max-w-none mt-12">
-              <FeatureCard icon={Icons.Dashboard} title="Farm Overview Dashboard" description="Visualize key farm data and trends at a glance."/>
-              <FeatureCard icon={Icons.DataManagement} title="Integrated Data Management" description="Centralize planting, harvesting, soil, and weather records."/>
-              <FeatureCard icon={Icons.Analytics} title="Resource Tracking & Analytics" description="Monitor resource use and get insights for optimization."/>
-              <FeatureCard icon={Icons.AIExpert} title="AI Farm Expert" description="Get AI-powered advice for common farming challenges."/>
-              <FeatureCard icon={Icons.Tractor} title="Inventory & Equipment" description="Log inputs, track machinery, and manage maintenance."/>
-              <FeatureCard icon={Icons.Dollar} title="Financial Tracking" description="Record expenses and revenue for a clear financial overview."/>
-              <FeatureCard icon={Icons.UserCircle} title="Staff Accounts" description="Collaborate with your team by adding staff members (simulated full features)."/>
-              <FeatureCard icon={Icons.Planting} title="Sustainable Practices" description="Guidance and tools to support eco-friendly farming."/>
-              <FeatureCard icon={Icons.Reporting} title="Reporting Tools" description="Generate summaries for yields, tasks, and financials."/>
+              <FeatureCard icon={Icons.Map} title="Visual Field Mapping" description="Define and visualize your fields, eventually with boundary drawing and detailed overlays."/>
+              <FeatureCard icon={Icons.Database} title="Integrated Data Logging" description="Easily record planting, harvesting, soil tests, inputs, equipment, finances, and more."/>
+              <FeatureCard icon={Icons.Analytics} title="Farm Analytics & Reporting" description="Track resource usage, yields, and financial performance with intuitive charts and summaries."/>
+              <FeatureCard icon={Icons.BrainCircuit} title="AI Farm Expert" description="Get AI-powered advice for crop health, optimization, sustainability, and timing."/>
+              <FeatureCard icon={Icons.Users} title="Staff Collaboration" description="Manage farm access for your team members with role-based permissions."/>
+              <FeatureCard icon={Icons.Settings} title="Customizable Settings" description="Tailor the platform to your needs with preferences for units, notifications, and themes."/>
+            </div>
+             <div className="text-center mt-12">
+                <Button size="lg" asChild className="shadow-lg hover:shadow-primary/30 transition-shadow">
+                    <Link href="/features">Discover All Features</Link>
+                </Button>
             </div>
           </div>
         </section>
@@ -127,18 +162,18 @@ export default function LandingPage() {
           <div className="container grid items-center justify-center gap-4 px-4 text-center md:px-6">
             <div className="space-y-3">
               <h2 className="text-3xl font-bold tracking-tighter md:text-4xl/tight text-foreground">
-                Ready to Transform Your Farm?
+                Ready to Grow with AgriAssist?
               </h2>
               <p className="mx-auto max-w-[600px] text-muted-foreground md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
-                Join AgriAssist today and take the first step towards smarter, more efficient, and sustainable farming.
+                Join a community of forward-thinking farmers. Sign up for AgriAssist today and take the first step towards a more efficient, sustainable, and profitable future.
               </p>
             </div>
             <div className="mx-auto w-full max-w-sm space-y-2">
-              <Button size="lg" asChild className="w-full">
+              <Button size="lg" asChild className="w-full shadow-lg hover:shadow-primary/40 transition-shadow">
                 <Link href="/register">Sign Up for Free</Link>
               </Button>
               <p className="text-xs text-muted-foreground">
-                Explore our <Link href="/pricing" className="underline underline-offset-2 text-primary">pricing plans</Link> to find the perfect fit for your farm.
+                Explore our <Link href="/pricing" className="underline underline-offset-2 text-primary hover:text-primary/80">pricing plans</Link> to find the perfect fit for your farm.
               </p>
             </div>
           </div>
@@ -147,6 +182,18 @@ export default function LandingPage() {
       <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t bg-background">
         <p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} AgriAssist. All rights reserved.</p>
         <nav className="sm:ml-auto flex gap-4 sm:gap-6">
+          <Link href="/features" className="text-xs hover:underline underline-offset-4 text-muted-foreground" prefetch={false}>
+            Features
+          </Link>
+          <Link href="/pricing" className="text-xs hover:underline underline-offset-4 text-muted-foreground" prefetch={false}>
+            Pricing
+          </Link>
+          <Link href="/about" className="text-xs hover:underline underline-offset-4 text-muted-foreground" prefetch={false}>
+            About Us
+          </Link>
+          <Link href="/contact" className="text-xs hover:underline underline-offset-4 text-muted-foreground" prefetch={false}>
+            Contact
+          </Link>
           <Link href="#" className="text-xs hover:underline underline-offset-4 text-muted-foreground" prefetch={false}>
             Terms of Service
           </Link>
@@ -159,13 +206,13 @@ export default function LandingPage() {
   );
 }
 
-interface FeatureCardProps {
+interface CardProps {
   icon: React.ElementType;
   title: string;
   description: string;
 }
 
-function FeatureCard({ icon: Icon, title, description }: FeatureCardProps) {
+function FeatureCard({ icon: Icon, title, description }: CardProps) {
   return (
     <div className="grid gap-2 p-6 rounded-lg border bg-card text-card-foreground shadow-md hover:shadow-lg transition-shadow">
       <Icon className="w-10 h-10 text-primary mb-2" />
@@ -174,3 +221,17 @@ function FeatureCard({ icon: Icon, title, description }: FeatureCardProps) {
     </div>
   );
 }
+
+function BenefitCard({ icon: Icon, title, description }: CardProps) {
+  return (
+    <div className="flex flex-col items-center text-center gap-2 p-6 rounded-lg border bg-background/70 text-card-foreground shadow-lg hover:shadow-primary/20 transition-shadow">
+      <div className="bg-primary/10 p-3 rounded-full mb-3">
+        <Icon className="w-8 h-8 text-primary" />
+      </div>
+      <h3 className="text-xl font-semibold">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
+    

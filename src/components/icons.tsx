@@ -47,9 +47,13 @@ import {
   Beef,
   ActivitySquare,
   GitFork,
-  ListChecks,
+  ListChecks, // Keep for generic list checks, or Features
   Scale,
-  Bell, // Added Bell icon
+  Bell,
+  Users, // Added for About Us
+  Mail, // Added for Contact
+  Smartphone, // Added for UI/UX example
+  TrendingUp, // Added for UI/UX example
 } from 'lucide-react';
 
 export const Icons = {
@@ -88,7 +92,7 @@ export const Icons = {
   Tractor,
   Camera,
   ScanSearch,
-  ClipboardList,
+  ClipboardList, // For Task Logs
   Recycle,
   FlaskConical,
   Reporting: FileText, 
@@ -100,9 +104,16 @@ export const Icons = {
   Livestock: Beef,
   HealthRecord: ActivitySquare,
   Breeding: GitFork,
-  FeedLog: ListChecks,
+  FeedLog: ListChecks, 
   WeightLog: Scale,
-  Bell, // Added Bell icon
+  Bell,
+  Users, // For About Us page link
+  Mail,  // For Contact page link
+  Smartphone, // For Landing Page benefit card
+  TrendingUp, // For Landing Page benefit card
+  ListChecksFeatures: ListChecks, // Explicitly for Features page link if needed to differentiate
 };
 
 export type IconName = keyof typeof Icons;
+
+    
