@@ -21,9 +21,7 @@ interface OnboardingStep {
   icon: LucideIcon;
   description: string;
   actionText?: string;
-  actionLink?: string | null;
-  secondaryActionText?: string;
-  secondaryActionLink?: string | null;
+  actionLink?: string | null; // Can be null if no direct link for this step
   nextButtonText?: string;
   isFinalStep?: boolean;
 }
@@ -38,15 +36,15 @@ const onboardingSteps: OnboardingStep[] = [
   {
     title: "Set Up Your Farm Profile",
     icon: Icons.Settings,
-    description: "Your farm's name is set from registration. Adding your farm's approximate location (Latitude/Longitude) helps provide localized weather on your Dashboard and can improve AI insights. You can do this now or update it later from your Profile page.",
-    actionText: "Go to Profile to Set Location",
+    description: "Your farm's name was set during registration. Adding your farm's approximate location (Latitude/Longitude) helps provide localized weather on your Dashboard and can improve AI insights. You can do this now or update it later from your Profile page if you are the farm owner.",
+    actionText: "Go to Profile",
     actionLink: "/profile",
     nextButtonText: "Next: Define Your Fields",
   },
   {
     title: "Define Your Fields",
     icon: Icons.Location,
-    description: "Fields are the foundation of your farm records. Defining them allows you to accurately log planting, harvesting, soil data, and more. Let's add your first field!",
+    description: "Fields are the foundation of your farm records. Defining them allows you to accurately log planting, harvesting, soil data, and more. Let's head to Data Management to add your first field!",
     actionText: "Define First Field",
     actionLink: "/data-management?tab=fields",
     nextButtonText: "Next: Explore AI Expert",
@@ -97,20 +95,17 @@ export function OnboardingModal({ isOpen, onOpenChange, onComplete }: Onboarding
     setIsCompleting(true);
     await onComplete();
     setIsCompleting(false);
-    // The parent component (Dashboard) will handle closing the modal by setting isOpen to false
-    // after onComplete successfully marks onboarding as done in Firestore.
+    // Parent component (Dashboard) will set isOpen to false
   };
 
-  // Prevent closing via Escape or overlay click
   const handleDialogInteraction = (event: Event) => {
     event.preventDefault();
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
-      // Only allow programmatic close or via specific actions (like the final step button)
       if (!open && !isCompleting && !stepData.isFinalStep) {
-        return; // Prevent closing if not through the "Finish" button
+        return; 
       }
       onOpenChange(open);
     }}>
@@ -137,7 +132,7 @@ export function OnboardingModal({ isOpen, onOpenChange, onComplete }: Onboarding
               </Link>
             </Button>
             <p className="text-xs text-muted-foreground mt-1.5">
-              This action will open in a new tab. You can return here to continue onboarding.
+              This action will open in a new tab. You can return here to continue.
             </p>
           </div>
         )}

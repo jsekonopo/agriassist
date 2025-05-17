@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { DashboardStatsCard } from '@/components/dashboard-stats-card';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useEffect, useState, useCallback } from 'react';
@@ -96,9 +96,8 @@ const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3
 const ownerRoles: UserRoleOnFarm[] = ['free', 'pro', 'agribusiness'];
 const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor'];
 
-// Potential alert conditions
 const FROST_TEMP_THRESHOLD_CELSIUS = 2;
-const STORM_WEATHER_CODES = [95, 96, 99]; // Thunderstorm, Thunderstorm with hail
+const STORM_WEATHER_CODES = [95, 96, 99]; 
 
 export default function DashboardPage() {
   const { user, isLoading: authLoading, makeApiRequest, markOnboardingComplete, refreshUserData } = useAuth(); 
@@ -119,7 +118,6 @@ export default function DashboardPage() {
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const [isCheckingReminders, setIsCheckingReminders] = useState(false);
-
 
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
@@ -142,12 +140,11 @@ export default function DashboardPage() {
     }
   }, [user, makeApiRequest, toast]);
 
-
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
-      let lat: number | null | undefined = user?.farmLatitude ?? 45.4215; // Use farmLat from context if available
-      let lon: number | null | undefined = user?.farmLongitude ?? -75.6972; // Use farmLng from context
+      let lat: number | null | undefined = user?.farmLatitude;
+      let lon: number | null | undefined = user?.farmLongitude;
       let locationName = "Current Weather";
 
       if (user?.farmId) {
@@ -155,14 +152,14 @@ export default function DashboardPage() {
             locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
         } else if (user.farmName) {
             locationName = `Current Weather (${user.farmName} - Using Default Location)`;
-            lat = 45.4215; // Fallback to Ottawa if farm coords not set
+            lat = 45.4215; 
             lon = -75.6972;
         } else {
             locationName = "Current Weather (Default Location)";
             lat = 45.4215;
             lon = -75.6972;
         }
-      } else { // No user or farmId, use absolute default
+      } else { 
         locationName = "Current Weather (Ottawa - Default)";
         lat = 45.4215;
         lon = -75.6972;
@@ -182,7 +179,6 @@ export default function DashboardPage() {
           };
           setWeather(currentWeatherData);
 
-          // Client-side check for weather alerts
           if (currentWeatherData.temperature < FROST_TEMP_THRESHOLD_CELSIUS) {
             triggerWeatherAlertNotification(
               "Weather Alert: Potential Frost!",
@@ -209,7 +205,7 @@ export default function DashboardPage() {
     if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user, triggerWeatherAlertNotification]); // Added triggerWeatherAlertNotification
+  }, [user, triggerWeatherAlertNotification]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -324,7 +320,7 @@ export default function DashboardPage() {
           await makeApiRequest('/api/notifications/create', {
             userId: user.uid, 
             farmId: user.farmId,
-            type: 'ai_insight', // This type will be checked for email preferences
+            type: 'ai_insight', 
             title: notificationTitle,
             message: notificationMessage.trim(),
             link: '/dashboard' 
@@ -375,7 +371,7 @@ export default function DashboardPage() {
             await makeApiRequest('/api/notifications/create', {
               userId: user.uid,
               farmId: user.farmId,
-              type: 'task_reminder', // This type will be checked for email preferences
+              type: 'task_reminder', 
               title: title,
               message: message,
               link: '/data-management?tab=tasks'
