@@ -15,12 +15,39 @@ import { useAuth, type PreferredAreaUnit } from "@/contexts/auth-context";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
-import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
+import { MapContainer, TileLayer } from 'react-leaflet';
 import { MapDrawControl } from '@/components/map/map-draw-control';
-import type { GeoJsonObject } from 'geojson';
-import L from 'leaflet'; // Import L for LatLngBounds
+import type { GeoJsonObject, Feature, Geometry } from 'geojson';
+import L from 'leaflet'; 
 
 const areaUnits: PreferredAreaUnit[] = ["acres", "hectares"];
+
+// Helper to check for valid GeoJSON structure for Polygons or Features containing Polygons
+const isValidGeoJsonBoundary = (data: string): boolean => {
+  if (!data || data.trim() === "") return true; // Empty is allowed
+  try {
+    const parsed = JSON.parse(data);
+    if (typeof parsed !== 'object' || parsed === null) return false;
+
+    const checkGeometry = (geom: Geometry) => {
+      if (!geom || !geom.type || !geom.coordinates) return false;
+      return (geom.type === "Polygon" || geom.type === "MultiPolygon") && Array.isArray(geom.coordinates);
+    };
+
+    if (parsed.type === "Feature") {
+      return parsed.geometry && checkGeometry(parsed.geometry);
+    } else if (parsed.type === "Polygon" || parsed.type === "MultiPolygon") {
+      return checkGeometry(parsed);
+    } else if (parsed.type === "FeatureCollection" && Array.isArray(parsed.features)) {
+      // Allow FeatureCollection if it contains at least one valid Polygon/MultiPolygon feature
+      return parsed.features.some((feature: Feature) => feature.geometry && checkGeometry(feature.geometry));
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+};
+
 
 const fieldDefinitionSchema = z.object({
   fieldName: z.string().min(1, "Field name is required."),
@@ -29,17 +56,9 @@ const fieldDefinitionSchema = z.object({
     z.number({invalid_type_error: "Field size must be a number"}).positive("Field size must be positive.").optional()
   ),
   fieldSizeUnit: z.enum(areaUnits).optional(),
-  geojsonBoundary: z.string().optional().refine((data) => {
-    if (!data || data.trim() === "") return true; 
-    try {
-      const parsed = JSON.parse(data);
-      if (typeof parsed !== 'object' || parsed === null) return false;
-      if (!parsed.type || !parsed.coordinates) return false; 
-    } catch (e) {
-      return false;
-    }
-    return true;
-  }, { message: "Boundary data must be valid GeoJSON string or empty. Try drawing again." }),
+  geojsonBoundary: z.string().optional().refine(isValidGeoJsonBoundary, { 
+    message: "Invalid GeoJSON. Must be a valid Polygon, MultiPolygon, or a Feature/FeatureCollection containing them. Please draw or paste valid GeoJSON." 
+  }),
   notes: z.string().optional(),
 }).refine(data => (data.fieldSize !== undefined && data.fieldSize !== null) ? data.fieldSizeUnit !== undefined : true, {
   message: "Unit is required if field size is provided.",
@@ -48,8 +67,6 @@ const fieldDefinitionSchema = z.object({
 
 interface FieldDefinitionFormProps {
   onLogSaved?: () => void;
-  // We could add initialData for an edit mode in the future
-  // initialData?: Partial<z.infer<typeof fieldDefinitionSchema>>;
 }
 
 export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
@@ -58,9 +75,11 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
   const { user } = useAuth();
   const preferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
   
-  // Default map center (e.g., farm location or a general default)
-  const [mapCenter, setMapCenter] = useState<[number, number]>([45.4215, -75.6972]); 
-  const [mapZoom, setMapZoom] = useState(10);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([
+    user?.farmLatitude ?? 45.4215, 
+    user?.farmLongitude ?? -75.6972
+  ]); 
+  const [mapZoom, setMapZoom] = useState(user?.farmLatitude && user?.farmLongitude ? 13 : 10);
 
   const form = useForm<z.infer<typeof fieldDefinitionSchema>>({
     resolver: zodResolver(fieldDefinitionSchema),
@@ -72,16 +91,15 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       geojsonBoundary: "",
     },
   });
-
+  
   useEffect(() => {
     if (user?.farmLatitude && user?.farmLongitude) {
       setMapCenter([user.farmLatitude, user.farmLongitude]);
-      setMapZoom(13); // Zoom in a bit more if farm location is known
+      setMapZoom(13);
     }
   }, [user?.farmLatitude, user?.farmLongitude]);
 
   useEffect(() => {
-    // Set default unit if user preference changes and form field is not dirty
     if (user?.settings?.preferredAreaUnit && !form.formState.dirtyFields.fieldSizeUnit) {
       form.setValue("fieldSizeUnit", user.settings.preferredAreaUnit, { shouldValidate: false });
     }
@@ -89,9 +107,9 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
 
   const handleShapeDrawn = (geojson: GeoJsonObject | null) => {
     if (geojson) {
-      form.setValue("geojsonBoundary", JSON.stringify(geojson), { shouldValidate: true });
+      form.setValue("geojsonBoundary", JSON.stringify(geojson, null, 2), { shouldValidate: true });
     } else {
-      form.setValue("geojsonBoundary", "", { shouldValidate: true }); // Clear if shape deleted
+      form.setValue("geojsonBoundary", "", { shouldValidate: true }); 
     }
   };
   
@@ -101,7 +119,6 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       try {
         return JSON.parse(currentGeoJsonString) as GeoJsonObject;
       } catch (e) {
-        // console.warn("Could not parse current geojsonBoundary for map display");
         return null;
       }
     }
@@ -125,8 +142,9 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
         userId: user.uid, 
         farmId: user.farmId, 
         createdAt: serverTimestamp(),
-        latitude: null, // Deprecating individual lat/lon if using GeoJSON
-        longitude: null, // Deprecating individual lat/lon if using GeoJSON
+        // Remove deprecated individual lat/lon if using GeoJSON
+        latitude: null, 
+        longitude: null,
       };
 
       if (values.fieldSize !== undefined && values.fieldSize !== null && values.fieldSizeUnit) {
@@ -136,7 +154,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
        if (values.geojsonBoundary && values.geojsonBoundary.trim() !== "") {
         fieldData.geojsonBoundary = values.geojsonBoundary; 
       } else {
-        fieldData.geojsonBoundary = null; // Explicitly set to null if empty
+        fieldData.geojsonBoundary = null; 
       }
        if (values.notes && values.notes.trim() !== "") {
         fieldData.notes = values.notes;
@@ -151,11 +169,11 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
         fieldName: "", 
         fieldSize: undefined, 
         fieldSizeUnit: preferredAreaUnit, 
-        geojsonBoundary: "", // Reset GeoJSON string
+        geojsonBoundary: "", 
         notes: "" 
       });
-      // The MapDrawControl will also need to be reset or its initialGeoJson prop updated to null
-      // This is handled by currentGeoJsonString becoming "" -> initialGeoJsonForMap becoming null
+      // Reset the MapDrawControl's internal state if possible (by changing key or initialGeoJson)
+      // For now, relying on form.reset which clears currentGeoJsonString -> initialGeoJsonForMap becomes null
       if (onLogSaved) {
         onLogSaved();
       }
@@ -163,7 +181,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
       console.error("Error saving field definition to Firestore:", error);
       toast({
         title: "Error Saving Field",
-        description: "Could not save the field definition.",
+        description: "Could not save the field definition. Ensure GeoJSON is valid if provided.",
         variant: "destructive",
       });
     } finally {
@@ -227,37 +245,51 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
             />
         </div>
         
-        <FormField
-          control={form.control}
-          name="geojsonBoundary"
-          render={({ field }) => ( 
-            <FormItem>
-              <FormLabel>Field Boundary</FormLabel>
-              <FormDescription>
-                Use the map tools (top-left) to draw your field boundary (polygon or rectangle). 
-                You can edit or delete the drawn shape using the tools before saving the form.
-              </FormDescription>
-              <div className="h-[400px] w-full rounded-md border shadow-sm overflow-hidden mt-2 bg-muted">
-                <MapContainer center={mapCenter} zoom={mapZoom} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }} key={`${mapCenter.join('-')}-${mapZoom}`}>
-                  <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
-                  <MapDrawControl 
-                    onShapeDrawn={handleShapeDrawn} 
-                    initialGeoJson={initialGeoJsonForMap} 
-                  />
-                  {/* Displaying initial/current GeoJSON statically if MapDrawControl doesn't handle it for non-edit mode.
-                      However, MapDrawControl now loads initialGeoJson into its editable layer group. */}
-                </MapContainer>
-              </div>
-              <FormControl>
-                 <Input type="hidden" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <FormItem>
+          <FormLabel>Field Boundary (Draw on Map)</FormLabel>
+          <FormDescription>
+            Use the map tools (top-left) to draw your field boundary (polygon or rectangle). 
+            You can edit or delete the drawn shape using the tools.
+          </FormDescription>
+          <div className="h-[400px] w-full rounded-md border shadow-sm overflow-hidden mt-2 bg-muted">
+            <MapContainer 
+                center={mapCenter} 
+                zoom={mapZoom} 
+                scrollWheelZoom={true} 
+                style={{ height: '100%', width: '100%' }} 
+                key={mapCenter.join('-') + mapZoom + (initialGeoJsonForMap ? 'map-with-geojson' : 'map-no-geojson')} // Key to force re-render if needed
+            >
+              <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &amp; Satellite: &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+              />
+               <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                pane="tilePane" 
+              />
+              <MapDrawControl 
+                onShapeDrawn={handleShapeDrawn} 
+                initialGeoJson={initialGeoJsonForMap} 
+              />
+            </MapContainer>
+          </div>
+          <FormField
+            control={form.control}
+            name="geojsonBoundary"
+            render={({ field }) => ( 
+              <FormItem className="mt-2">
+                <FormLabel className="sr-only">GeoJSON Boundary Data (Hidden)</FormLabel>
+                <FormControl>
+                   <Textarea {...field} className="hidden" readOnly placeholder="GeoJSON data will appear here after drawing..."/>
+                </FormControl>
+                <FormDescription>GeoJSON data is automatically populated by drawing on the map.</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </FormItem>
+
 
         <FormField
           control={form.control}
