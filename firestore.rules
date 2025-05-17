@@ -28,22 +28,22 @@ service cloud.firestore {
     
     function hasRoleOnFarm(userId, currentFarmId, targetRole) {
         let userData = getAuthenticatedUserData(); 
-        return isAuthenticated() &&
+        return isAuthenticated() && 
                userData != null &&
                userData.uid == userId && 
                userData.farmId == currentFarmId &&
                userData.roleOnCurrentFarm == targetRole;
     }
     
-    function isAdminOnFarm(currentFarmId) { // Checks for the *requesting* user
+    function isAdminOnFarm(currentFarmId) { // Checks for the requesting user
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'admin');
     }
 
-    function isEditorOnFarm(currentFarmId) { // Checks for the *requesting* user
+    function isEditorOnFarm(currentFarmId) { // Checks for the requesting user
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'editor');
     }
     
-    function isViewerOnFarm(currentFarmId) { // Checks for the *requesting* user
+    function isViewerOnFarm(currentFarmId) { // Checks for the requesting user
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'viewer');
     }
     
@@ -60,14 +60,13 @@ service cloud.firestore {
     }
 
     function isAssociatedWithAndHasAccessToDocFarm(docFarmId, userId) {
-      let authUserData = getAuthenticatedUserData();
       return isAuthenticated() &&
-             authUserData != null &&
-             authUserData.farmId == docFarmId &&
+             getAuthenticatedUserData() != null &&
+             getAuthenticatedUserData().farmId == docFarmId &&
              hasGeneralAccessToFarm(userId, docFarmId);
     }
     
-    function newDocFarmIdMatchesUserCurrentFarm() {
+    function newDocFarmIdMatchesUserCurrentFarm(userId) {
       let authUserData = getAuthenticatedUserData();
       return isAuthenticated() &&
              authUserData != null &&
@@ -112,7 +111,7 @@ service cloud.firestore {
       return isAssociatedWithAndHasAccessToDocFarm(docFarmId, request.auth.uid);
     }
     function canCreateFarmSpecificDoc(docFarmId) {
-      return newDocFarmIdMatchesUserCurrentFarm() &&
+      return newDocFarmIdMatchesUserCurrentFarm(request.auth.uid) && 
              (isOwnerOfFarm(docFarmId, request.auth.uid) || isAdminOnFarm(docFarmId) || isEditorOnFarm(docFarmId));
     }
     function canUpdateFarmSpecificDoc(docFarmId) {
@@ -125,6 +124,7 @@ service cloud.firestore {
              (isOwnerOfFarm(docFarmId, request.auth.uid) || isAdminOnFarm(docFarmId));
     }
 
+    // Applying generic rules to each collection
     match /fields/{docId} {
       allow list: if isAuthenticated();
       allow read: if canReadFarmSpecificDoc(resource.data.farmId);
@@ -230,20 +230,32 @@ service cloud.firestore {
       allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
       allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
     }
-     match /livestockFeedLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+    match /livestockFeedLogs/{docId} {
+        allow list: if isAuthenticated();
+        allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+        allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+        allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+        allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
     }
     match /livestockWeightLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+        allow list: if isAuthenticated();
+        allow read: if canReadFarmSpecificDoc(resource.data.farmId);
+        allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
+        allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
+        allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
     }
+
+    // Notifications Collection
+    match /notifications/{notificationId} {
+        allow create: if false; // Only backend/API routes can create
+        allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        allow update: if isAuthenticated() && resource.data.userId == request.auth.uid &&
+                        request.resource.data.keys().hasAll(['isRead', 'readAt']) &&
+                        request.resource.data.keys().size() == 2; // Can only update isRead and readAt
+        allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid; // User can delete their own notifications
+        allow list: if isAuthenticated(); // Client queries will filter by userId
+    }
+
 
     // Pending Invitations Collection (/pendingInvitations/{invitationId})
     match /pendingInvitations/{invitationId} {
@@ -252,24 +264,11 @@ service cloud.firestore {
                       request.resource.data.inviterUid == request.auth.uid;
       allow read: if isAuthenticated() && authenticatedUserData() != null &&
                     ( (resource.data.invitedUserUid == request.auth.uid && resource.data.status == 'pending') ||
-                      (authenticatedUserData().email != null && resource.data.invitedEmail.lower() == authenticatedUserData().email.lower() && resource.data.status == 'pending') || 
+                      (resource.data.invitedEmail.lower() == authenticatedUserData().email.lower() && resource.data.status == 'pending') || 
                       ( (isOwnerOfFarm(resource.data.inviterFarmId, request.auth.uid) || isAdminOnFarm(resource.data.inviterFarmId)) && resource.data.inviterUid == request.auth.uid) );
       allow update: if false; 
       allow delete: if false; 
       allow list: if isAuthenticated();
-    }
-     // Notifications Collection
-    match /notifications/{notificationId} {
-      allow list: if isAuthenticated(); // Client queries will filter by userId
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      // Only allow updating isRead and readAt by the user themselves
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid &&
-                      request.resource.data.keys().hasOnly(['isRead', 'readAt']) &&
-                      request.resource.data.isRead == true && // Can only mark as read
-                      (request.resource.data.readAt == request.time || request.resource.data.readAt == null); // readAt must be now or null if clearing
-      // Create and delete are typically backend operations
-      allow create: if false; // Should be created by trusted backend (API routes / Cloud Functions)
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid; // User can delete their own notifications
     }
   }
 }

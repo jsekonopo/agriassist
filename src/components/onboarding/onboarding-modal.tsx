@@ -21,7 +21,7 @@ interface OnboardingStep {
   icon: LucideIcon;
   description: string;
   actionText?: string;
-  actionLink?: string | null; // Can be null if no direct link for this step
+  actionLink?: string | null; 
   nextButtonText?: string;
   isFinalStep?: boolean;
 }
@@ -36,7 +36,7 @@ const onboardingSteps: OnboardingStep[] = [
   {
     title: "Set Up Your Farm Profile",
     icon: Icons.Settings,
-    description: "Your farm's name was set during registration. Adding your farm's approximate location (Latitude/Longitude) helps provide localized weather on your Dashboard and can improve AI insights. You can do this now or update it later from your Profile page if you are the farm owner.",
+    description: "Your farm's name was set during registration. Adding your farm's approximate location (Latitude/Longitude) helps provide localized weather on your Dashboard and can improve AI insights. You can do this now if you are the farm owner, or update it later from your Profile page.",
     actionText: "Go to Profile",
     actionLink: "/profile",
     nextButtonText: "Next: Define Your Fields",
@@ -50,7 +50,7 @@ const onboardingSteps: OnboardingStep[] = [
     nextButtonText: "Next: Explore AI Expert",
   },
   {
-    title: "Discover the AI Farm Expert",
+    title: "Explore the AI Farm Expert",
     icon: Icons.AIExpert,
     description: "Get intelligent advice on plant health, optimization strategies, sustainable practices, and more. The AI Farm Expert is here to support your decisions. Try asking a question or diagnosing a plant!",
     actionText: "Explore AI Expert",
@@ -95,24 +95,31 @@ export function OnboardingModal({ isOpen, onOpenChange, onComplete }: Onboarding
     setIsCompleting(true);
     await onComplete();
     setIsCompleting(false);
-    // Parent component (Dashboard) will set isOpen to false
+    // The parent component (DashboardPage) will set isOpen to false
   };
 
-  const handleDialogInteraction = (event: Event) => {
+  // Prevent closing the dialog with Escape key or overlay click
+  const preventClose = (event: Event) => {
     event.preventDefault();
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => {
-      if (!open && !isCompleting && !stepData.isFinalStep) {
-        return; 
-      }
-      onOpenChange(open);
-    }}>
+    <Dialog 
+        open={isOpen} 
+        onOpenChange={(openState) => {
+            // Only allow closing via the "Go to Dashboard" button on the final step
+            if (!openState && !stepData.isFinalStep) {
+                // If trying to close before final step, do nothing (or keep it open)
+                return; 
+            }
+            onOpenChange(openState);
+        }}
+    >
       <DialogContent 
         className="sm:max-w-lg p-6 rounded-lg shadow-xl" 
-        onEscapeKeyDown={handleDialogInteraction} 
-        onPointerDownOutside={handleDialogInteraction}
+        onEscapeKeyDown={preventClose} 
+        onPointerDownOutside={preventClose}
+        hideCloseButton={!stepData.isFinalStep} // Hide default close button until last step
       >
         <DialogHeader className="text-center items-center pt-4">
           {IconComponent && <IconComponent className="h-12 w-12 text-primary mb-3" />}

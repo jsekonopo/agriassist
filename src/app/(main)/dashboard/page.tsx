@@ -136,7 +136,7 @@ export default function DashboardPage() {
       toast({ title: alertTitle, description: `${alertMessage} A notification has been sent.`, variant: "default" });
     } catch (error) {
       console.error("Error creating weather alert notification:", error);
-      toast({ title: "Weather Alert Error", description: "Could not send weather alert notification.", variant: "destructive" });
+      // Toast already shown by makeApiRequest or handled more globally
     }
   }, [user, makeApiRequest, toast]);
 
@@ -147,22 +147,39 @@ export default function DashboardPage() {
       let lon: number | null | undefined = user?.farmLongitude;
       let locationName = "Current Weather";
 
-      if (user?.farmId) {
-         if (user.farmLatitude != null && user.farmLongitude != null) {
-            locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
-        } else if (user.farmName) {
-            locationName = `Current Weather (${user.farmName} - Using Default Location)`;
-            lat = 45.4215; 
-            lon = -75.6972;
-        } else {
-            locationName = "Current Weather (Default Location)";
-            lat = 45.4215;
-            lon = -75.6972;
+      // If user context already has farm lat/lon (fetched from farms doc by AuthContext)
+      if (user?.farmLatitude != null && user?.farmLongitude != null) {
+        lat = user.farmLatitude;
+        lon = user.farmLongitude;
+        locationName = `Weather for ${user.farmName || 'Your Farm Location'}`;
+      } else if (user?.farmId) { // If no specific lat/lon on user object, but they have a farmId
+        // Attempt to fetch from farm document if not already loaded on user object
+        // This path might be redundant if AuthContext always populates farmLat/Lon on user
+        try {
+            const farmDocRef = doc(db, "farms", user.farmId);
+            const farmDocSnap = await getDoc(farmDocRef);
+            if (farmDocSnap.exists()) {
+                const farmData = farmDocSnap.data();
+                if (farmData.latitude != null && farmData.longitude != null) {
+                    lat = farmData.latitude;
+                    lon = farmData.longitude;
+                    locationName = `Weather for ${farmData.farmName || 'Your Farm Location'}`;
+                } else {
+                     locationName = `Current Weather (${user.farmName || 'Farm'} - Default Location)`;
+                     lat = 45.4215; lon = -75.6972; // Ottawa default
+                }
+            } else {
+                 locationName = `Current Weather (${user.farmName || 'Farm'} - Default Location)`;
+                 lat = 45.4215; lon = -75.6972; // Ottawa default
+            }
+        } catch (e) {
+            console.error("Error fetching farm doc for weather location:", e);
+            locationName = `Current Weather (${user.farmName || 'Farm'} - Default Location)`;
+            lat = 45.4215; lon = -75.6972; // Ottawa default
         }
       } else { 
         locationName = "Current Weather (Ottawa - Default)";
-        lat = 45.4215;
-        lon = -75.6972;
+        lat = 45.4215; lon = -75.6972;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -202,10 +219,10 @@ export default function DashboardPage() {
         setWeatherLoading(false);
       }
     }
-    if (user !== undefined) { 
+    if (user !== undefined) { // Ensure user object is resolved (not null or undefined initially)
         fetchFarmLocationAndWeather();
     }
-  }, [user, triggerWeatherAlertNotification]); 
+  }, [user, triggerWeatherAlertNotification]); // Re-fetch if user (and thus farmLat/Lon) changes
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -224,6 +241,7 @@ export default function DashboardPage() {
     setDataLoading(true);
     const fetchData = async () => {
       try {
+        // Fetch Fields
         const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
         let acreageInAcres = 0;
@@ -244,13 +262,15 @@ export default function DashboardPage() {
             setTotalAcreage(acreageInAcres > 0 ? parseFloat(acreageInAcres.toFixed(1)) : 0);
         }
 
+        // Fetch Planting Logs
         const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
         const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog);
         const uniqueCrops = new Set(pLogs.map(log => log.cropName));
         setActiveCropsCount(uniqueCrops.size);
-        setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
+        setNextHarvestCrop(pLogs[0]?.cropName || "N/A"); // Simplistic: next harvest is just the latest planted crop
 
+        // Fetch Harvesting Logs
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
         const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog);
@@ -259,32 +279,35 @@ export default function DashboardPage() {
           if (log.cropName && typeof log.yieldAmount === 'number') {
             if (!yields[log.cropName]) yields[log.cropName] = { total: 0, unit: log.yieldUnit };
             yields[log.cropName].total += log.yieldAmount;
-            if (!yields[log.cropName].unit && log.yieldUnit) yields[log.cropName].unit = log.yieldUnit;
+            if (!yields[log.cropName].unit && log.yieldUnit) yields[log.cropName].unit = log.yieldUnit; // Take first unit encountered for that crop
           }
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
 
+        // Fetch Task Logs
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
         setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog)));
 
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
+        toast({ title: "Dashboard Error", description: "Could not load some farm data.", variant: "destructive" });
       } finally {
         setDataLoading(false);
       }
     };
     fetchData();
-  }, [user, authLoading, preferredAreaUnit]);
+  }, [user, authLoading, preferredAreaUnit, toast]);
 
   useEffect(() => {
+    // Trigger onboarding modal if user exists, not loading, and onboarding isn't complete
     if (user && !authLoading && user.onboardingCompleted === false) {
       setShowOnboardingModal(true);
     }
   }, [user, authLoading]);
 
   const handleCompleteOnboarding = async () => {
-    await markOnboardingComplete();
+    await markOnboardingComplete(); // This function is from AuthContext
     setShowOnboardingModal(false); 
   };
 
@@ -301,6 +324,7 @@ export default function DashboardPage() {
       setProactiveInsights(insights);
       toast({ title: "Insights Generated", description: "Proactive insights for your farm are ready." });
 
+      // Create an in-app notification for the new insight
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
         let notificationTitle = "AI Farm Alert";
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
@@ -328,7 +352,7 @@ export default function DashboardPage() {
           toast({ title: "Notification Logged", description: "An in-app notification for the new insight has been created."});
         } catch (notifError) {
           console.error("Error creating notification for AI insight:", notifError);
-          toast({ title: "Notification Error", description: "Could not create a notification for the new insight.", variant: "destructive"});
+          // Toast for this specific error already handled by makeApiRequest
         }
       }
 
@@ -361,6 +385,7 @@ export default function DashboardPage() {
           message = `The task "${task.taskName || 'Unnamed Task'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
         } else if (isPast(dueDate) && differenceInDays(today, dueDate) <= 7 && task.status !== "Done") { 
+          // Example: Remind for tasks overdue by up to 7 days
           title = `Task Overdue: "${task.taskName}"`;
           message = `The task "${task.taskName || 'Unnamed Task'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
@@ -368,6 +393,9 @@ export default function DashboardPage() {
         
         if (shouldNotify && title && message) {
           try {
+            // To prevent duplicate notifications for the same task on the same day/period,
+            // a more robust system would check if a reminder was recently sent for this task.
+            // For simplicity, this version might send a notification each time the button is clicked if conditions are met.
             await makeApiRequest('/api/notifications/create', {
               userId: user.uid,
               farmId: user.farmId,
@@ -379,7 +407,7 @@ export default function DashboardPage() {
             remindersSentCount++;
           } catch (error) {
             console.error(`Failed to create reminder for task ${task.id}:`, error);
-            toast({ title: "Reminder Error", description: `Could not create reminder for task: ${task.taskName}`, variant: "destructive"});
+            // Error already toasted by makeApiRequest
           }
         }
       }
@@ -393,7 +421,7 @@ export default function DashboardPage() {
   }, [user, upcomingTasks, makeApiRequest, toast]);
 
 
-  if (authLoading && !user) {
+  if (authLoading && !user) { // Show full page skeleton if initial auth is still loading
     return (
         <div className="space-y-6">
             <PageHeader title="Farm Dashboard" description="Loading your farm's overview..." icon={Icons.Dashboard}/>
@@ -433,7 +461,7 @@ export default function DashboardPage() {
           isLoading={dataLoading || authLoading}
         />
         <DashboardStatsCard
-          title="Next Planned Harvest"
+          title="Next Planned Harvest" // This is a simplification, actual next harvest depends on more factors
           value={dataLoading || authLoading ? undefined : (nextHarvestCrop || "N/A")}
           icon={Icons.Harvesting}
           isLoading={dataLoading || authLoading}

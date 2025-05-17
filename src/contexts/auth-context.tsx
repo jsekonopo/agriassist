@@ -24,6 +24,7 @@ export type PreferredAreaUnit = "acres" | "hectares";
 export type PreferredWeightUnit = "kg" | "lbs";
 export type ThemePreference = "light" | "dark" | "system";
 export type StaffRole = 'admin' | 'editor' | 'viewer';
+// UserRoleOnFarm: Combines PlanId (for owners) and StaffRole for staff members.
 export type UserRoleOnFarm = PlanId | StaffRole | null;
 
 
@@ -57,10 +58,10 @@ export interface User {
   name: string | null;
   farmId?: string | null;
   farmName?: string | null;
-  farmLatitude?: number | null;
-  farmLongitude?: number | null;
+  farmLatitude?: number | null; // Added for farm location
+  farmLongitude?: number | null; // Added for farm location
   isFarmOwner?: boolean;
-  staffMembers?: StaffMemberWithDetails[]; // Only populated for owners, in their own User object
+  staffMembers?: StaffMemberWithDetails[];
   roleOnCurrentFarm?: UserRoleOnFarm;
   selectedPlanId: PlanId;
   subscriptionStatus: SubscriptionStatus;
@@ -128,7 +129,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const { toast } = useToast();
 
   const makeApiRequest = useCallback(async (endpoint: string, body: any, method: 'POST' | 'GET' | 'PUT' | 'DELETE' = 'POST') => {
-    const currentFbUser = auth.currentUser;
+    const currentFbUser = auth.currentUser; // Use auth.currentUser directly
     if (!currentFbUser) throw new Error("User not authenticated for API request.");
     const idToken = await currentFbUser.getIdToken(true);
     const response = await fetch(endpoint, {
@@ -154,8 +155,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       let currentFarmId: string | null = appUserDataFromDb.farmId || null;
       let userRoleOnFarm: UserRoleOnFarm = null;
       let staffDetailsForOwner: StaffMemberWithDetails[] = [];
-      let currentFarmLatitude: number | null = appUserDataFromDb.farmLatitude !== undefined ? appUserDataFromDb.farmLatitude : null;
-      let currentFarmLongitude: number | null = appUserDataFromDb.farmLongitude !== undefined ? appUserDataFromDb.farmLongitude : null;
+      let currentFarmLatitude: number | null = null;
+      let currentFarmLongitude: number | null = null;
 
       if (currentFarmId) {
         try {
@@ -177,7 +178,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const staffUserData = staffUserDoc.exists() ? staffUserDoc.data() : null;
                     return {
                       uid: staffMember.uid,
-                      name: staffUserData?.name || staffMember.uid, // Use UID as fallback name
+                      name: staffUserData?.name || staffMember.uid, 
                       email: staffUserData?.email || 'N/A',
                       role: staffMember.role
                     };
@@ -207,7 +208,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       
       const defaultNotificationPreferences: NotificationPreferences = {
-        taskRemindersEmail: false, 
+        taskRemindersEmail: true, 
         weatherAlertsEmail: false,
         aiInsightsEmail: true, 
         staffActivityEmail: false,
@@ -262,6 +263,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   
   const loginUser = useCallback(async (email: string, password: string): Promise<void> => {
     await signInWithEmailAndPassword(auth, email, password);
+    // onAuthStateChanged will handle fetching user data
   }, []);
 
   const registerUser = useCallback(async (name: string, farmNameFromInput: string, email: string, password: string): Promise<string | void> => {
@@ -277,7 +279,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const actualFarmName = farmNameFromInput.trim() || `${name}'s Farm`;
     const initialPlanId: PlanId = 'free';
     const defaultSettings : UserSettings = {
-      notificationPreferences: { taskRemindersEmail: false, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false },
+      notificationPreferences: { 
+        taskRemindersEmail: true, // Default to true for onboarding
+        weatherAlertsEmail: false, 
+        aiInsightsEmail: true, 
+        staffActivityEmail: false 
+      },
       preferredAreaUnit: "acres", preferredWeightUnit: "kg", theme: "system",
     };
 
@@ -308,6 +315,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     await batch.commit();
     
+    // Check for pending invitations for this email (case-insensitive)
     try {
       const invitesQuery = query(
         collection(db, "pendingInvitations"),
@@ -321,7 +329,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const invitationToken = invitationDoc.data().invitationToken;
         if (invitationToken) {
           toast({ title: "Invitation Found!", description: "We found a pending invitation for you. Redirecting to accept..." });
-          router.push(`/accept-invitation?token=${invitationToken}`);
+          // Do not call refreshUserData here, as onAuthStateChanged will handle it after router push
           return `/accept-invitation?token=${invitationToken}`; 
         }
       }
@@ -329,9 +337,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.error("Error checking for pending invitations after registration:", error);
     }
     
-    await refreshUserData(); 
-    // Do not push to dashboard here, let the caller handle redirect based on registerUser's return value or searchParams
-  }, [toast, router, refreshUserData]); 
+    await refreshUserData(); // Refresh user data if no invite found, before pushing to dashboard
+    // Caller (RegisterForm) will handle the router.push to dashboard if no specific redirect path is returned
+  }, [toast, refreshUserData]); 
 
   const logoutUser = useCallback(async () => {
     try { await firebaseSignOut(auth); } catch (error) { console.error("Error signing out: ", error); }
@@ -360,7 +368,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       profileNeedsUpdateInAuth = true; 
     }
         
-    if (Object.keys(userUpdateData).length > 1 || profileNeedsUpdateInAuth) { 
+    if (Object.keys(userUpdateData).length > 1 || profileNeedsUpdateInAuth) { // Check if more than just updatedAt
         batch.update(userDocRef, userUpdateData);
     }
 
@@ -371,13 +379,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (newFarmName.trim() && newFarmName.trim() !== (currentAppContextUser.farmName || "")) {
         farmUpdates.farmName = newFarmName.trim();
+        // Also update farmName on user object for consistency if they are owner
         batch.update(userDocRef, { farmName: newFarmName.trim() }); 
         farmDocNeedsUpdate = true;
       }
       
-      farmUpdates.latitude = (farmLatInput === undefined || isNaN(farmLatInput as number)) ? null : farmLatInput;
-      farmUpdates.longitude = (farmLngInput === undefined || isNaN(farmLngInput as number)) ? null : farmLngInput;
-      farmDocNeedsUpdate = true; 
+      // Handle latitude and longitude, allowing them to be cleared (set to null)
+      if (farmLatInput === null || (farmLatInput !== undefined && !isNaN(farmLatInput))) {
+        farmUpdates.latitude = farmLatInput;
+        farmDocNeedsUpdate = true;
+      }
+      if (farmLngInput === null || (farmLngInput !== undefined && !isNaN(farmLngInput))) {
+        farmUpdates.longitude = farmLngInput;
+        farmDocNeedsUpdate = true;
+      }
       
       if (farmDocNeedsUpdate) {
         batch.update(farmDocRef, farmUpdates);
@@ -403,7 +418,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const inviteStaffMemberByEmail = useCallback(async (emailToInvite: string, role: StaffRole): Promise<{success: boolean; message: string}> => {
     try {
       const result = await makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite, role: role });
-      // No automatic refreshUserData here; profile page handles refreshing its own lists.
       return result;
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to log invitation request."}; }
@@ -478,15 +492,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (planId === 'free') {
       if (user.selectedPlanId !== 'free' && user.subscriptionStatus === 'active') {
+        // Call cancelSubscription if they are on a paid plan and want to go to free.
+        // cancelSubscription already calls refreshUserData.
         return cancelSubscription(); 
       } else if (user.selectedPlanId === 'free') {
         return { success: true, message: "You are already on the Free plan." };
       } else { 
+         // This case is for if they were, e.g., 'cancelled' but period not ended, or 'past_due'.
+         // Directly setting to free.
          await updateDoc(doc(db, "users", user.uid), { selectedPlanId: 'free', subscriptionStatus: 'active' });
          await refreshUserData();
          return { success: true, message: "Switched to Free plan."};
       }
     }
+    // For paid plans, proceed to create checkout session
     try {
       const response = await makeApiRequest('/api/billing/create-checkout-session', { planId });
       if (response.success && response.sessionId) {
@@ -498,7 +517,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const message = error instanceof Error ? error.message : "Could not initiate plan change.";
       return { success: false, message, error: message };
     }
-  }, [user, firebaseUser, makeApiRequest, cancelSubscription, refreshUserData]); 
+  }, [user, firebaseUser, makeApiRequest, cancelSubscription, refreshUserData]); // Added cancelSubscription
 
   const updateUserSettings = useCallback(async (newSettings: Partial<UserSettings>): Promise<{success: boolean; message: string}> => {
     if (!user || !auth.currentUser) return { success: false, message: "User not authenticated." };
@@ -509,7 +528,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           ...currentDbSettings,
           ...newSettings,
           notificationPreferences: {
-              ...(currentDbSettings.notificationPreferences || {}),
+              ...(currentDbSettings.notificationPreferences || {}), // Ensure this is an object
               ...(newSettings.notificationPreferences || {})
           }
       };
