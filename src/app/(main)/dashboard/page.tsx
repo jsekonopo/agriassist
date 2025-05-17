@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAuth, type UserRoleOnFarm, type PreferredAreaUnit } from '@/contexts/auth-context'; 
+import { useAuth, type UserRoleOnFarm, type PreferredAreaUnit, type PlanId } from '@/contexts/auth-context'; 
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO, isToday, isPast, differenceInDays } from 'date-fns';
@@ -99,8 +99,22 @@ const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor']
 const FROST_TEMP_THRESHOLD_CELSIUS = 2;
 const STORM_WEATHER_CODES = [95, 96, 99]; 
 
+const planDisplayNames: Record<PlanId, string> = {
+  free: "Hobbyist Farmer (Free)",
+  pro: "Pro Farmer",
+  agribusiness: "AgriBusiness",
+};
+
+
 export default function DashboardPage() {
-  const { user, isLoading: authLoading, makeApiRequest, markOnboardingComplete, refreshUserData } = useAuth(); 
+  const { 
+    user, 
+    isLoading: authLoading, 
+    makeApiRequest, 
+    markOnboardingComplete, 
+    refreshUserData,
+    updateUserPlan // For re-initiating checkout
+  } = useAuth(); 
   const { toast } = useToast();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
@@ -118,6 +132,8 @@ export default function DashboardPage() {
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const [isCheckingReminders, setIsCheckingReminders] = useState(false);
+  const [isCompletingPayment, setIsCompletingPayment] = useState(false);
+
 
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
@@ -125,11 +141,10 @@ export default function DashboardPage() {
   const triggerWeatherAlertNotification = useCallback(async (alertTitle: string, alertMessage: string) => {
     if (!user || !user.farmId || !user.uid) return;
     try {
-      // Simple check: don't send same type of alert too often
       const lastAlertKey = `lastWeatherAlert_${alertTitle.replace(/\s+/g, '_')}`;
       const lastAlertTime = localStorage.getItem(lastAlertKey);
       const now = Date.now();
-      if (lastAlertTime && (now - parseInt(lastAlertTime) < 6 * 60 * 60 * 1000)) { // e.g., 6 hours cooldown
+      if (lastAlertTime && (now - parseInt(lastAlertTime) < 6 * 60 * 60 * 1000)) { 
         console.log("Weather alert cooldown active for:", alertTitle);
         return;
       }
@@ -146,7 +161,6 @@ export default function DashboardPage() {
       localStorage.setItem(lastAlertKey, now.toString());
     } catch (error) {
       console.error("Error creating weather alert notification:", error);
-      // Toast already shown by makeApiRequest or handled more globally
     }
   }, [user, makeApiRequest, toast]);
 
@@ -155,7 +169,7 @@ export default function DashboardPage() {
       setWeatherLoading(true);
       let lat: number | null | undefined = null;
       let lon: number | null | undefined = null;
-      let locationName = "Current Weather (Ottawa - Default)"; // Default
+      let locationName = "Current Weather (Ottawa - Default)"; 
 
       if (user?.farmId) {
         try {
@@ -169,11 +183,9 @@ export default function DashboardPage() {
                     locationName = `Weather for ${farmData.farmName || 'Your Farm'}`;
                 } else {
                      locationName = `Current Weather (${farmData.farmName || 'Your Farm'} - Default Location)`;
-                     lat = 45.4215; lon = -75.6972; // Ottawa default if no farm coords
+                     lat = 45.4215; lon = -75.6972; 
                 }
             } else {
-                // Farm doc doesn't exist, which is unexpected if user.farmId is set.
-                // This path might indicate a data consistency issue.
                 console.warn(`Farm document ${user.farmId} not found. Defaulting weather.`);
                 lat = 45.4215; lon = -75.6972; 
             }
@@ -182,7 +194,6 @@ export default function DashboardPage() {
             lat = 45.4215; lon = -75.6972; 
         }
       } else {
-        // No farmId, use absolute default
         lat = 45.4215; lon = -75.6972;
       }
       setWeatherLocationDisplay(locationName);
@@ -245,7 +256,6 @@ export default function DashboardPage() {
     setDataLoading(true);
     const fetchData = async () => {
       try {
-        // Fetch Fields
         const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
         let acreageInAcres = 0;
@@ -266,7 +276,6 @@ export default function DashboardPage() {
             setTotalAcreage(acreageInAcres > 0 ? parseFloat(acreageInAcres.toFixed(1)) : 0);
         }
 
-        // Fetch Planting Logs
         const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
         const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog);
@@ -274,7 +283,6 @@ export default function DashboardPage() {
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A"); 
 
-        // Fetch Harvesting Logs
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
         const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog);
@@ -288,7 +296,6 @@ export default function DashboardPage() {
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
 
-        // Fetch Task Logs
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
         setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog)));
@@ -304,7 +311,7 @@ export default function DashboardPage() {
   }, [user, authLoading, preferredAreaUnit, toast]);
 
   useEffect(() => {
-    if (user && !authLoading && user.onboardingCompleted === false) {
+    if (user && !authLoading && user.onboardingCompleted === false && user.subscriptionStatus === 'active') {
       setShowOnboardingModal(true);
     }
   }, [user, authLoading]);
@@ -312,6 +319,29 @@ export default function DashboardPage() {
   const handleCompleteOnboarding = async () => {
     await markOnboardingComplete(); 
     setShowOnboardingModal(false); 
+  };
+
+  const handleCompletePayment = async () => {
+    if (!user || !user.selectedPlanId || user.selectedPlanId === 'free') {
+      toast({ title: "Error", description: "No pending plan found to complete payment for.", variant: "destructive"});
+      return;
+    }
+    setIsCompletingPayment(true);
+    try {
+      const result = await updateUserPlan(user.selectedPlanId); // This calls create-checkout-session API
+      if (result.success && result.sessionId) {
+        // Stripe redirection is handled by updateUserPlan in AuthContext or pricing page
+        // If not, it means Stripe.js is not loaded or there was an issue.
+        // The pricing page already handles redirectToCheckout.
+        // Here, we just initiated the process. A toast message might already be shown by updateUserPlan.
+      } else {
+         toast({ title: "Payment Initiation Failed", description: result.message || result.error || "Could not start payment process.", variant: "destructive"});
+      }
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Could not initiate payment.", variant: "destructive"});
+    } finally {
+      setIsCompletingPayment(false);
+    }
   };
 
 
@@ -381,6 +411,16 @@ export default function DashboardPage() {
         let message = "";
         let shouldNotify = false;
 
+        // Basic check: Don't send same reminder for the same task ID within X hours
+        const lastReminderKey = `lastReminder_${task.id}`;
+        const lastReminderTime = localStorage.getItem(lastReminderKey);
+        const now = Date.now();
+        const reminderCooldown = 6 * 60 * 60 * 1000; // 6 hours
+
+        if (lastReminderTime && (now - parseInt(lastReminderTime) < reminderCooldown)) {
+          continue; // Cooldown active for this task
+        }
+
         if (isToday(dueDate) && task.status !== "Done") {
           title = `Task Reminder: "${task.taskName}" is due today!`;
           message = `The task "${task.taskName || 'Unnamed Task'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
@@ -402,6 +442,7 @@ export default function DashboardPage() {
               link: '/data-management?tab=tasks'
             });
             remindersSentCount++;
+            localStorage.setItem(lastReminderKey, now.toString()); // Update last reminded time
           } catch (error) {
             console.error(`Failed to create reminder for task ${task.id}:`, error);
           }
@@ -435,7 +476,42 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {user && <OnboardingModal isOpen={showOnboardingModal} onOpenChange={setShowOnboardingModal} onComplete={handleCompleteOnboarding} />}
+      {user && user.onboardingCompleted === false && user.subscriptionStatus === 'active' && (
+        <OnboardingModal 
+          isOpen={showOnboardingModal} 
+          onOpenChange={setShowOnboardingModal} 
+          onComplete={handleCompleteOnboarding} 
+        />
+      )}
+
+      {user && user.subscriptionStatus === 'pending_payment' && (
+        <Card className="mb-6 border-primary shadow-lg">
+          <CardHeader>
+            <CardTitle className="text-primary flex items-center gap-2">
+              <Icons.CreditCard className="h-6 w-6" />
+              Complete Your Registration
+            </CardTitle>
+            <CardDescription>
+              Your payment for the <strong>{user.selectedPlanId ? planDisplayNames[user.selectedPlanId] : 'selected'}</strong> plan was not completed. 
+              Please complete your payment to activate your full AgriAssist features.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={handleCompletePayment} disabled={isCompletingPayment} size="lg">
+              {isCompletingPayment ? (
+                <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Processing...</>
+              ) : (
+                "Complete Payment"
+              )}
+            </Button>
+            <p className="text-xs text-muted-foreground mt-2">
+              You will be redirected to Stripe to complete your payment.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+
       <PageHeader
         title="Farm Dashboard"
         description="Overview of your farm's performance and activities."
@@ -716,3 +792,5 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+    
