@@ -27,7 +27,7 @@ service cloud.firestore {
     }
     
     function hasRoleOnFarm(userId, currentFarmId, targetRole) {
-        let userData = authenticatedUserData(); 
+        let userData = getAuthenticatedUserData(); 
         return isAuthenticated() && 
                userData != null &&
                userData.uid == userId && 
@@ -35,20 +35,20 @@ service cloud.firestore {
                userData.roleOnCurrentFarm == targetRole;
     }
     
-    function isAdminOnFarm(currentFarmId) {
+    function isAdminOnFarm(currentFarmId) { // Checks for the requesting user
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'admin');
     }
 
-    function isEditorOnFarm(currentFarmId) {
+    function isEditorOnFarm(currentFarmId) { // Checks for the requesting user
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'editor');
     }
     
-    function isViewerOnFarm(currentFarmId) {
+    function isViewerOnFarm(currentFarmId) { // Checks for the requesting user
         return hasRoleOnFarm(request.auth.uid, currentFarmId, 'viewer');
     }
-    
+
     function hasGeneralAccessToFarm(userId, farmId) {
-        let authUserData = authenticatedUserData(); 
+        let authUserData = getAuthenticatedUserData(); 
         return isAuthenticated() &&
                authUserData != null &&
                authUserData.uid == userId &&
@@ -60,15 +60,15 @@ service cloud.firestore {
     }
 
     function isAssociatedWithAndHasAccessToDocFarm(docFarmId, userId) {
-      let authUserData = authenticatedUserData();
-      return isAuthenticated() &&
+      let authUserData = getAuthenticatedUserData();
+      return isAuthenticated() && 
              authUserData != null &&
-             authUserData.farmId == docFarmId &&
+             authUserData.farmId == docFarmId && 
              hasGeneralAccessToFarm(userId, docFarmId);
     }
     
     function newDocFarmIdMatchesUserCurrentFarm(userId) {
-      let authUserData = authenticatedUserData();
+      let authUserData = getAuthenticatedUserData();
       return isAuthenticated() &&
              authUserData != null &&
              request.resource.data.farmId == authUserData.farmId;
@@ -99,7 +99,10 @@ service cloud.firestore {
       allow update: if isAuthenticated() &&
                       (
                         (isOwnerOfFarm(farmId, request.auth.uid) && request.resource.data.keys().hasOnly(['farmName', 'staff', 'updatedAt', 'ownerId', 'farmId', 'latitude', 'longitude'])) ||
-                        (isAdminOnFarm(farmId) && request.resource.data.keys().hasOnly(['staff', 'updatedAt']))
+                        (isAdminOnFarm(farmId) && request.resource.data.keys().hasOnly(['staff', 'updatedAt']) &&
+                         request.resource.data.farmName == resource.data.farmName && 
+                         request.resource.data.ownerId == resource.data.ownerId  
+                        )
                       ) &&
                       request.resource.data.ownerId == resource.data.ownerId && 
                       request.resource.data.farmId == resource.data.farmId;
@@ -107,12 +110,12 @@ service cloud.firestore {
       allow list: if false;
     }
 
-    // --- Generic Rule for Farm-Specific Data Collections ---
+    // --- Generic Rule Helpers for Farm-Specific Data Collections ---
     function canReadFarmSpecificDoc(docFarmId) {
       return isAssociatedWithAndHasAccessToDocFarm(docFarmId, request.auth.uid);
     }
     function canCreateFarmSpecificDoc(docFarmId) {
-      return newDocFarmIdMatchesUserCurrentFarm(request.auth.uid) &&
+      return newDocFarmIdMatchesUserCurrentFarm(request.auth.uid) && 
              (isOwnerOfFarm(docFarmId, request.auth.uid) || isAdminOnFarm(docFarmId) || isEditorOnFarm(docFarmId));
     }
     function canUpdateFarmSpecificDoc(docFarmId) {
@@ -126,124 +129,29 @@ service cloud.firestore {
     }
 
     // Applying generic rules to each collection
-    match /fields/{docId} {
-      allow list: if isAuthenticated();
+    match /{collectionName}/{docId} 
+      where collectionName in ['fields', 'plantingLogs', 'harvestingLogs', 'soilDataLogs', 'weatherLogs', 
+                               'taskLogs', 'farmInputs', 'farmEquipment', 'expenseLogs', 'revenueLogs', 
+                               'fertilizerLogs', 'irrigationLogs', 
+                               'livestockAnimals', 'livestockHealthLogs', 'livestockBreedingLogs'] {
+      allow list: if isAuthenticated(); // Client must filter by farmId
       allow read: if canReadFarmSpecificDoc(resource.data.farmId);
       allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
       allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
       allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
     }
-    match /plantingLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /harvestingLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /soilDataLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /weatherLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /taskLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /farmInputs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /farmEquipment/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /expenseLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /revenueLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /fertilizerLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /irrigationLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /livestockAnimals/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /livestockHealthLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /livestockBreedingRecords/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-     match /livestockFeedLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
-    }
-    match /livestockWeightLogs/{docId} {
-      allow list: if isAuthenticated();
-      allow read: if canReadFarmSpecificDoc(resource.data.farmId);
-      allow create: if canCreateFarmSpecificDoc(request.resource.data.farmId);
-      allow update: if canUpdateFarmSpecificDoc(resource.data.farmId);
-      allow delete: if canDeleteFarmSpecificDoc(resource.data.farmId);
+
+    // Notifications Collection (/notifications/{notificationId})
+    match /notifications/{notificationId} {
+      // Notifications are created server-side by API routes using Admin SDK
+      allow create: if false; // No client-side creation
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      // User can only mark their own notifications as read
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid &&
+                      request.resource.data.keys().hasOnly(['isRead', 'readAt']) &&
+                      request.resource.data.userId == resource.data.userId; // Cannot change recipient
+      allow delete: if false; // No client-side deletion for now
+      allow list: if isAuthenticated(); // Client must filter by userId
     }
 
     // Pending Invitations Collection (/pendingInvitations/{invitationId})
@@ -259,40 +167,5 @@ service cloud.firestore {
       allow delete: if false; 
       allow list: if isAuthenticated();
     }
-    
-    // Notifications Collection (/notifications/{notificationId})
-    match /notifications/{notificationId} {
-        allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-        allow update: if isAuthenticated() && resource.data.userId == request.auth.uid &&
-                        request.resource.data.keys().hasOnly(['isRead', 'readAt']); // Only allow updating read status
-        allow create: if false; // Only backend (API route with Admin SDK) can create
-        allow delete: if false; // Or allow user to delete their own: if isAuthenticated() && resource.data.userId == request.auth.uid;
-        allow list: if isAuthenticated(); // Client queries will filter by userId
-    }
   }
 }
-```
-The file changes for implementing the user onboarding flow are now included in the XML output.
-
-**Summary of Changes:**
-*   **`src/contexts/auth-context.tsx`:**
-    *   Added `onboardingCompleted?: boolean` to the `User` interface.
-    *   `registerUser`: Sets `onboardingCompleted: false` for new users.
-    *   `fetchAppUserDataFromDb`: Fetches `onboardingCompleted` (defaults to `false` if undefined).
-    *   New `markOnboardingComplete` function: Updates `onboardingCompleted` to `true` in Firestore and refreshes user state.
-*   **`src/components/onboarding/onboarding-modal.tsx` (New File):**
-    *   A multi-step `Dialog` component.
-    *   Guides users through welcoming messages and links to key features (Profile, Data Management > Fields, AI Expert).
-    *   Uses internal state to manage steps.
-    *   "Finish" button calls the `onComplete` prop.
-    *   Designed to not be dismissible by Escape key or overlay click during the flow.
-*   **`src/app/(main)/dashboard/page.tsx`:**
-    *   Imports and renders the `OnboardingModal`.
-    *   Uses `useEffect` to show the modal if `user.onboardingCompleted` is `false`.
-    *   Passes `markOnboardingComplete` from `AuthContext` to the modal's `onComplete` prop.
-*   **`firestore.rules`:**
-    *   The `update` rule for `/users/{userId}` has been updated to allow users to modify their own `onboardingCompleted` field.
-
-This provides a basic guided onboarding experience for new users after they register and land on the dashboard for the first time.
-
-My sincere apologies for the repeated failures to provide the file changes correctly. I will continue to work on improving this.

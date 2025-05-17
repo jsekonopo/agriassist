@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/icons";
 import Link from 'next/link';
 import { Separator } from '../ui/separator';
+import * as DialogPrimitive from "@radix-ui/react-dialog"; // Import DialogPrimitive
 
 interface OnboardingModalProps {
   isOpen: boolean;
@@ -33,7 +34,7 @@ const onboardingSteps = [
   {
     title: "Set Up Your Farm Profile",
     icon: Icons.Settings,
-    description: "Your farm's name is already set from registration. Adding your farm's location (Latitude/Longitude) helps provide localized weather on your Dashboard. You can do this now or later from your Profile.",
+    description: "Your farm's name is already set from registration. Adding your farm's location (Latitude/Longitude) helps provide localized weather on your Dashboard. You can do this now or later from your Profile page.",
     actionText: "Go to Profile (Optional)",
     actionLink: "/profile",
     nextButtonText: "Next: Define Fields",
@@ -87,23 +88,33 @@ export function OnboardingModal({ isOpen, onOpenChange, onComplete }: Onboarding
     setIsCompleting(true);
     await onComplete();
     setIsCompleting(false);
-    // onOpenChange(false); // The parent component (Dashboard) will handle closing the modal
+    // Parent component (Dashboard) will handle closing the modal by setting isOpen to false
   };
 
-  // Prevent closing by Escape key or overlay click
   const handleDialogInteraction = (event: Event) => {
-    event.preventDefault();
+    event.preventDefault(); // Prevent closing via Escape or overlay click
   };
 
 
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={(open) => {
+      // Only allow programmatic close or via specific actions
+      if (!open && !isCompleting && !stepData.isFinalStep) {
+        return;
+      }
+      onOpenChange(open);
+    }}>
       <DialogContent 
         className="sm:max-w-lg" 
         onEscapeKeyDown={handleDialogInteraction} 
         onPointerDownOutside={handleDialogInteraction}
-        hideCloseButton={true} // Custom prop to hide default X, if DialogContent supported it
       >
+        {/* Remove the default close button that comes with DialogPrimitive.Close */}
+        {/* <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground sr-only">
+            <Icons.X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+        </DialogPrimitive.Close> */}
+
         <DialogHeader className="text-center items-center">
           {IconComponent && <IconComponent className="h-12 w-12 text-primary mb-3" />}
           <DialogTitle className="text-2xl font-semibold">{stepData.title}</DialogTitle>
@@ -117,12 +128,12 @@ export function OnboardingModal({ isOpen, onOpenChange, onComplete }: Onboarding
         {stepData.actionLink && (
           <div className="my-4 text-center">
             <Button variant="outline" asChild>
-              <Link href={stepData.actionLink} onClick={() => onOpenChange(false)} target="_blank" rel="noopener noreferrer">
+              <Link href={stepData.actionLink} onClick={() => { /* Keep modal open */ }} target="_blank" rel="noopener noreferrer">
                 {stepData.actionText} <Icons.ChevronRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
             <p className="text-xs text-muted-foreground mt-1">
-              This will open in a new tab. You can return here to continue onboarding.
+              This action will open in a new tab. You can return here to continue.
             </p>
           </div>
         )}
@@ -149,4 +160,7 @@ export function OnboardingModal({ isOpen, onOpenChange, onComplete }: Onboarding
               Step {currentStep + 1} of {onboardingSteps.length}
             </p>
         </div>
-      </
+      </DialogContent>
+    </Dialog>
+  );
+}

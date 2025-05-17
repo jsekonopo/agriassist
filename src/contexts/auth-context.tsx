@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
@@ -23,14 +24,13 @@ export type PreferredAreaUnit = "acres" | "hectares";
 export type PreferredWeightUnit = "kg" | "lbs";
 export type ThemePreference = "light" | "dark" | "system";
 export type StaffRole = 'admin' | 'editor' | 'viewer';
-// UserRoleOnFarm includes PlanId for owners, StaffRole for staff, or null
 export type UserRoleOnFarm = PlanId | StaffRole | null;
 
 
 export interface NotificationPreferences {
   taskRemindersEmail?: boolean;
   weatherAlertsEmail?: boolean;
-  aiInsightsEmail?: boolean; 
+  aiInsightsEmail?: boolean;
   staffActivityEmail?: boolean;
 }
 export interface UserSettings {
@@ -60,8 +60,8 @@ export interface User {
   farmLatitude?: number | null;
   farmLongitude?: number | null;
   isFarmOwner?: boolean;
-  staffMembers?: StaffMemberWithDetails[]; 
-  roleOnCurrentFarm?: UserRoleOnFarm; 
+  staffMembers?: StaffMemberWithDetails[];
+  roleOnCurrentFarm?: UserRoleOnFarm;
   selectedPlanId: PlanId;
   subscriptionStatus: SubscriptionStatus;
   stripeCustomerId?: string | null;
@@ -74,13 +74,13 @@ export interface User {
 export interface AppNotification {
   id: string;
   userId: string;
-  farmId?: string | null; 
-  type: string; 
+  farmId?: string | null;
+  type: string;
   title: string;
   message: string;
   link?: string;
   isRead: boolean;
-  createdAt: Timestamp; 
+  createdAt: Timestamp;
   readAt?: Timestamp | null;
 }
 
@@ -128,7 +128,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const { toast } = useToast();
 
   const makeApiRequest = useCallback(async (endpoint: string, body: any, method: 'POST' | 'GET' | 'PUT' | 'DELETE' = 'POST') => {
-    const currentFbUser = auth.currentUser; // Use auth.currentUser for consistency
+    const currentFbUser = auth.currentUser;
     if (!currentFbUser) throw new Error("User not authenticated for API request.");
     const idToken = await currentFbUser.getIdToken(true);
     const response = await fetch(endpoint, {
@@ -246,25 +246,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const currentFbUser = auth.currentUser; 
     if (currentFbUser) {
       try {
-        // setIsLoading(true); // Consider if this is needed or causes too many flashes
         const appUserData = await fetchAppUserDataFromDb(currentFbUser);
         setUser(appUserData);
       } catch (error) {
         console.error("Error refreshing user data:", error);
         setUser(null); 
         toast({ title: "Error", description: "Could not refresh user data. Please try logging in again.", variant: "destructive" });
-      } finally {
-        // setIsLoading(false);
       }
     } else {
       setUser(null);
-      // setIsLoading(false);
     }
-  }, [fetchAppUserDataFromDb, toast]); // Removed setIsLoading from here to avoid loops if refreshUserData is in other deps
+  }, [fetchAppUserDataFromDb, toast]);
 
   const loginUser = useCallback(async (email: string, password: string): Promise<void> => {
     await signInWithEmailAndPassword(auth, email, password);
-    // onAuthStateChanged will handle refreshUserData
   }, []);
 
   const registerUser = useCallback(async (name: string, farmNameFromInput: string, email: string, password: string): Promise<string | void> => {
@@ -292,7 +287,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       selectedPlanId: initialPlanId,
       subscriptionStatus: "active" as SubscriptionStatus,
       settings: defaultSettings,
-      onboardingCompleted: false, // New users start with onboarding incomplete
+      onboardingCompleted: false, 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -323,16 +318,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const invitationToken = invitationDoc.data().invitationToken;
         if (invitationToken) {
           toast({ title: "Invitation Found!", description: "We found a pending invitation for you. Redirecting to accept..." });
-          // router.push(`/accept-invitation?token=${invitationToken}`); // Let the form handle this
           return `/accept-invitation?token=${invitationToken}`; 
         }
       }
     } catch (error) {
         console.error("Error checking for pending invitations after registration:", error);
     }
-    // refreshUserData will be called by onAuthStateChanged.
-    // router.push("/dashboard"); // Let the form handle this based on potentialRedirect
-  }, [toast, router]); // Removed refreshUserData from here as onAuthStateChanged will handle it
+  }, [toast, router]);
 
   const logoutUser = useCallback(async () => {
     try { await firebaseSignOut(auth); } catch (error) { console.error("Error signing out: ", error); }
@@ -364,10 +356,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     
     if (currentAppContextUser.isFarmOwner && newFarmName.trim() && newFarmName.trim() !== (currentAppContextUser.farmName || "")) {
-      userUpdateData.farmName = newFarmName.trim(); // Store farm name on user doc too for quick access if desired
+      userUpdateData.farmName = newFarmName.trim();
     }
     
-    if (Object.keys(userUpdateData).length > 1) { 
+    if (Object.keys(userUpdateData).length > 1 || userUpdateData.name ) { 
         batch.update(userDocRef, userUpdateData);
     }
 
@@ -399,7 +391,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await firebaseUpdateProfile(currentFbUser, { displayName: userUpdateData.name });
     }
 
-    if ((batch as any)._ops.length > 0) { // Check if batch has operations
+    if ((batch as any)._ops.length > 0) { 
       await batch.commit();
     }
     await refreshUserData(); 
@@ -419,11 +411,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     try {
       const result = await makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite, role: role });
-      if (result.success) await refreshUserData(); 
+      // No refreshUserData here, profile page will re-fetch pending invites
       return result;
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to log invitation request."}; }
-  }, [user, makeApiRequest, refreshUserData]);
+  }, [user, makeApiRequest]);
 
   const removeStaffMember = useCallback(async (staffUidToRemove: string): Promise<{success: boolean; message: string}> => {
      if (!user?.farmId || (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin')) {
@@ -449,7 +441,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const declineInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
     try {
       const result = await makeApiRequest('/api/farm/invitations/decline', { invitationId });
-      // No full refreshUserData needed, just re-fetch invites on profile page
       return result;
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to decline invitation."}; }
@@ -461,7 +452,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     try {
       const result = await makeApiRequest('/api/farm/invitations/revoke', { invitationId });
-      // No full refreshUserData needed, just re-fetch invites on profile page
       return result;
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to revoke invitation."}; }
@@ -479,7 +469,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [user, makeApiRequest, refreshUserData]);
   
   const cancelSubscription = useCallback(async (): Promise<{success: boolean; message: string}> => {
-    if (!user || !firebaseUser) { // Check firebaseUser as well for Stripe actions
+    if (!user || !firebaseUser) {
       toast({ title: "Error", description: "User not authenticated.", variant: "destructive" });
       return { success: false, message: "User not authenticated." };
     }
@@ -504,7 +494,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (planId === 'free') {
       if (user.selectedPlanId !== 'free') {
-        return cancelSubscription(); // Call the stable cancelSubscription
+        return cancelSubscription();
       } else {
         return { success: true, message: "You are already on the Free plan." };
       }
@@ -520,7 +510,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const message = error instanceof Error ? error.message : "Could not initiate plan change.";
       return { success: false, message, error: message };
     }
-  }, [user, firebaseUser, makeApiRequest, cancelSubscription]); // cancelSubscription is stable
+  }, [user, firebaseUser, makeApiRequest, cancelSubscription]);
 
   const updateUserSettings = useCallback(async (newSettings: Partial<UserSettings>): Promise<{success: boolean; message: string}> => {
     if (!user || !auth.currentUser) return { success: false, message: "User not authenticated." };
@@ -567,7 +557,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const notif = { 
             id: docSnap.id, 
             ...data,
-            type: data.type || 'general', // Ensure type has a fallback
+            type: data.type || 'general', 
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt : Timestamp.now(),
             readAt: data.readAt instanceof Timestamp ? data.readAt : undefined,
         } as AppNotification;
@@ -582,7 +572,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error("Error fetching notifications:", error);
       toast({ title: "Error", description: "Could not fetch notifications.", variant: "destructive" });
     }
-  }, [toast]); // firebaseUser removed from dep array, using auth.currentUser
+  }, [toast]); 
 
   const markNotificationAsRead = useCallback(async (notificationId: string) => {
     const currentFbUser = auth.currentUser;
@@ -595,7 +585,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error("Error marking notification as read:", error);
       toast({ title: "Error", description: "Could not update notification status.", variant: "destructive" });
     }
-  }, [fetchNotifications, toast]); // firebaseUser removed
+  }, [fetchNotifications, toast]); 
 
   const markAllNotificationsAsRead = useCallback(async () => {
     const currentFbUser = auth.currentUser;
@@ -613,10 +603,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error("Error marking all notifications as read:", error);
       toast({ title: "Error", description: "Could not mark all notifications as read.", variant: "destructive" });
     }
-  }, [notifications, unreadNotificationCount, fetchNotifications, toast]); // firebaseUser removed
+  }, [notifications, unreadNotificationCount, fetchNotifications, toast]); 
 
-  const markOnboardingComplete = useCallback(async () => { // New function
-    if (!user || !auth.currentUser) {
+  const markOnboardingComplete = useCallback(async () => { 
+    const currentFbUser = auth.currentUser;
+    if (!user || !currentFbUser) {
       toast({ title: "Error", description: "User not authenticated.", variant: "destructive" });
       return;
     }
@@ -634,9 +625,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUserInstance) => {
       setIsLoading(true);
-      setFirebaseUser(fbUserInstance); // Set firebaseUser state
+      setFirebaseUser(fbUserInstance); 
       if (fbUserInstance) {
-        await refreshUserData(); // refreshUserData now internally uses auth.currentUser
+        await refreshUserData(); 
         await fetchNotifications(); 
       } else {
         setUser(null);
@@ -646,7 +637,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoading(false);
     });
     return () => unsubscribe();
-  }, [refreshUserData, fetchNotifications]); // Removed setIsLoading from refreshUserData's own dep list
+  }, [refreshUserData, fetchNotifications]); 
 
   useEffect(() => {
     const currentTheme = user?.settings?.theme;
@@ -670,7 +661,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     declineInvitation, revokeInvitation, updateStaffRole, refreshUserData, updateUserPlan,
     cancelSubscription, updateUserSettings,
     fetchNotifications, markNotificationAsRead, markAllNotificationsAsRead,
-    markOnboardingComplete, // Added new function
+    markOnboardingComplete,
   }), [
     user, firebaseUser, isLoading, notifications, unreadNotificationCount,
     loginUser, registerUser, logoutUser, updateUserProfile, changeUserPassword,
@@ -678,7 +669,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     declineInvitation, revokeInvitation, updateStaffRole, refreshUserData, updateUserPlan,
     cancelSubscription, updateUserSettings,
     fetchNotifications, markNotificationAsRead, markAllNotificationsAsRead,
-    markOnboardingComplete, // Added new function
+    markOnboardingComplete,
   ]);
 
   return (
@@ -695,3 +686,4 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
+

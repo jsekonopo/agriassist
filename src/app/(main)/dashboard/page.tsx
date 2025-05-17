@@ -1,3 +1,4 @@
+
 "use client";
 
 import Image from 'next/image';
@@ -10,13 +11,13 @@ import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAuth, type UserRole, type PreferredAreaUnit } from '@/contexts/auth-context'; 
+import { useAuth, type UserRoleOnFarm, type PreferredAreaUnit } from '@/contexts/auth-context'; 
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
 import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
 import { useToast } from "@/hooks/use-toast";
-import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; // New import
+import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; 
 
 interface WeatherData {
   temperature: number;
@@ -51,6 +52,7 @@ interface HarvestingLog {
   yieldUnit?: string;
   farmId: string;
   userId: string;
+  harvestDate: string; // Added for consistency
 }
 
 interface TaskLog {
@@ -111,7 +113,7 @@ export default function DashboardPage() {
 
   const [proactiveInsights, setProactiveInsights] = useState<ProactiveFarmInsightsOutput | null>(null);
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
-  const [showOnboardingModal, setShowOnboardingModal] = useState(false); // New state for onboarding
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
 
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
@@ -314,7 +316,6 @@ export default function DashboardPage() {
         icon={Icons.Dashboard}
       />
 
-      {/* ... rest of the dashboard content (stats cards, charts, etc.) ... */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <DashboardStatsCard
           title="Total Acreage"
