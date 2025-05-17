@@ -30,21 +30,25 @@ interface FieldDefinitionLog {
   createdAt?: Timestamp | Date; 
   farmId: string;
   userId: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 interface FieldDefinitionTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
-  onEditField: (fieldId: string) => void; // New prop for editing
+  onEditField: (fieldId: string) => void; 
 }
 
 const ACRES_TO_HECTARES = 0.404686;
 const HECTARES_TO_ACRES = 1 / ACRES_TO_HECTARES;
 
 const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
-// Assuming Admins can also delete/edit fields. Editors might only edit, not delete. Viewers can do neither.
-const rolesThatCanModify: UserRole[] = [...ownerRoles, 'admin']; 
-const rolesThatCanDelete: UserRole[] = [...ownerRoles, 'admin'];
+const adminRole: UserRole[] = ['admin'];
+const editorRole: UserRole[] = ['editor'];
+
+const rolesThatCanEditFields: UserRole[] = [...ownerRoles, ...adminRole, ...editorRole];
+const rolesThatCanDeleteFields: UserRole[] = [...ownerRoles, ...adminRole];
 
 
 export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField }: FieldDefinitionTableProps) {
@@ -93,8 +97,8 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
     fetchFieldDefinitions();
   }, [user?.farmId, refreshTrigger, toast]);
 
-  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
-  const canUserEdit = user?.roleOnCurrentFarm && rolesThatCanModify.includes(user.roleOnCurrentFarm);
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDeleteFields.includes(user.roleOnCurrentFarm);
+  const canUserEdit = user?.roleOnCurrentFarm && rolesThatCanEditFields.includes(user.roleOnCurrentFarm);
 
 
   const handleDeleteLog = async (logId: string) => {
