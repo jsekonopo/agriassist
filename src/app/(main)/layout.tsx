@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { useAuth } from '@/contexts/auth-context';
 import { useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation'; 
-import { Skeleton } from '@/components/ui/skeleton'; 
+import { useRouter, usePathname } from 'next/navigation';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,7 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import Link from 'next/link';
-import { AppNotifications } from '@/components/layout/app-notifications'; // Import AppNotifications
+import { AppNotifications } from '@/components/layout/app-notifications';
 
 export default function AppLayout({
   children,
@@ -27,51 +27,47 @@ export default function AppLayout({
   const { isAuthenticated, isLoading, user, logoutUser } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = typeof window !== "undefined" ? window.location.search : "";
+
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      const publicPaths = ['/login', '/register', '/', '/accept-invitation', '/pricing'];
-      const isPublicPath = publicPaths.some(p => pathname.startsWith(p));
-      if (!isPublicPath) {
-         router.push('/login');
-      }
+      // Construct redirect URL to pass current path for potential redirect back after login
+      const currentPath = pathname + searchParams;
+      router.push(`/login?redirect=${encodeURIComponent(currentPath)}`);
     }
-  }, [isAuthenticated, isLoading, router, pathname]);
+  }, [isAuthenticated, isLoading, router, pathname, searchParams]);
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="space-y-4 p-8 max-w-md w-full">
-            <div className="flex items-center justify-center mb-6">
-                 <Icons.Logo className="h-12 w-12 text-primary animate-pulse" />
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <div className="w-full max-w-md space-y-6 text-center">
+            <Icons.Logo className="h-16 w-16 text-primary mx-auto animate-pulse" />
+            <Skeleton className="h-8 w-3/4 mx-auto mt-4" />
+            <Skeleton className="h-6 w-1/2 mx-auto mt-2" />
+            <div className="flex justify-center pt-6">
+                 <Icons.Search className="h-10 w-10 text-muted-foreground animate-spin" />
             </div>
-            <Skeleton className="h-8 w-3/4 mx-auto" />
-            <Skeleton className="h-6 w-1/2 mx-auto" />
-            <div className="flex justify-center pt-4">
-                 <Icons.Search className="h-8 w-8 text-muted-foreground animate-spin" /> 
-            </div>
-            <p className="text-center text-muted-foreground">Loading AgriAssist...</p>
+            <p className="text-muted-foreground mt-2">Loading AgriAssist application...</p>
         </div>
       </div>
     );
   }
-  
-  const publicPaths = ['/login', '/register', '/', '/accept-invitation', '/pricing'];
-  const isPublicPath = publicPaths.some(p => pathname.startsWith(p));
 
-  if (!isAuthenticated && !isPublicPath) {
+  // If not authenticated (and loading is false), show a message while redirecting
+  // This ensures nothing from the authenticated layout renders.
+  if (!isAuthenticated) {
      return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p>Redirecting to login...</p>
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <div className="text-center">
+          <Icons.Logo className="h-12 w-12 text-primary mx-auto mb-4 animate-pulse" />
+          <p className="text-muted-foreground">Redirecting to login...</p>
+        </div>
       </div>
     );
   }
 
-  if (!isAuthenticated && isPublicPath) {
-     return <>{children}</>; 
-  }
-
-
+  // If authenticated, render the main app layout
   return (
     <SidebarProvider defaultOpen={true}>
       <div className="flex min-h-screen">
@@ -87,9 +83,9 @@ export default function AppLayout({
               </SidebarTrigger>
             </div>
             <div className="flex-1">
-              
+              {/* Placeholder for potential breadcrumbs or page title */}
             </div>
-            <AppNotifications /> 
+            <AppNotifications />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-auto px-2 sm:px-3">
