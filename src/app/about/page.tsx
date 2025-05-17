@@ -5,18 +5,18 @@ import { Icons } from '@/components/icons';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { PublicPageLayout } from '@/components/layout/public-page-layout'; // Import the layout
+import { PublicPageLayout } from '@/components/layout/public-page-layout'; 
 
 export default function AboutUsPage() {
   return (
     <PublicPageLayout>
-      <PageHeader
-        title="About AgriAssist"
-        description="Cultivating the Future of Farming, Together."
-        icon={Icons.Users}
-      />
       <div className="container mx-auto px-4 py-8 md:px-6 md:py-12">
-        <section className="bg-card p-8 md:p-12 rounded-xl shadow-xl">
+        <PageHeader
+          title="About AgriAssist"
+          description="Cultivating the Future of Farming, Together."
+          icon={Icons.Users}
+        />
+        <section className="bg-card p-8 md:p-12 rounded-xl shadow-xl mt-8"> {/* Added mt-8 here as PageHeader has mb */}
           <div className="grid md:grid-cols-2 gap-8 md:gap-12 items-center">
             <div>
               <h2 className="text-3xl font-bold tracking-tight text-foreground mb-4">Our Mission</h2>

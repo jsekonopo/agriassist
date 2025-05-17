@@ -9,18 +9,18 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { PublicPageLayout } from '@/components/layout/public-page-layout'; // Import the layout
+import { PublicPageLayout } from '@/components/layout/public-page-layout'; 
 
 export default function ContactUsPage() {
   return (
     <PublicPageLayout>
-      <PageHeader
-        title="Contact AgriAssist"
-        description="We're here to help. Reach out to us with your questions, feedback, or support needs."
-        icon={Icons.Mail}
-      />
       <div className="container mx-auto px-4 py-8 md:px-6 md:py-12">
-        <div className="grid md:grid-cols-2 gap-8 md:gap-12 items-start">
+        <PageHeader
+          title="Contact AgriAssist"
+          description="We're here to help. Reach out to us with your questions, feedback, or support needs."
+          icon={Icons.Mail}
+        />
+        <div className="grid md:grid-cols-2 gap-8 md:gap-12 items-start mt-8"> {/* Added mt-8 here as PageHeader has mb */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="text-2xl">Get in Touch</CardTitle>

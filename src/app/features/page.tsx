@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { PublicPageLayout } from '@/components/layout/public-page-layout'; // Import the layout
+import { PublicPageLayout } from '@/components/layout/public-page-layout'; 
 
 interface FeatureDetailProps {
   icon: React.ElementType;
@@ -127,13 +127,13 @@ const featureDetails: FeatureDetailProps[] = [
 export default function FeaturesPage() {
   return (
     <PublicPageLayout>
-      <PageHeader
-        title="AgriAssist Features"
-        description="Discover the powerful tools AgriAssist offers to revolutionize your farm management."
-        icon={Icons.ListChecksFeatures}
-      />
       <div className="container mx-auto px-4 py-8 md:px-6 md:py-12">
-        <div className="space-y-16">
+        <PageHeader
+          title="AgriAssist Features"
+          description="Discover the powerful tools AgriAssist offers to revolutionize your farm management."
+          icon={Icons.ListChecksFeatures}
+        />
+        <div className="space-y-16 mt-8"> {/* Added mt-8 here as PageHeader has mb */}
           {featureDetails.map((feature, index) => (
             <section key={feature.title} className={`flex flex-col ${index % 2 === 0 ? 'md:flex-row' : 'md:flex-row-reverse'} items-center gap-8 md:gap-12 p-6 md:p-8 bg-card rounded-xl shadow-xl hover:shadow-2xl transition-shadow`}>
               <div className="md:w-1/2 relative aspect-video w-full h-auto overflow-hidden rounded-lg">
