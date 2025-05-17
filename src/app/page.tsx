@@ -11,7 +11,7 @@ export default function LandingPage() {
   return (
     <PublicPageLayout>
       <section className="w-full py-12 md:py-24 lg:py-32 xl:py-40">
-        <div className="container px-4 md:px-6">
+        <div className="container mx-auto px-4 md:px-6">
           <div className="grid gap-6 lg:grid-cols-[1fr_450px] lg:gap-12 xl:grid-cols-[1fr_550px]">
             <div className="flex flex-col justify-center space-y-6">
               <div className="space-y-3">
@@ -47,7 +47,7 @@ export default function LandingPage() {
       </section>
       
       <section id="why-agriassist" className="w-full py-12 md:py-24 lg:py-32 bg-muted/50 border-t">
-        <div className="container px-4 md:px-6">
+        <div className="container mx-auto px-4 md:px-6">
           <div className="flex flex-col items-center justify-center space-y-4 text-center mb-12">
             <div className="inline-block rounded-lg bg-secondary px-3 py-1 text-sm text-secondary-foreground shadow">Why Choose AgriAssist?</div>
             <h2 className="text-3xl font-bold tracking-tighter sm:text-5xl text-foreground">
@@ -69,7 +69,7 @@ export default function LandingPage() {
       </section>
 
       <section id="features-overview" className="w-full py-12 md:py-24 lg:py-32 border-t bg-background">
-        <div className="container px-4 md:px-6">
+        <div className="container mx-auto px-4 md:px-6">
           <div className="flex flex-col items-center justify-center space-y-4 text-center">
             <div className="inline-block rounded-lg bg-secondary px-3 py-1 text-sm text-secondary-foreground shadow">Core Features</div>
             <h2 className="text-3xl font-bold tracking-tighter sm:text-5xl text-foreground">
@@ -96,7 +96,7 @@ export default function LandingPage() {
       </section>
 
       <section className="w-full py-12 md:py-24 lg:py-32 border-t bg-primary/10">
-        <div className="container grid items-center justify-center gap-4 px-4 text-center md:px-6">
+        <div className="container mx-auto grid items-center justify-center gap-4 px-4 text-center md:px-6">
           <div className="space-y-3">
             <h2 className="text-3xl font-bold tracking-tighter md:text-4xl/tight text-foreground">
               Ready to Grow with AgriAssist?
@@ -146,3 +146,5 @@ function BenefitCard({ icon: Icon, title, description }: CardProps) {
     </div>
   );
 }
+
+    
