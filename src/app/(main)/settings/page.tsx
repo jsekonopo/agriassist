@@ -21,48 +21,77 @@ export default function SettingsPage() {
   const { user, updateUserSettings, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
-  const [currentSettings, setCurrentSettings] = useState<UserSettings | undefined>(undefined);
+  // Local state for UI responsiveness, initialized from context or defaults
+  const [localNotificationPrefs, setLocalNotificationPrefs] = useState<NotificationPreferences>({
+    taskRemindersEmail: true, // Default
+    weatherAlertsEmail: false, // Default
+    aiInsightsEmail: true,    // Default
+    staffActivityEmail: false, // Default
+  });
+  const [localAreaUnit, setLocalAreaUnit] = useState<PreferredAreaUnit>("acres");
+  const [localWeightUnit, setLocalWeightUnit] = useState<PreferredWeightUnit>("kg");
+  const [localTheme, setLocalTheme] = useState<ThemePreference>("system");
+
   const [isSavingPrefs, setIsSavingPrefs] = useState(false);
 
   useEffect(() => {
     if (user?.settings) {
-      setCurrentSettings(user.settings);
-    } else if (user && !user.settings) { 
-      // This case should ideally be handled by default settings in AuthContext during user creation/fetch
-      const defaultPrefs: UserSettings = {
-        notificationPreferences: {
-          taskRemindersEmail: true, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false,
-        },
-        preferredAreaUnit: "acres",
-        preferredWeightUnit: "kg",
-        theme: "system",
-      };
-      setCurrentSettings(defaultPrefs);
+      setLocalNotificationPrefs(user.settings.notificationPreferences || {
+        taskRemindersEmail: true, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false
+      });
+      setLocalAreaUnit(user.settings.preferredAreaUnit || "acres");
+      setLocalWeightUnit(user.settings.preferredWeightUnit || "kg");
+      setLocalTheme(user.settings.theme || "system");
     }
-  }, [user]);
+  }, [user?.settings]);
 
-  const handleSettingChange = async (updatedPart: Partial<UserSettings>) => {
-    if (!user || !currentSettings) return;
-
-    const newLocalSettings: UserSettings = {
-      ...currentSettings,
-      ...updatedPart,
-      notificationPreferences: {
-        ...(currentSettings.notificationPreferences || {}),
-        ...(updatedPart.notificationPreferences || {}),
-      },
-    };
-    setCurrentSettings(newLocalSettings); // Optimistic update for UI
+  const handleNotificationPrefChange = async (key: NotificationPreferenceKey, value: boolean) => {
+    const updatedPrefs = { ...localNotificationPrefs, [key]: value };
+    setLocalNotificationPrefs(updatedPrefs); // Optimistic UI update
     
     setIsSavingPrefs(true);
-    const result = await updateUserSettings(newLocalSettings); 
-    
+    const result = await updateUserSettings({ notificationPreferences: updatedPrefs });
     if (result.success) {
-      toast({ title: "Preferences Updated", description: result.message });
+      toast({ title: "Notification Preference Updated", description: result.message });
     } else {
       toast({ title: "Update Failed", description: result.message, variant: "destructive" });
-      // Revert optimistic update if save failed by re-fetching or re-setting from user context
-      if (user?.settings) setCurrentSettings(user.settings);
+      // Revert optimistic update if needed, or rely on useEffect above to re-sync from context
+      if(user?.settings?.notificationPreferences) setLocalNotificationPrefs(user.settings.notificationPreferences);
+    }
+    setIsSavingPrefs(false);
+  };
+
+  const handleUnitChange = async (type: 'area' | 'weight', value: PreferredAreaUnit | PreferredWeightUnit) => {
+    let updatedSettings: Partial<UserSettings> = {};
+    if (type === 'area') {
+      setLocalAreaUnit(value as PreferredAreaUnit);
+      updatedSettings.preferredAreaUnit = value as PreferredAreaUnit;
+    } else {
+      setLocalWeightUnit(value as PreferredWeightUnit);
+      updatedSettings.preferredWeightUnit = value as PreferredWeightUnit;
+    }
+    
+    setIsSavingPrefs(true);
+    const result = await updateUserSettings(updatedSettings);
+    if (result.success) {
+      toast({ title: "Unit Preference Updated", description: result.message });
+    } else {
+      toast({ title: "Update Failed", description: result.message, variant: "destructive" });
+      if (type === 'area' && user?.settings?.preferredAreaUnit) setLocalAreaUnit(user.settings.preferredAreaUnit);
+      if (type === 'weight' && user?.settings?.preferredWeightUnit) setLocalWeightUnit(user.settings.preferredWeightUnit);
+    }
+    setIsSavingPrefs(false);
+  };
+  
+  const handleThemeChange = async (value: ThemePreference) => {
+    setLocalTheme(value); // Optimistic UI update for select
+    setIsSavingPrefs(true);
+    const result = await updateUserSettings({ theme: value });
+    if (result.success) {
+      toast({ title: "Theme Preference Updated", description: result.message });
+    } else {
+      toast({ title: "Update Failed", description: result.message, variant: "destructive" });
+      if (user?.settings?.theme) setLocalTheme(user.settings.theme);
     }
     setIsSavingPrefs(false);
   };
@@ -88,28 +117,10 @@ export default function SettingsPage() {
     );
   }
   
-  if (!currentSettings && !authLoading && user) { 
-     return (
-      <div className="space-y-8">
-        <PageHeader
-          title="Settings"
-          description="Manage your account settings, preferences, and security."
-          icon={Icons.Settings}
-        />
-        <Card className="shadow-lg">
-          <CardHeader><CardTitle>Loading Settings...</CardTitle></CardHeader>
-          <CardContent><Skeleton className="h-40 w-full" /></CardContent>
-        </Card>
-      </div>
-    );
-  }
-  if (!user) {
+  if (!user && !authLoading) {
     return (
       <div className="text-center p-8">Please log in to view settings.</div>
     )
-  }
-  if (!currentSettings) {
-      return <div className="text-center p-8">Loading settings...</div>; 
   }
 
 
@@ -143,14 +154,14 @@ export default function SettingsPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Notification Preferences</CardTitle>
-          <CardDescription>Manage how you receive notifications from AgriAssist.</CardDescription>
+          <CardDescription>Manage how you receive notifications from AgriAssist. Emails are sent if enabled here.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <Alert variant="default">
             <Icons.Info className="h-4 w-4" />
             <AlertTitle>Notification Delivery</AlertTitle>
             <AlertDescription>
-              Your preferences are saved. Email notifications are sent based on these settings when new alerts or insights are generated.
+              Your preferences are saved to Firestore. Email notifications are sent based on these settings when new alerts or insights are generated.
             </AlertDescription>
           </Alert>
           <div className="space-y-4">
@@ -164,8 +175,8 @@ export default function SettingsPage() {
                 </Label>
                 <Switch 
                   id={item.id} 
-                  checked={currentSettings.notificationPreferences?.[item.id] || false}
-                  onCheckedChange={(value) => handleSettingChange({ notificationPreferences: { ...currentSettings.notificationPreferences, [item.id]: value } })}
+                  checked={localNotificationPrefs?.[item.id] || false}
+                  onCheckedChange={(value) => handleNotificationPrefChange(item.id, value)}
                   disabled={isSavingPrefs || authLoading}
                   aria-label={item.label}
                 />
@@ -187,15 +198,15 @@ export default function SettingsPage() {
             <Icons.Info className="h-4 w-4" />
             <AlertTitle>Unit Display & Input</AlertTitle>
             <AlertDescription>
-              These preferences set default units in forms and affect how some data is displayed.
+              These preferences set default units in some forms and affect how data is displayed.
             </AlertDescription>
           </Alert>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <Label htmlFor="areaUnit">Preferred Area Unit</Label>
               <Select
-                value={currentSettings.preferredAreaUnit || "acres"}
-                onValueChange={(value) => handleSettingChange({ preferredAreaUnit: value as PreferredAreaUnit })}
+                value={localAreaUnit}
+                onValueChange={(value) => handleUnitChange('area', value as PreferredAreaUnit)}
                 disabled={isSavingPrefs || authLoading}
               >
                 <SelectTrigger id="areaUnit">
@@ -210,8 +221,8 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <Label htmlFor="weightUnit">Preferred Weight Unit</Label>
               <Select
-                value={currentSettings.preferredWeightUnit || "kg"}
-                onValueChange={(value) => handleSettingChange({ preferredWeightUnit: value as PreferredWeightUnit })}
+                value={localWeightUnit}
+                onValueChange={(value) => handleUnitChange('weight', value as PreferredWeightUnit)}
                 disabled={isSavingPrefs || authLoading}
               >
                 <SelectTrigger id="weightUnit">
@@ -238,8 +249,8 @@ export default function SettingsPage() {
            <div className="space-y-2">
               <Label htmlFor="themePreference">Application Theme</Label>
               <Select
-                value={currentSettings.theme || "system"}
-                onValueChange={(value) => handleSettingChange({ theme: value as ThemePreference })}
+                value={localTheme}
+                onValueChange={(value) => handleThemeChange(value as ThemePreference)}
                 disabled={isSavingPrefs || authLoading}
               >
                 <SelectTrigger id="themePreference">

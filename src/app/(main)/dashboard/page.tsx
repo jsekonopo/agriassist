@@ -96,6 +96,10 @@ const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3
 const ownerRoles: UserRoleOnFarm[] = ['free', 'pro', 'agribusiness'];
 const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor'];
 
+// Potential alert conditions
+const FROST_TEMP_THRESHOLD_CELSIUS = 2;
+const STORM_WEATHER_CODES = [95, 96, 99]; // Thunderstorm, Thunderstorm with hail
+
 export default function DashboardPage() {
   const { user, isLoading: authLoading, makeApiRequest, markOnboardingComplete, refreshUserData } = useAuth(); 
   const { toast } = useToast();
@@ -120,24 +124,48 @@ export default function DashboardPage() {
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
+  const triggerWeatherAlertNotification = useCallback(async (alertTitle: string, alertMessage: string) => {
+    if (!user || !user.farmId || !user.uid) return;
+    try {
+      await makeApiRequest('/api/notifications/create', {
+        userId: user.uid,
+        farmId: user.farmId,
+        type: 'weather_alert',
+        title: alertTitle,
+        message: alertMessage,
+        link: '/dashboard' 
+      });
+      toast({ title: alertTitle, description: `${alertMessage} A notification has been sent.`, variant: "default" });
+    } catch (error) {
+      console.error("Error creating weather alert notification:", error);
+      toast({ title: "Weather Alert Error", description: "Could not send weather alert notification.", variant: "destructive" });
+    }
+  }, [user, makeApiRequest, toast]);
+
 
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
-      let lat: number | null | undefined = 45.4215; // Default Ottawa
-      let lon: number | null | undefined = -75.6972; // Default Ottawa
-      let locationName = "Current Weather (Ottawa - Default)"; 
+      let lat: number | null | undefined = user?.farmLatitude ?? 45.4215; // Use farmLat from context if available
+      let lon: number | null | undefined = user?.farmLongitude ?? -75.6972; // Use farmLng from context
+      let locationName = "Current Weather";
 
       if (user?.farmId) {
-        // Attempt to get farm's specific lat/lon if user is owner and has set them
-        // The user object in AuthContext should now contain farmLatitude and farmLongitude if available
-        if (user.farmLatitude != null && user.farmLongitude != null) {
-          lat = user.farmLatitude;
-          lon = user.farmLongitude;
-          locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
+         if (user.farmLatitude != null && user.farmLongitude != null) {
+            locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
         } else if (user.farmName) {
-          locationName = `Current Weather (${user.farmName} - Using Ottawa Default)`;
+            locationName = `Current Weather (${user.farmName} - Using Default Location)`;
+            lat = 45.4215; // Fallback to Ottawa if farm coords not set
+            lon = -75.6972;
+        } else {
+            locationName = "Current Weather (Default Location)";
+            lat = 45.4215;
+            lon = -75.6972;
         }
+      } else { // No user or farmId, use absolute default
+        locationName = "Current Weather (Ottawa - Default)";
+        lat = 45.4215;
+        lon = -75.6972;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -146,12 +174,28 @@ export default function DashboardPage() {
         if (!response.ok) throw new Error(`Failed to fetch weather: ${response.statusText}`);
         const data = await response.json();
         if (data.current_weather) {
-          setWeather({
+          const currentWeatherData: WeatherData = {
             temperature: data.current_weather.temperature,
             weathercode: data.current_weather.weathercode,
             description: getWeatherDescription(data.current_weather.weathercode),
             windspeed: data.current_weather.windspeed,
-          });
+          };
+          setWeather(currentWeatherData);
+
+          // Client-side check for weather alerts
+          if (currentWeatherData.temperature < FROST_TEMP_THRESHOLD_CELSIUS) {
+            triggerWeatherAlertNotification(
+              "Weather Alert: Potential Frost!",
+              `Current temperature is ${currentWeatherData.temperature}°C. Take precautions for frost-sensitive crops.`
+            );
+          }
+          if (STORM_WEATHER_CODES.includes(currentWeatherData.weathercode)) {
+             triggerWeatherAlertNotification(
+              "Weather Alert: Storm Approaching!",
+              `Current weather conditions indicate a storm: ${currentWeatherData.description}. Secure equipment and livestock.`
+            );
+          }
+
         } else throw new Error("Current weather data not available");
         setWeatherError(null);
       } catch (error) {
@@ -165,7 +209,7 @@ export default function DashboardPage() {
     if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user?.farmId, user?.farmName, user?.farmLatitude, user?.farmLongitude]); 
+  }, [user, triggerWeatherAlertNotification]); // Added triggerWeatherAlertNotification
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -246,8 +290,6 @@ export default function DashboardPage() {
   const handleCompleteOnboarding = async () => {
     await markOnboardingComplete();
     setShowOnboardingModal(false); 
-    // Optionally, refresh user data again if onboarding completion might affect dashboard display immediately
-    // await refreshUserData(); 
   };
 
 
@@ -282,7 +324,7 @@ export default function DashboardPage() {
           await makeApiRequest('/api/notifications/create', {
             userId: user.uid, 
             farmId: user.farmId,
-            type: 'ai_insight',
+            type: 'ai_insight', // This type will be checked for email preferences
             title: notificationTitle,
             message: notificationMessage.trim(),
             link: '/dashboard' 
@@ -300,7 +342,7 @@ export default function DashboardPage() {
     } finally {
       setIsLoadingInsights(false);
     }
-  }, [user?.farmId, user?.uid, toast, makeApiRequest]); 
+  }, [user, toast, makeApiRequest]); 
 
   const handleCheckTaskReminders = useCallback(async () => {
     if (!user || !user.farmId || !user.uid) {
@@ -327,14 +369,13 @@ export default function DashboardPage() {
           message = `The task "${task.taskName || 'Unnamed Task'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
         }
-        // TODO: Add logic to prevent sending reminders for tasks already reminded recently (e.g., check a 'lastRemindedAt' field on task or notification)
-
+        
         if (shouldNotify && title && message) {
           try {
             await makeApiRequest('/api/notifications/create', {
               userId: user.uid,
               farmId: user.farmId,
-              type: 'task_reminder',
+              type: 'task_reminder', // This type will be checked for email preferences
               title: title,
               message: message,
               link: '/data-management?tab=tasks'
@@ -350,7 +391,7 @@ export default function DashboardPage() {
     if (remindersSentCount > 0) {
       toast({ title: "Task Reminders Processed", description: `${remindersSentCount} reminder(s) for due/overdue tasks have been generated as notifications.` });
     } else {
-      toast({ title: "No New Task Reminders", description: "No tasks are currently due today or recently overdue that haven't been reminded." });
+      toast({ title: "No New Task Reminders", description: "No tasks are currently due today or recently overdue that need new reminders." });
     }
     setIsCheckingReminders(false);
   }, [user, upcomingTasks, makeApiRequest, toast]);
@@ -503,9 +544,9 @@ export default function DashboardPage() {
           <div className="flex justify-between items-center">
             <div>
               <CardTitle>Upcoming Tasks</CardTitle>
-              <CardDescription>Key activities for your farm. Click button to generate reminders.</CardDescription>
+              <CardDescription>Key activities for your farm. Click button to generate reminders for due/overdue tasks.</CardDescription>
             </div>
-            <Button onClick={handleCheckTaskReminders} disabled={isCheckingReminders || authLoading || dataLoading} size="sm">
+            <Button onClick={handleCheckTaskReminders} disabled={isCheckingReminders || authLoading || dataLoading || upcomingTasks.length === 0} size="sm">
               {isCheckingReminders ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Checking...</> : <><Icons.Bell className="mr-2 h-4 w-4" /> Check for Reminders</>}
             </Button>
           </div>
