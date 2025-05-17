@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import Link from 'next/link';
+import { AppNotifications } from '@/components/layout/app-notifications'; // Import AppNotifications
 
 export default function AppLayout({
   children,
@@ -88,6 +89,7 @@ export default function AppLayout({
             <div className="flex-1">
               
             </div>
+            <AppNotifications /> 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-auto px-2 sm:px-3">
