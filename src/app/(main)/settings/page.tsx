@@ -1,4 +1,3 @@
-
 "use client";
 
 import { PageHeader } from '@/components/layout/page-header';
@@ -21,12 +20,11 @@ export default function SettingsPage() {
   const { user, updateUserSettings, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
-  // Local state for UI responsiveness, initialized from context or defaults
   const [localNotificationPrefs, setLocalNotificationPrefs] = useState<NotificationPreferences>({
-    taskRemindersEmail: true, // Default
-    weatherAlertsEmail: false, // Default
-    aiInsightsEmail: true,    // Default
-    staffActivityEmail: false, // Default
+    taskRemindersEmail: true,
+    weatherAlertsEmail: false,
+    aiInsightsEmail: true,
+    staffActivityEmail: false,
   });
   const [localAreaUnit, setLocalAreaUnit] = useState<PreferredAreaUnit>("acres");
   const [localWeightUnit, setLocalWeightUnit] = useState<PreferredWeightUnit>("kg");
@@ -36,9 +34,14 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (user?.settings) {
-      setLocalNotificationPrefs(user.settings.notificationPreferences || {
-        taskRemindersEmail: true, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false
-      });
+      // Ensure all keys are present with defaults before merging
+      const defaultPrefs: NotificationPreferences = {
+        taskRemindersEmail: true,
+        weatherAlertsEmail: false,
+        aiInsightsEmail: true,
+        staffActivityEmail: false,
+      };
+      setLocalNotificationPrefs({ ...defaultPrefs, ...(user.settings.notificationPreferences || {}) });
       setLocalAreaUnit(user.settings.preferredAreaUnit || "acres");
       setLocalWeightUnit(user.settings.preferredWeightUnit || "kg");
       setLocalTheme(user.settings.theme || "system");
@@ -47,32 +50,37 @@ export default function SettingsPage() {
 
   const handleNotificationPrefChange = async (key: NotificationPreferenceKey, value: boolean) => {
     const updatedPrefs = { ...localNotificationPrefs, [key]: value };
-    setLocalNotificationPrefs(updatedPrefs); // Optimistic UI update
+    setLocalNotificationPrefs(updatedPrefs); 
     
     setIsSavingPrefs(true);
+    // Pass only the notificationPreferences part of UserSettings
     const result = await updateUserSettings({ notificationPreferences: updatedPrefs });
     if (result.success) {
       toast({ title: "Notification Preference Updated", description: result.message });
     } else {
       toast({ title: "Update Failed", description: result.message, variant: "destructive" });
-      // Revert optimistic update if needed, or rely on useEffect above to re-sync from context
-      if(user?.settings?.notificationPreferences) setLocalNotificationPrefs(user.settings.notificationPreferences);
+      if(user?.settings?.notificationPreferences) {
+         const defaultPrefs: NotificationPreferences = {
+            taskRemindersEmail: true, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false
+         };
+         setLocalNotificationPrefs({ ...defaultPrefs, ...(user.settings.notificationPreferences) });
+      }
     }
     setIsSavingPrefs(false);
   };
 
   const handleUnitChange = async (type: 'area' | 'weight', value: PreferredAreaUnit | PreferredWeightUnit) => {
-    let updatedSettings: Partial<UserSettings> = {};
+    let settingsToUpdate: Partial<UserSettings> = {};
     if (type === 'area') {
       setLocalAreaUnit(value as PreferredAreaUnit);
-      updatedSettings.preferredAreaUnit = value as PreferredAreaUnit;
+      settingsToUpdate.preferredAreaUnit = value as PreferredAreaUnit;
     } else {
       setLocalWeightUnit(value as PreferredWeightUnit);
-      updatedSettings.preferredWeightUnit = value as PreferredWeightUnit;
+      settingsToUpdate.preferredWeightUnit = value as PreferredWeightUnit;
     }
     
     setIsSavingPrefs(true);
-    const result = await updateUserSettings(updatedSettings);
+    const result = await updateUserSettings(settingsToUpdate);
     if (result.success) {
       toast({ title: "Unit Preference Updated", description: result.message });
     } else {
@@ -84,7 +92,7 @@ export default function SettingsPage() {
   };
   
   const handleThemeChange = async (value: ThemePreference) => {
-    setLocalTheme(value); // Optimistic UI update for select
+    setLocalTheme(value);
     setIsSavingPrefs(true);
     const result = await updateUserSettings({ theme: value });
     if (result.success) {
@@ -124,11 +132,11 @@ export default function SettingsPage() {
   }
 
 
-  const notificationItems: { id: NotificationPreferenceKey; label: string; description: string }[] = [
+  const notificationItems: { id: NotificationPreferenceKey; label: string; description: string; ownerOnly?: boolean }[] = [
     { id: "taskRemindersEmail", label: "Email for Task Reminders", description: "Receive email notifications for upcoming or overdue tasks." },
     { id: "weatherAlertsEmail", label: "Email for Critical Weather Alerts", description: "Get notified about important weather events for your farm." },
     { id: "aiInsightsEmail", label: "Email for AI Insights & Suggestions", description: "Receive emails when new AI-driven insights or suggestions are available for your farm." },
-    { id: "staffActivityEmail", label: "Staff Activity Summaries (Email)", description: "(For Farm Owners) Receive periodic summaries of staff activity." },
+    { id: "staffActivityEmail", label: "Staff Activity Summaries (Email)", description: "Receive periodic summaries of staff activity on your farm.", ownerOnly: true },
   ];
 
   return (
@@ -161,27 +169,32 @@ export default function SettingsPage() {
             <Icons.Info className="h-4 w-4" />
             <AlertTitle>Notification Delivery</AlertTitle>
             <AlertDescription>
-              Your preferences are saved to Firestore. Email notifications are sent based on these settings when new alerts or insights are generated.
+              Your preferences are saved to Firestore. Email notifications will be sent based on these settings when relevant events occur.
             </AlertDescription>
           </Alert>
           <div className="space-y-4">
-            {notificationItems.map(item => (
-              <div key={item.id} className="flex items-center justify-between space-x-2 p-4 border rounded-md shadow-sm bg-muted/50">
-                <Label htmlFor={item.id} className="flex flex-col space-y-1 cursor-pointer">
-                  <span>{item.label}</span>
-                  <span className="font-normal leading-snug text-muted-foreground">
-                    {item.description}
-                  </span>
-                </Label>
-                <Switch 
-                  id={item.id} 
-                  checked={localNotificationPrefs?.[item.id] || false}
-                  onCheckedChange={(value) => handleNotificationPrefChange(item.id, value)}
-                  disabled={isSavingPrefs || authLoading}
-                  aria-label={item.label}
-                />
-              </div>
-            ))}
+            {notificationItems.map(item => {
+              if (item.ownerOnly && !user?.isFarmOwner) {
+                return null;
+              }
+              return (
+                <div key={item.id} className="flex items-center justify-between space-x-2 p-4 border rounded-md shadow-sm bg-muted/50">
+                  <Label htmlFor={item.id} className="flex flex-col space-y-1 cursor-pointer">
+                    <span>{item.label}</span>
+                    <span className="font-normal leading-snug text-muted-foreground">
+                      {item.description}
+                    </span>
+                  </Label>
+                  <Switch 
+                    id={item.id} 
+                    checked={localNotificationPrefs?.[item.id] || false}
+                    onCheckedChange={(value) => handleNotificationPrefChange(item.id, value)}
+                    disabled={isSavingPrefs || authLoading}
+                    aria-label={item.label}
+                  />
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>
@@ -269,3 +282,4 @@ export default function SettingsPage() {
     </div>
   );
 }
+
