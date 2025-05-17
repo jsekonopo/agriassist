@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth, type UserRoleOnFarm, type PreferredAreaUnit } from '@/contexts/auth-context'; 
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
-import { format, parseISO, isToday, isPast, differenceInDays } from 'date-fns'; // Added isToday, isPast
+import { format, parseISO, isToday, isPast, differenceInDays } from 'date-fns';
 import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
 import { useToast } from "@/hooks/use-toast";
 import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; 
@@ -102,7 +102,7 @@ export default function DashboardPage() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState<string | null>(null);
-  const [weatherLocationDisplay, setWeatherLocationDisplay] = useState("Ottawa (Default)");
+  const [weatherLocationDisplay, setWeatherLocationDisplay] = useState("Default Location");
 
   const [totalAcreage, setTotalAcreage] = useState<number | undefined>(undefined);
   const [activeCropsCount, setActiveCropsCount] = useState<number | undefined>(undefined);
@@ -124,16 +124,20 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
-      let lat = 45.4215; 
-      let lon = -75.6972; 
+      let lat: number | null | undefined = 45.4215; // Default Ottawa
+      let lon: number | null | undefined = -75.6972; // Default Ottawa
       let locationName = "Current Weather (Ottawa - Default)"; 
 
-      if (user?.farmId && user.farmLatitude != null && user.farmLongitude != null) {
-        lat = user.farmLatitude;
-        lon = user.farmLongitude;
-        locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
-      } else if (user?.farmName) { // If farmName exists but no specific lat/lon from farm doc
-        locationName = `Current Weather (${user.farmName} - Using Ottawa Default)`;
+      if (user?.farmId) {
+        // Attempt to get farm's specific lat/lon if user is owner and has set them
+        // The user object in AuthContext should now contain farmLatitude and farmLongitude if available
+        if (user.farmLatitude != null && user.farmLongitude != null) {
+          lat = user.farmLatitude;
+          lon = user.farmLongitude;
+          locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
+        } else if (user.farmName) {
+          locationName = `Current Weather (${user.farmName} - Using Ottawa Default)`;
+        }
       }
       setWeatherLocationDisplay(locationName);
 
@@ -180,7 +184,6 @@ export default function DashboardPage() {
     setDataLoading(true);
     const fetchData = async () => {
       try {
-        // Fetch Fields for Acreage
         const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
         let acreageInAcres = 0;
@@ -201,7 +204,6 @@ export default function DashboardPage() {
             setTotalAcreage(acreageInAcres > 0 ? parseFloat(acreageInAcres.toFixed(1)) : 0);
         }
 
-        // Fetch Planting Logs
         const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
         const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog);
@@ -209,7 +211,6 @@ export default function DashboardPage() {
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
 
-        // Fetch Harvesting Logs
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
         const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog);
@@ -223,7 +224,6 @@ export default function DashboardPage() {
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
 
-        // Fetch Task Logs
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
         setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog)));
@@ -246,6 +246,8 @@ export default function DashboardPage() {
   const handleCompleteOnboarding = async () => {
     await markOnboardingComplete();
     setShowOnboardingModal(false); 
+    // Optionally, refresh user data again if onboarding completion might affect dashboard display immediately
+    // await refreshUserData(); 
   };
 
 
@@ -314,16 +316,20 @@ export default function DashboardPage() {
         const dueDate = parseISO(task.dueDate);
         let title = "";
         let message = "";
+        let shouldNotify = false;
 
-        if (isToday(dueDate)) {
+        if (isToday(dueDate) && task.status !== "Done") {
           title = `Task Reminder: "${task.taskName}" is due today!`;
           message = `The task "${task.taskName || 'Unnamed Task'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
-        } else if (isPast(dueDate) && differenceInDays(today, dueDate) <= 7) { // Overdue within last 7 days
+          shouldNotify = true;
+        } else if (isPast(dueDate) && differenceInDays(today, dueDate) <= 7 && task.status !== "Done") { 
           title = `Task Overdue: "${task.taskName}"`;
           message = `The task "${task.taskName || 'Unnamed Task'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
+          shouldNotify = true;
         }
+        // TODO: Add logic to prevent sending reminders for tasks already reminded recently (e.g., check a 'lastRemindedAt' field on task or notification)
 
-        if (title && message) {
+        if (shouldNotify && title && message) {
           try {
             await makeApiRequest('/api/notifications/create', {
               userId: user.uid,
@@ -331,7 +337,7 @@ export default function DashboardPage() {
               type: 'task_reminder',
               title: title,
               message: message,
-              link: '/data-management?tab=tasks' // Link to tasks tab
+              link: '/data-management?tab=tasks'
             });
             remindersSentCount++;
           } catch (error) {
@@ -342,9 +348,9 @@ export default function DashboardPage() {
       }
     }
     if (remindersSentCount > 0) {
-      toast({ title: "Task Reminders Sent", description: `${remindersSentCount} reminder(s) for due/overdue tasks have been generated.` });
+      toast({ title: "Task Reminders Processed", description: `${remindersSentCount} reminder(s) for due/overdue tasks have been generated as notifications.` });
     } else {
-      toast({ title: "No Due Tasks", description: "No tasks are currently due today or recently overdue." });
+      toast({ title: "No New Task Reminders", description: "No tasks are currently due today or recently overdue that haven't been reminded." });
     }
     setIsCheckingReminders(false);
   }, [user, upcomingTasks, makeApiRequest, toast]);
@@ -497,10 +503,10 @@ export default function DashboardPage() {
           <div className="flex justify-between items-center">
             <div>
               <CardTitle>Upcoming Tasks</CardTitle>
-              <CardDescription>Key activities for your farm.</CardDescription>
+              <CardDescription>Key activities for your farm. Click button to generate reminders.</CardDescription>
             </div>
-            <Button onClick={handleCheckTaskReminders} disabled={isCheckingReminders || upcomingTasks.length === 0} size="sm">
-              {isCheckingReminders ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Checking...</> : "Check for Reminders"}
+            <Button onClick={handleCheckTaskReminders} disabled={isCheckingReminders || authLoading || dataLoading} size="sm">
+              {isCheckingReminders ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Checking...</> : <><Icons.Bell className="mr-2 h-4 w-4" /> Check for Reminders</>}
             </Button>
           </div>
         </CardHeader>
@@ -550,7 +556,7 @@ export default function DashboardPage() {
           <CardDescription>AI-powered lookahead for potential opportunities or risks on your farm. Data is based on recent logs.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button onClick={handleGetProactiveInsights} disabled={isLoadingInsights || !user?.farmId} className="mb-4">
+          <Button onClick={handleGetProactiveInsights} disabled={isLoadingInsights || !user?.farmId || authLoading || dataLoading} className="mb-4">
             {isLoadingInsights ? (
               <>
                 <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
@@ -587,7 +593,7 @@ export default function DashboardPage() {
               <p className="text-xs italic text-muted-foreground/80 pt-3 mt-3 border-t border-border/50">Data considered: {proactiveInsights.dataConsideredSummary}</p>
             </div>
           )}
-          {!user?.farmId && !authLoading && <p className="text-sm text-destructive">Please ensure you are associated with a farm to get insights.</p>}
+          {(!user?.farmId && !authLoading) && <p className="text-sm text-destructive">Please ensure you are associated with a farm to get insights.</p>}
         </CardContent>
       </Card>
 

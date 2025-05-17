@@ -9,48 +9,52 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-  DialogClose,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/icons";
 import Link from 'next/link';
 import { Separator } from '../ui/separator';
-import * as DialogPrimitive from "@radix-ui/react-dialog"; // Import DialogPrimitive
+import type { LucideIcon } from 'lucide-react';
 
-interface OnboardingModalProps {
-  isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
-  onComplete: () => Promise<void>;
+interface OnboardingStep {
+  title: string;
+  icon: LucideIcon;
+  description: string;
+  actionText?: string;
+  actionLink?: string | null;
+  secondaryActionText?: string;
+  secondaryActionLink?: string | null;
+  nextButtonText?: string;
+  isFinalStep?: boolean;
 }
 
-const onboardingSteps = [
+const onboardingSteps: OnboardingStep[] = [
   {
     title: "Welcome to AgriAssist!",
     icon: Icons.Logo,
-    description: "We're excited to help you manage your farm more effectively. Let's get you started with a few quick steps.",
-    actionText: "Next: Your Farm",
-    actionLink: null,
+    description: "We're excited to help you manage your farm more effectively. Let's get you started with a few quick steps to make the most out of the platform.",
+    nextButtonText: "Next: Your Farm Profile",
   },
   {
     title: "Set Up Your Farm Profile",
     icon: Icons.Settings,
-    description: "Your farm's name is already set from registration. Adding your farm's location (Latitude/Longitude) helps provide localized weather on your Dashboard. You can do this now or later from your Profile page.",
-    actionText: "Go to Profile (Optional)",
+    description: "Your farm's name is set from registration. Adding your farm's approximate location (Latitude/Longitude) helps provide localized weather on your Dashboard and can improve AI insights. You can do this now or update it later from your Profile page.",
+    actionText: "Go to Profile to Set Location",
     actionLink: "/profile",
-    nextButtonText: "Next: Define Fields",
+    nextButtonText: "Next: Define Your Fields",
   },
   {
     title: "Define Your Fields",
     icon: Icons.Location,
     description: "Fields are the foundation of your farm records. Defining them allows you to accurately log planting, harvesting, soil data, and more. Let's add your first field!",
-    actionText: "Go to Data Management (Fields)",
+    actionText: "Define First Field",
     actionLink: "/data-management?tab=fields",
     nextButtonText: "Next: Explore AI Expert",
   },
   {
     title: "Discover the AI Farm Expert",
     icon: Icons.AIExpert,
-    description: "Get intelligent advice on plant health, optimization strategies, sustainable practices, and more. The AI Expert is here to support your decisions.",
+    description: "Get intelligent advice on plant health, optimization strategies, sustainable practices, and more. The AI Farm Expert is here to support your decisions. Try asking a question or diagnosing a plant!",
     actionText: "Explore AI Expert",
     actionLink: "/ai-expert",
     nextButtonText: "Finish Onboarding",
@@ -58,12 +62,17 @@ const onboardingSteps = [
   {
     title: "You're All Set!",
     icon: Icons.CheckCircle2,
-    description: "You've completed the basic setup. Feel free to explore all the features AgriAssist has to offer. Happy farming!",
-    actionText: "Go to Dashboard",
-    actionLink: "/dashboard",
+    description: "You've completed the basic setup guidance. Feel free to explore all the features AgriAssist has to offer, log your data, and get valuable insights. Happy farming!",
+    nextButtonText: "Go to Dashboard",
     isFinalStep: true,
   },
 ];
+
+interface OnboardingModalProps {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  onComplete: () => Promise<void>;
+}
 
 export function OnboardingModal({ isOpen, onOpenChange, onComplete }: OnboardingModalProps) {
   const [currentStep, setCurrentStep] = useState(0);
@@ -88,78 +97,75 @@ export function OnboardingModal({ isOpen, onOpenChange, onComplete }: Onboarding
     setIsCompleting(true);
     await onComplete();
     setIsCompleting(false);
-    // Parent component (Dashboard) will handle closing the modal by setting isOpen to false
+    // The parent component (Dashboard) will handle closing the modal by setting isOpen to false
+    // after onComplete successfully marks onboarding as done in Firestore.
   };
 
+  // Prevent closing via Escape or overlay click
   const handleDialogInteraction = (event: Event) => {
-    event.preventDefault(); // Prevent closing via Escape or overlay click
+    event.preventDefault();
   };
-
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
-      // Only allow programmatic close or via specific actions
+      // Only allow programmatic close or via specific actions (like the final step button)
       if (!open && !isCompleting && !stepData.isFinalStep) {
-        return;
+        return; // Prevent closing if not through the "Finish" button
       }
       onOpenChange(open);
     }}>
       <DialogContent 
-        className="sm:max-w-lg" 
+        className="sm:max-w-lg p-6 rounded-lg shadow-xl" 
         onEscapeKeyDown={handleDialogInteraction} 
         onPointerDownOutside={handleDialogInteraction}
       >
-        {/* Remove the default close button that comes with DialogPrimitive.Close */}
-        {/* <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground sr-only">
-            <Icons.X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-        </DialogPrimitive.Close> */}
-
-        <DialogHeader className="text-center items-center">
+        <DialogHeader className="text-center items-center pt-4">
           {IconComponent && <IconComponent className="h-12 w-12 text-primary mb-3" />}
-          <DialogTitle className="text-2xl font-semibold">{stepData.title}</DialogTitle>
-          <DialogDescription className="text-muted-foreground px-4">
+          <DialogTitle className="text-2xl font-semibold text-foreground">{stepData.title}</DialogTitle>
+          <DialogDescription className="text-muted-foreground px-4 text-sm">
             {stepData.description}
           </DialogDescription>
         </DialogHeader>
         
-        <Separator className="my-4" />
+        <Separator className="my-6" />
 
-        {stepData.actionLink && (
+        {stepData.actionLink && stepData.actionText && (
           <div className="my-4 text-center">
-            <Button variant="outline" asChild>
-              <Link href={stepData.actionLink} onClick={() => { /* Keep modal open */ }} target="_blank" rel="noopener noreferrer">
+            <Button variant="outline" asChild className="shadow-sm hover:shadow-md transition-shadow">
+              <Link href={stepData.actionLink} target="_blank" rel="noopener noreferrer">
                 {stepData.actionText} <Icons.ChevronRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
-            <p className="text-xs text-muted-foreground mt-1">
-              This action will open in a new tab. You can return here to continue.
+            <p className="text-xs text-muted-foreground mt-1.5">
+              This action will open in a new tab. You can return here to continue onboarding.
             </p>
           </div>
         )}
 
-        <DialogFooter className="mt-6 sm:justify-between gap-2">
-          {currentStep > 0 && !stepData.isFinalStep && (
-            <Button variant="outline" onClick={handlePrevious} disabled={isCompleting}>
-              <Icons.ChevronRight className="mr-2 h-4 w-4 rotate-180" /> Previous
-            </Button>
-          )}
-          {!stepData.isFinalStep ? (
-            <Button onClick={handleNext} className="ml-auto sm:ml-0" disabled={isCompleting}>
-              {stepData.nextButtonText || "Next"} <Icons.ChevronRight className="ml-2 h-4 w-4" />
-            </Button>
-          ) : (
-            <Button onClick={handleFinish} className="w-full sm:w-auto" disabled={isCompleting}>
-              {isCompleting ? <Icons.Search className="mr-2 h-4 w-4 animate-spin" /> : <Icons.CheckCircle2 className="mr-2 h-4 w-4" />}
-              {isCompleting ? "Finishing..." : "Complete Onboarding"}
-            </Button>
-          )}
-        </DialogFooter>
-         <div className="flex justify-center mt-2">
-            <p className="text-xs text-muted-foreground">
+        <DialogFooter className="mt-8 sm:justify-between gap-2 flex-col sm:flex-row">
+          <div className="flex w-full justify-center sm:justify-start">
+            <p className="text-xs text-muted-foreground self-center">
               Step {currentStep + 1} of {onboardingSteps.length}
             </p>
-        </div>
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto justify-end">
+            {currentStep > 0 && !stepData.isFinalStep && (
+              <Button variant="outline" onClick={handlePrevious} disabled={isCompleting} className="shadow-sm">
+                <Icons.ChevronRight className="mr-2 h-4 w-4 rotate-180" /> Previous
+              </Button>
+            )}
+            {!stepData.isFinalStep ? (
+              <Button onClick={handleNext} disabled={isCompleting} className="shadow-sm bg-primary hover:bg-primary/90">
+                {stepData.nextButtonText || "Next"} <Icons.ChevronRight className="ml-2 h-4 w-4" />
+              </Button>
+            ) : (
+              <Button onClick={handleFinish} className="w-full sm:w-auto shadow-sm bg-green-600 hover:bg-green-700 text-white" disabled={isCompleting}>
+                {isCompleting ? <Icons.Search className="mr-2 h-4 w-4 animate-spin" /> : <Icons.CheckCircle2 className="mr-2 h-4 w-4" />}
+                {isCompleting ? "Finishing..." : (stepData.nextButtonText || "Complete Onboarding")}
+              </Button>
+            )}
+          </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
