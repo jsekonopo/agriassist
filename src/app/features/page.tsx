@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { PublicPageLayout } from '@/components/layout/public-page-layout'; // Import the layout
 
 interface FeatureDetailProps {
   icon: React.ElementType;
@@ -86,7 +87,7 @@ const featureDetails: FeatureDetailProps[] = [
       "Filter reports by date ranges, crop types, and task statuses for granular insights.",
       "Future: Advanced custom reports and data export capabilities (CSV/PDF)."
     ],
-    linkToAppSection: "/analytics", // or /reporting
+    linkToAppSection: "/analytics", 
     linkText: "View Analytics",
   },
   {
@@ -108,7 +109,7 @@ const featureDetails: FeatureDetailProps[] = [
    {
     icon: Icons.Map,
     title: "Visual Field Mapping",
-    description: "Define, view, and (soon) draw your field boundaries on an interactive map.",
+    description: "Define, view, and draw your field boundaries on an interactive map.",
     imageUrl: "https://placehold.co/600x400.png",
     imageAlt: "Farm map with field boundaries",
     imageHint: "field mapping GIS",
@@ -116,7 +117,7 @@ const featureDetails: FeatureDetailProps[] = [
       "View your farm and fields on a satellite map.",
       "Define fields with names, sizes, and GeoJSON boundary data.",
       "Display individual field polygons or markers on the map.",
-      "Future: Integrated drawing and editing tools for field boundaries directly on the map."
+      "Integrated drawing and editing tools for field boundaries directly on the map."
     ],
     linkToAppSection: "/map",
     linkText: "View Farm Map",
@@ -125,7 +126,7 @@ const featureDetails: FeatureDetailProps[] = [
 
 export default function FeaturesPage() {
   return (
-    <div className="bg-gradient-to-br from-primary/5 via-background to-background min-h-screen">
+    <PublicPageLayout>
       <PageHeader
         title="AgriAssist Features"
         description="Discover the powerful tools AgriAssist offers to revolutionize your farm management."
@@ -186,8 +187,6 @@ export default function FeaturesPage() {
           </div>
         </section>
       </div>
-    </div>
+    </PublicPageLayout>
   );
 }
-
-    

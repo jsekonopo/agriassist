@@ -9,10 +9,11 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { PublicPageLayout } from '@/components/layout/public-page-layout'; // Import the layout
 
 export default function ContactUsPage() {
   return (
-    <div className="bg-gradient-to-br from-primary/5 via-background to-background min-h-screen">
+    <PublicPageLayout>
       <PageHeader
         title="Contact AgriAssist"
         description="We're here to help. Reach out to us with your questions, feedback, or support needs."
@@ -98,8 +99,6 @@ export default function ContactUsPage() {
           </div>
         </section>
       </div>
-    </div>
+    </PublicPageLayout>
   );
 }
-
-    

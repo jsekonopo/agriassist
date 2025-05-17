@@ -9,9 +9,10 @@ export interface NavItem {
   icon: LucideIcon;
   label?: string;
   disabled?: boolean;
-  isPublicPage?: boolean; // To differentiate public marketing pages if needed for sidebar
+  isPublicPage?: boolean; 
 }
 
+// Navigation items for the authenticated application sidebar
 export const mainNavItems: NavItem[] = [
   {
     title: 'Dashboard',
@@ -48,32 +49,32 @@ export const mainNavItems: NavItem[] = [
     href: '/reporting',
     icon: Icons.Reporting, 
   },
-  // Public facing pages also added here for now, could be separated later
+];
+
+// Navigation items for the public-facing site header and footer
+export const publicNavItems: NavItem[] = [
   {
     title: 'Features',
     href: '/features',
-    icon: Icons.ListChecks, // Using ListChecks for features
-    isPublicPage: true,
+    icon: Icons.ListChecksFeatures, // Assuming this icon exists and is appropriate
   },
   {
     title: 'Pricing', 
     href: '/pricing',
     icon: Icons.Dollar, 
-    isPublicPage: true,
   },
   {
     title: 'About Us',
     href: '/about',
-    icon: Icons.Users, // Using Users for About Us
-    isPublicPage: true,
+    icon: Icons.Users, 
   },
   {
     title: 'Contact',
     href: '/contact',
-    icon: Icons.Mail, // Using Mail for Contact
-    isPublicPage: true,
+    icon: Icons.Mail, 
   },
 ];
+
 
 export const settingsNavItem: NavItem = {
   title: 'Settings',
@@ -81,5 +82,3 @@ export const settingsNavItem: NavItem = {
   icon: Settings,
   disabled: false, 
 };
-
-    

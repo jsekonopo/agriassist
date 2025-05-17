@@ -7,11 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/contexts/auth-context';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation'; // Added useSearchParams
 import type { PlanId } from '@/contexts/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { useState, useEffect } from 'react';
-import { loadStripe } from '@stripe/stripe-js'; // Import loadStripe
+import { loadStripe } from '@stripe/stripe-js';
+import { PublicPageLayout } from '@/components/layout/public-page-layout'; // Import the layout
 
 interface PricingPlan {
   id: PlanId;
@@ -22,7 +23,7 @@ interface PricingPlan {
   features: string[];
   actionLabel: string;
   isCurrentPlan?: boolean; 
-  stripePriceIdEnvVar?: 'STRIPE_PRICE_ID_PRO' | 'STRIPE_PRICE_ID_AGRIBUSINESS'; // To map to env var
+  stripePriceIdEnvVar?: 'STRIPE_PRICE_ID_PRO' | 'STRIPE_PRICE_ID_AGRIBUSINESS'; 
 }
 
 const plansData: Omit<PricingPlan, 'isCurrentPlan' | 'actionLabel'>[] = [
@@ -70,7 +71,6 @@ const plansData: Omit<PricingPlan, 'isCurrentPlan' | 'actionLabel'>[] = [
   },
 ];
 
-// Initialize Stripe.js with your publishable key
 const stripePromise = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
   ? loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
   : null;
@@ -81,20 +81,20 @@ export default function PricingPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [isLoadingPlanChange, setIsLoadingPlanChange] = useState<PlanId | null>(null);
+  const searchParams = useSearchParams(); // Use searchParams
 
   useEffect(() => {
-    // Check to see if this is a redirect back from Checkout
-    const query = new URLSearchParams(window.location.search);
-    if (query.get("session_id")) {
+    const sessionId = searchParams.get("session_id");
+    if (sessionId) {
       toast({
         title: "Subscription Processing",
         description: "Your subscription is being processed. Your plan details will update shortly.",
       });
-      refreshUserData(); // Refresh user data to get latest subscription status from webhook update
-      // Optionally, redirect to a specific success page or remove query params
-      // router.replace('/profile', undefined); // Clear query params
+      refreshUserData(); 
+      // Clear the session_id from URL without full page reload
+      router.replace('/pricing', undefined); 
     }
-  }, [toast, refreshUserData, router]);
+  }, [searchParams, toast, refreshUserData, router]);
 
 
   const handleSelectPlan = async (planId: PlanId) => {
@@ -114,10 +114,9 @@ export default function PricingPage() {
 
     setIsLoadingPlanChange(planId);
 
-    const result = await updateUserPlan(planId); // This now calls the API endpoint
+    const result = await updateUserPlan(planId); 
 
     if (result.success && result.sessionId) {
-      // Redirect to Stripe Checkout
       const stripe = await stripePromise;
       if (stripe) {
         const { error } = await stripe.redirectToCheckout({ sessionId: result.sessionId });
@@ -128,9 +127,8 @@ export default function PricingPage() {
       } else {
          toast({ title: "Stripe Error", description: "Stripe.js failed to load.", variant: "destructive" });
       }
-    } else if (result.success && planId === 'free') { // Handle direct "downgrade" to free via cancel
+    } else if (result.success && planId === 'free') { 
         toast({ title: "Plan Changed", description: result.message });
-        // refreshUserData() is called within cancelSubscription which is called by updateUserPlan for 'free'
     } else if (!result.success) {
       toast({ title: "Plan Change Failed", description: result.message || result.error, variant: "destructive" });
     }
@@ -150,14 +148,14 @@ export default function PricingPage() {
   }
 
   return (
-    <div className="space-y-8 py-12 md:py-16">
+    <PublicPageLayout>
       <PageHeader
         title="Choose Your AgriAssist Plan"
         description="Flexible plans designed to fit the needs of every farm, from hobbyist to agribusiness."
         icon={Icons.Dollar}
       />
 
-      <section className="container mx-auto px-4 md:px-6">
+      <section className="container mx-auto px-4 md:px-6 py-8 md:py-12">
         <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
           {displayPlans.map((plan) => (
             <Card key={plan.id} className={`flex flex-col shadow-lg hover:shadow-xl transition-shadow duration-300 ${plan.isCurrentPlan ? 'border-2 border-primary ring-2 ring-primary/50' : 'border'}`}>
@@ -211,6 +209,6 @@ export default function PricingPage() {
            )}
         </div>
       </section>
-    </div>
+    </PublicPageLayout>
   );
 }

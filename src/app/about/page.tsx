@@ -5,10 +5,11 @@ import { Icons } from '@/components/icons';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { PublicPageLayout } from '@/components/layout/public-page-layout'; // Import the layout
 
 export default function AboutUsPage() {
   return (
-    <div className="bg-gradient-to-br from-primary/5 via-background to-background min-h-screen">
+    <PublicPageLayout>
       <PageHeader
         title="About AgriAssist"
         description="Cultivating the Future of Farming, Together."
@@ -65,9 +66,6 @@ export default function AboutUsPage() {
           </div>
         </section>
       </div>
-    </div>
+    </PublicPageLayout>
   );
 }
-
-
-    
