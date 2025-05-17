@@ -1,4 +1,3 @@
-
 "use client";
 
 import Image from 'next/image';
@@ -17,6 +16,7 @@ import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } fr
 import { format, parseISO } from 'date-fns';
 import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
 import { useToast } from "@/hooks/use-toast";
+import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; // New import
 
 interface WeatherData {
   temperature: number;
@@ -91,11 +91,11 @@ const sampleResourceData = [
 ];
 const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))'];
 
-const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
-const rolesThatCanAddData: UserRole[] = [...ownerRoles, 'admin', 'editor'];
+const ownerRoles: UserRoleOnFarm[] = ['free', 'pro', 'agribusiness'];
+const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor'];
 
 export default function DashboardPage() {
-  const { user, isLoading: authLoading, makeApiRequest } = useAuth(); // Added makeApiRequest
+  const { user, isLoading: authLoading, makeApiRequest, markOnboardingComplete } = useAuth(); 
   const { toast } = useToast();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
@@ -111,6 +111,7 @@ export default function DashboardPage() {
 
   const [proactiveInsights, setProactiveInsights] = useState<ProactiveFarmInsightsOutput | null>(null);
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false); // New state for onboarding
 
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
@@ -123,19 +124,12 @@ export default function DashboardPage() {
       let lon = -75.6972; 
       let locationName = "Current Weather (Ottawa - Default)"; 
 
-      if (user?.farmId) { 
-        const farmDocRef = doc(db, "farms", user.farmId);
-        const farmDocSnap = await getDoc(farmDocRef);
-        if (farmDocSnap.exists()) {
-          const farmData = farmDocSnap.data();
-          if (typeof farmData.latitude === 'number' && typeof farmData.longitude === 'number') {
-            lat = farmData.latitude;
-            lon = farmData.longitude;
-            locationName = `Current Weather (${farmData.farmName || 'Your Farm Location'})`;
-          } else if (farmData.farmName) {
-            locationName = `Current Weather (${farmData.farmName} - Using Ottawa Default)`;
-          }
-        }
+      if (user?.farmId && user.farmLatitude != null && user.farmLongitude != null) {
+        lat = user.farmLatitude;
+        lon = user.farmLongitude;
+        locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
+      } else if (user?.farmName) {
+        locationName = `Current Weather (${user.farmName} - Using Ottawa Default)`;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -163,7 +157,7 @@ export default function DashboardPage() {
     if (user !== undefined) { 
         fetchFarmLocationAndWeather();
     }
-  }, [user?.farmId, user?.farmLatitude, user?.farmLongitude]); 
+  }, [user?.farmId, user?.farmName, user?.farmLatitude, user?.farmLongitude]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -182,6 +176,7 @@ export default function DashboardPage() {
     setDataLoading(true);
     const fetchData = async () => {
       try {
+        // Fetch Fields for Acreage
         const fieldsQuery = query(collection(db, "fields"), where("farmId", "==", user.farmId));
         const fieldsSnapshot = await getDocs(fieldsQuery);
         let acreageInAcres = 0;
@@ -196,14 +191,13 @@ export default function DashboardPage() {
             }
           }
         });
-
         if (preferredAreaUnit === "hectares") {
             setTotalAcreage(acreageInAcres > 0 ? parseFloat((acreageInAcres * ACRES_TO_HECTARES).toFixed(2)) : 0);
         } else {
             setTotalAcreage(acreageInAcres > 0 ? parseFloat(acreageInAcres.toFixed(1)) : 0);
         }
 
-
+        // Fetch Planting Logs
         const plantingLogsQuery = query(collection(db, "plantingLogs"), where("farmId", "==", user.farmId), orderBy("plantingDate", "desc"));
         const plantingLogsSnapshot = await getDocs(plantingLogsQuery);
         const pLogs = plantingLogsSnapshot.docs.map(docSnap => docSnap.data() as PlantingLog);
@@ -211,6 +205,7 @@ export default function DashboardPage() {
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A");
 
+        // Fetch Harvesting Logs
         const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
         const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog);
@@ -224,6 +219,7 @@ export default function DashboardPage() {
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
 
+        // Fetch Task Logs
         const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
         const tasksSnapshot = await getDocs(tasksQuery);
         setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog)));
@@ -237,8 +233,21 @@ export default function DashboardPage() {
     fetchData();
   }, [user, authLoading, preferredAreaUnit]);
 
+  // Onboarding Modal Logic
+  useEffect(() => {
+    if (user && !authLoading && user.onboardingCompleted === false) {
+      setShowOnboardingModal(true);
+    }
+  }, [user, authLoading]);
+
+  const handleCompleteOnboarding = async () => {
+    await markOnboardingComplete();
+    setShowOnboardingModal(false); 
+  };
+
+
   const handleGetProactiveInsights = useCallback(async () => {
-    if (!user?.farmId || !user.uid) { // Added user.uid check
+    if (!user?.farmId || !user.uid) { 
       toast({ title: "Error", description: "Farm ID or User ID is missing. Cannot fetch insights.", variant: "destructive" });
       return;
     }
@@ -249,7 +258,6 @@ export default function DashboardPage() {
       setProactiveInsights(insights);
       toast({ title: "Insights Generated", description: "Proactive insights for your farm are ready." });
 
-      // Trigger notification if insights are significant
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
         const notificationTitle = "New Proactive Farm Insight Available";
         let notificationMessage = "The AI Farm Expert has generated new insights for your farm. ";
@@ -258,14 +266,14 @@ export default function DashboardPage() {
         
         try {
           await makeApiRequest('/api/notifications/create', {
-            userId: user.uid, // Notification is for the current user
+            userId: user.uid, 
             farmId: user.farmId,
             type: 'ai_insight',
             title: notificationTitle,
             message: notificationMessage.trim(),
-            link: '/dashboard' // Link back to the dashboard where insights are shown
+            link: '/dashboard' 
           });
-          toast({ title: "Notification Created", description: "An in-app notification for the new insight has been created."});
+          toast({ title: "Notification Logged", description: "An in-app notification for the new insight has been created."});
         } catch (notifError) {
           console.error("Error creating notification for AI insight:", notifError);
           toast({ title: "Notification Error", description: "Could not create a notification for the new insight.", variant: "destructive"});
@@ -278,17 +286,35 @@ export default function DashboardPage() {
     } finally {
       setIsLoadingInsights(false);
     }
-  }, [user?.farmId, user?.uid, toast, makeApiRequest]); // Added user.uid and makeApiRequest
+  }, [user?.farmId, user?.uid, toast, makeApiRequest]); 
+
+
+  if (authLoading && !user) {
+    return (
+        <div className="space-y-6">
+            <PageHeader title="Farm Dashboard" description="Loading your farm's overview..." icon={Icons.Dashboard}/>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-[120px] rounded-lg" />)}
+            </div>
+            <div className="grid gap-6 lg:grid-cols-3">
+                <Skeleton className="lg:col-span-2 h-[350px] rounded-lg" />
+                <Skeleton className="h-[350px] rounded-lg" />
+            </div>
+        </div>
+    );
+  }
 
 
   return (
     <div className="space-y-6">
+      {user && <OnboardingModal isOpen={showOnboardingModal} onOpenChange={setShowOnboardingModal} onComplete={handleCompleteOnboarding} />}
       <PageHeader
         title="Farm Dashboard"
         description="Overview of your farm's performance and activities."
         icon={Icons.Dashboard}
       />
 
+      {/* ... rest of the dashboard content (stats cards, charts, etc.) ... */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <DashboardStatsCard
           title="Total Acreage"
