@@ -46,6 +46,7 @@
     "firebase-admin": "^12.3.0",
     "genkit": "^1.8.0",
     "leaflet": "^1.9.4",
+    "leaflet-draw": "^1.0.4",
     "lucide-react": "^0.475.0",
     "next": "15.2.3",
     "patch-package": "^8.0.0",
@@ -64,6 +65,7 @@
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.12",
+    "@types/leaflet-draw": "^1.0.11",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
