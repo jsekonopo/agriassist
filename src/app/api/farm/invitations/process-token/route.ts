@@ -2,7 +2,15 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import type { UserRole, StaffMemberInFarmDoc } from '@/contexts/auth-context'; // Import UserRole
+import type { UserRole, StaffMemberInFarmDoc, User, NotificationPreferences } from '@/contexts/auth-context'; // Import UserRole
+import { Resend } from 'resend';
+import GeneralNotificationEmail from '@/emails/general-notification-email';
+
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const appName = 'AgriAssist';
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002'; // Ensure this is set
+const fromEmail = process.env.RESEND_FROM_EMAIL || `AgriAssist Notifications <notifications@${new URL(appUrl).hostname}>`;
+
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,18 +74,19 @@ export async function POST(request: NextRequest) {
     
     const acceptingUserDocSnap = await userRef.get();
     if (acceptingUserDocSnap.exists()) {
-        const acceptingUserData = acceptingUserDocSnap.data();
+        const acceptingUserData = acceptingUserDocSnap.data() as User;
         if (acceptingUserData?.farmId === invitationData.inviterFarmId) {
+            // User is already part of this farm, just mark invite as accepted
             batch.update(invitationDoc.ref, { status: 'accepted', acceptedAt: FieldValue.serverTimestamp(), acceptedByUid: acceptingUserUid });
             await batch.commit();
-            return NextResponse.json({ success: true, message: `You are already a member of ${invitationData.farmName}.` });
+            return NextResponse.json({ success: true, message: `You are already a member of ${farmData?.farmName || 'this farm'}.` });
         }
         if (acceptingUserData?.isFarmOwner && acceptingUserData?.farmId !== invitationData.inviterFarmId) {
             return NextResponse.json({ success: false, message: 'You are currently an owner of another farm. You cannot join a different farm as staff without addressing your current farm ownership.' }, { status: 400 });
         }
     }
 
-    const invitedRole = invitationData.invitedRole as UserRole || 'viewer'; // Default to 'viewer' if not set
+    const invitedRole = invitationData.invitedRole as UserRole || 'viewer'; 
 
     batch.update(invitationDoc.ref, { 
         status: 'accepted', 
@@ -88,13 +97,12 @@ export async function POST(request: NextRequest) {
 
     batch.update(userRef, {
       farmId: invitationData.inviterFarmId,
-      farmName: invitationData.farmName,
+      farmName: farmData?.farmName || 'Unnamed Farm', // Add farmName to user doc
       isFarmOwner: false,
-      roleOnCurrentFarm: invitedRole, // Set the user's role on this farm
+      roleOnCurrentFarm: invitedRole, 
       updatedAt: FieldValue.serverTimestamp()
     });
 
-    // Add user to farm's staff array as an object { uid, role }
     const newStaffMember: StaffMemberInFarmDoc = { uid: acceptingUserUid, role: invitedRole };
     batch.update(farmRef, {
       staff: FieldValue.arrayUnion(newStaffMember),
@@ -103,7 +111,59 @@ export async function POST(request: NextRequest) {
     
     await batch.commit();
 
-    return NextResponse.json({ success: true, message: `Invitation to join farm "${invitationData.farmName}" as a ${invitedRole} accepted successfully!` });
+    // Send notification to farm owner
+    const ownerId = farmData?.ownerId;
+    if (ownerId) {
+      try {
+        const ownerDocRef = adminDb.collection('users').doc(ownerId);
+        const ownerDocSnap = await ownerDocRef.get();
+        if (ownerDocSnap.exists()) {
+          const ownerData = ownerDocSnap.data() as User;
+          const ownerEmail = ownerData.email;
+          const ownerPrefs = ownerData.settings?.notificationPreferences;
+
+          const notificationTitle = "Staff Invitation Accepted";
+          const notificationMessage = `${acceptingUserEmail || 'A new user'} has accepted your invitation to join farm "${farmData?.farmName || 'your farm'}" as a ${invitedRole}.`;
+          
+          const newNotificationRef = adminDb.collection('notifications').doc();
+          await newNotificationRef.set({
+            id: newNotificationRef.id,
+            userId: ownerId,
+            farmId: invitationData.inviterFarmId,
+            type: 'staff_invite_accepted', // More specific type
+            title: notificationTitle,
+            message: notificationMessage,
+            link: '/profile', // Link to profile or future staff management page
+            isRead: false,
+            createdAt: FieldValue.serverTimestamp(),
+            readAt: null,
+          });
+
+          if (resend && fromEmail && ownerEmail && ownerPrefs?.staffActivityEmail) {
+            const emailActionLink = `${appUrl}/profile`;
+            await resend.emails.send({
+              from: fromEmail,
+              to: [ownerEmail],
+              subject: `${appName} Notification: ${notificationTitle}`,
+              react: GeneralNotificationEmail({
+                notificationTitle: notificationTitle,
+                notificationMessage: notificationMessage,
+                actionLink: emailActionLink,
+                actionText: "View Farm Staff",
+                appName: appName,
+                appUrl: appUrl,
+                recipientName: ownerData.name,
+              }) as React.ReactElement,
+            });
+            console.log(`Staff acceptance notification email sent to owner ${ownerEmail}`);
+          }
+        }
+      } catch (notifError) {
+        console.error("Error sending staff acceptance notification to owner:", notifError);
+      }
+    }
+
+    return NextResponse.json({ success: true, message: `Invitation to join farm "${farmData?.farmName || 'Unnamed Farm'}" as a ${invitedRole} accepted successfully!` });
 
   } catch (error) {
     console.error('Error in /api/farm/invitations/process-token:', error);
