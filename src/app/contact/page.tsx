@@ -1,5 +1,6 @@
 
 // src/app/contact/page.tsx
+'use client';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';

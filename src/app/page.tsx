@@ -144,9 +144,9 @@ export default function LandingPage() {
             </div>
             <div className="mx-auto grid max-w-5xl items-start gap-8 sm:grid-cols-2 md:gap-12 lg:grid-cols-3 lg:max-w-none mt-12">
               <FeatureCard icon={Icons.Map} title="Visual Field Mapping" description="Define and visualize your fields, eventually with boundary drawing and detailed overlays."/>
-              <FeatureCard icon={Icons.Database} title="Integrated Data Logging" description="Easily record planting, harvesting, soil tests, inputs, equipment, finances, and more."/>
+              <FeatureCard icon={Icons.DataManagement} title="Integrated Data Logging" description="Easily record planting, harvesting, soil tests, inputs, equipment, finances, and more."/>
               <FeatureCard icon={Icons.Analytics} title="Farm Analytics & Reporting" description="Track resource usage, yields, and financial performance with intuitive charts and summaries."/>
-              <FeatureCard icon={Icons.BrainCircuit} title="AI Farm Expert" description="Get AI-powered advice for crop health, optimization, sustainability, and timing."/>
+              <FeatureCard icon={Icons.AIExpert} title="AI Farm Expert" description="Get AI-powered advice for crop health, optimization, sustainability, and timing."/>
               <FeatureCard icon={Icons.Users} title="Staff Collaboration" description="Manage farm access for your team members with role-based permissions."/>
               <FeatureCard icon={Icons.Settings} title="Customizable Settings" description="Tailor the platform to your needs with preferences for units, notifications, and themes."/>
             </div>
