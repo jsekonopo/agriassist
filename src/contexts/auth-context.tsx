@@ -24,16 +24,15 @@ export type PreferredAreaUnit = "acres" | "hectares";
 export type PreferredWeightUnit = "kg" | "lbs";
 export type ThemePreference = "light" | "dark" | "system";
 export type StaffRole = 'admin' | 'editor' | 'viewer';
-// UserRole can be their plan if they are an owner, or their staff role.
 export type UserRoleOnFarm = PlanId | StaffRole | null;
 
 
 export interface NotificationPreferences {
   taskRemindersEmail?: boolean;
-  weatherAlertsEmail?: boolean; // For future actual weather alerts
-  aiInsightsEmail?: boolean;    // For future proactive AI insight emails
-  staffActivityEmail?: boolean; // For owner/admin summaries (future)
-  // aiSuggestionsInApp is a UI preference, not email.
+  weatherAlertsEmail?: boolean;
+  aiInsightsEmail?: boolean; // For AI-generated insights or suggestions
+  staffActivityEmail?: boolean; 
+  // aiSuggestionsInApp is UI, not email pref.
 }
 export interface UserSettings {
   notificationPreferences?: NotificationPreferences;
@@ -75,8 +74,8 @@ export interface User {
 export interface AppNotification {
   id: string;
   userId: string;
-  farmId?: string;
-  type: string; 
+  farmId?: string | null; // Keep optional if some notifications are not farm-specific
+  type: string; // e.g., "task_reminder", "weather_alert", "ai_insight", "staff_activity"
   title: string;
   message: string;
   link?: string;
@@ -149,13 +148,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (userDocSnap.exists()) {
       const appUserDataFromDb = userDocSnap.data() as Partial<User>;
-      let currentFarmName: string | null = appUserDataFromDb.farmName || null; // User's own farmName if they are an owner
+      let currentFarmName: string | null = null;
       let currentIsFarmOwner = appUserDataFromDb.isFarmOwner || false;
       let currentFarmId: string | null = appUserDataFromDb.farmId || null;
       let userRoleOnFarm: UserRoleOnFarm = null;
       let staffDetailsForOwner: StaffMemberWithDetails[] = [];
-      let currentFarmLatitude: number | null = null;
-      let currentFarmLongitude: number | null = null;
+      let currentFarmLatitude: number | null = appUserDataFromDb.farmLatitude || null; // Initial value from user doc if it was there
+      let currentFarmLongitude: number | null = appUserDataFromDb.farmLongitude || null;
+
 
       if (currentFarmId) {
         try {
@@ -163,7 +163,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const farmDocSnap = await getDoc(farmDocRef);
             if (farmDocSnap.exists()) {
               const farmData = farmDocSnap.data();
-              currentFarmName = farmData?.farmName || 'Unnamed Farm'; // Farm's actual name
+              currentFarmName = farmData?.farmName || 'Unnamed Farm';
               currentFarmLatitude = typeof farmData?.latitude === 'number' ? farmData.latitude : null;
               currentFarmLongitude = typeof farmData?.longitude === 'number' ? farmData.longitude : null;
 
@@ -185,21 +185,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                   staffDetailsForOwner = await Promise.all(staffPromises);
                 }
               } else { 
-                currentIsFarmOwner = false; // Explicitly false if not owner of currentFarmId
+                currentIsFarmOwner = false; 
                 const farmStaffArray = (farmData?.staff || []) as StaffMemberInFarmDoc[];
                 const staffEntry = farmStaffArray.find(s => s.uid === fbUser.uid);
                 userRoleOnFarm = staffEntry ? staffEntry.role : null;
                  if (!staffEntry) { 
-                    console.warn(`User ${fbUser.uid} associated with farm ${currentFarmId} but not in its staff list. Resetting farm association for safety.`);
-                    // This is a critical state correction. Consider if this is the desired behavior.
-                    // It might be better to show an error or guide user. For now, resets.
-                    // await updateDoc(userDocRef, { farmId: null, isFarmOwner: false, roleOnCurrentFarm: null });
-                    // currentFarmId = null; currentFarmName = null; userRoleOnFarm = null; // Reflect this reset locally
+                    console.warn(`User ${fbUser.uid} associated with farm ${currentFarmId} but not in its staff list. Resetting their farm association.`);
+                    await updateDoc(userDocRef, { farmId: null, isFarmOwner: false, roleOnCurrentFarm: null });
+                    currentFarmId = null; currentFarmName = null; userRoleOnFarm = null;
                 }
               }
             } else { 
+              console.warn(`Farm document ${appUserDataFromDb.farmId} not found for user ${fbUser.uid}. Resetting their farm association.`);
+              await updateDoc(userDocRef, { farmId: null, isFarmOwner: false, roleOnCurrentFarm: null });
               currentFarmId = null; currentFarmName = null; currentIsFarmOwner = false; userRoleOnFarm = null;
-              console.warn(`Farm document ${appUserDataFromDb.farmId} not found for user ${fbUser.uid}.`);
             }
         } catch (farmError) {
             console.error(`Error fetching farm ${appUserDataFromDb.farmId} for user ${fbUser.uid}:`, farmError);
@@ -226,7 +225,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         farmLatitude: currentFarmLatitude,
         farmLongitude: currentFarmLongitude,
         isFarmOwner: currentIsFarmOwner,
-        staffMembers: currentIsFarmOwner ? staffDetailsForOwner : [],
+        staffMembers: staffDetailsForOwner, // Only populated if current user is owner
         roleOnCurrentFarm: userRoleOnFarm,
         selectedPlanId: appUserDataFromDb.selectedPlanId || "free",
         subscriptionStatus: appUserDataFromDb.subscriptionStatus || (appUserDataFromDb.selectedPlanId === "free" ? "active" : "incomplete"),
@@ -236,7 +235,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         settings: defaultSettings,
       };
     } else { 
-        console.warn(`User document not found in Firestore for UID: ${fbUser.uid}.`);
+        console.warn(`User document not found in Firestore for UID: ${fbUser.uid}. Cannot build full app user context.`);
         return null; 
     }
   }, []);
@@ -245,15 +244,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const currentFbUser = auth.currentUser; 
     if (currentFbUser) {
       try {
+        setIsLoading(true);
         const appUserData = await fetchAppUserDataFromDb(currentFbUser);
-        setUser(appUserData); // This will trigger context update and re-renders
+        setUser(appUserData);
       } catch (error) {
         console.error("Error refreshing user data:", error);
         setUser(null); 
         toast({ title: "Error", description: "Could not refresh user data. Please try logging in again.", variant: "destructive" });
+      } finally {
+        setIsLoading(false);
       }
     } else {
       setUser(null);
+      setIsLoading(false);
     }
   }, [fetchAppUserDataFromDb, toast]);
 
@@ -283,7 +286,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     batch.set(userDocRef, {
       uid: fbUser.uid, email: fbUser.email?.toLowerCase(), name: name,
       farmId: newFarmId, 
-      farmName: actualFarmName, // Store initial farm name on user doc as well for convenience
       isFarmOwner: true,
       roleOnCurrentFarm: initialPlanId, 
       selectedPlanId: initialPlanId,
@@ -327,6 +329,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.error("Error checking for pending invitations after registration:", error);
     }
     await refreshUserData(); 
+    router.push("/dashboard");
   }, [toast, router, refreshUserData]);
 
   const logoutUser = useCallback(async () => {
@@ -350,12 +353,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const batch = writeBatch(db);
     const userDocRef = doc(db, "users", currentFbUser.uid);
-    const userUpdateData: { name?: string; farmName?: string; updatedAt: FieldValue } = { updatedAt: serverTimestamp() };
+    const userUpdateData: { name?: string; updatedAt: FieldValue } = { updatedAt: serverTimestamp() };
     
     let profileNeedsUpdateInAuth = false;
-    if (nameUpdate.trim() !== "" && nameUpdate.trim() !== (currentAppContextUser.name || "")) {
+    if (nameUpdate.trim() && nameUpdate.trim() !== (currentAppContextUser.name || "")) {
       userUpdateData.name = nameUpdate.trim();
       profileNeedsUpdateInAuth = true; 
+    }
+    
+    if (Object.keys(userUpdateData).length > 1) { 
+        batch.update(userDocRef, userUpdateData);
     }
 
     if (currentAppContextUser.isFarmOwner && currentAppContextUser.farmId) {
@@ -363,33 +370,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const farmUpdates: {updatedAt: FieldValue; farmName?: string; latitude?: number | null; longitude?: number | null} = { updatedAt: serverTimestamp() };
       let farmDocNeedsUpdate = false;
 
-      if (newFarmName.trim() !== "" && newFarmName.trim() !== (currentAppContextUser.farmName || "")) {
+      if (newFarmName.trim() && newFarmName.trim() !== (currentAppContextUser.farmName || "")) {
         farmUpdates.farmName = newFarmName.trim();
-        userUpdateData.farmName = newFarmName.trim(); // Keep user's farmName in sync if they are owner
         farmDocNeedsUpdate = true;
       }
       
-      if (farmLatInput !== undefined) { 
-        farmUpdates.latitude = farmLatInput === null ? null : Number(farmLatInput);
+      if (farmLatInput !== undefined ) { 
+        farmUpdates.latitude = farmLatInput === null || isNaN(farmLatInput) ? null : Number(farmLatInput);
         farmDocNeedsUpdate = true;
       }
       if (farmLngInput !== undefined) {
-        farmUpdates.longitude = farmLngInput === null ? null : Number(farmLngInput);
+        farmUpdates.longitude = farmLngInput === null || isNaN(farmLngInput) ? null : Number(farmLngInput);
         farmDocNeedsUpdate = true;
       }
       
       if (farmDocNeedsUpdate) {
         batch.update(farmDocRef, farmUpdates);
       }
-    } else if (newFarmName.trim() !== "" && !currentAppContextUser.isFarmOwner) {
-      // If a non-owner tries to change farmName via their profile (which shouldn't be possible via UI if restricted)
-      console.warn("Non-owner attempted to change farm name via profile. This should be restricted by UI.");
     }
     
-    if (Object.keys(userUpdateData).length > 1) { 
-        batch.update(userDocRef, userUpdateData);
-    }
-
     if (profileNeedsUpdateInAuth && userUpdateData.name) { 
         await firebaseUpdateProfile(currentFbUser, { displayName: userUpdateData.name });
     }
@@ -414,10 +413,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     try {
       const result = await makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite, role: role });
+      if (result.success) await refreshUserData(); // Refresh owner's view
       return result;
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to log invitation request."}; }
-  }, [user, makeApiRequest]);
+  }, [user, makeApiRequest, refreshUserData]);
 
   const removeStaffMember = useCallback(async (staffUidToRemove: string): Promise<{success: boolean; message: string}> => {
      if (!user?.farmId || (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin')) {
@@ -425,16 +425,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     try {
         const result = await makeApiRequest('/api/farm/remove-staff', { staffUidToRemove });
-        if (result.success) await refreshUserData(); // Refresh self if owner, and to update staff list
+        if (result.success) await refreshUserData();
         return result;
     } catch (error: any) { return { success: false, message: error.message || "Failed to remove staff member."}; }
   }, [user, makeApiRequest, refreshUserData]);
 
   const acceptInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
     try {
-        const result = await makeApiRequest('/api/farm/invitations/process-token', { invitationToken: invitationId }); // Assumes invitationId IS the token
+        const result = await makeApiRequest('/api/farm/invitations/process-token', { invitationToken: invitationId }); 
         if (result.success) {
-          await refreshUserData(); // Critical to get new farmId, role etc.
+          await refreshUserData(); 
         }
         return result;
     } catch (error: any) { return { success: false, message: error.message || "Failed to accept invitation."}; }
@@ -443,10 +443,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const declineInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
     try {
       const result = await makeApiRequest('/api/farm/invitations/decline', { invitationId });
+      if (result.success) await refreshUserData();
       return result;
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to decline invitation."}; }
-  }, [makeApiRequest]);
+  }, [makeApiRequest, refreshUserData]);
 
   const revokeInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
      if (!user?.farmId || (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin')) {
@@ -454,16 +455,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     try {
       const result = await makeApiRequest('/api/farm/invitations/revoke', { invitationId });
+      if (result.success) await refreshUserData();
       return result;
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to revoke invitation."}; }
-  }, [user, makeApiRequest]);
+  }, [user, makeApiRequest, refreshUserData]);
 
   const updateStaffRole = useCallback(async (staffUid: string, newRole: StaffRole): Promise<{success: boolean; message: string}> => {
     if (!user?.farmId) return { success: false, message: "User not associated with a farm." };
     try {
       const result = await makeApiRequest('/api/farm/update-staff-role', { staffUidToUpdate: staffUid, newRole: newRole });
-      if (result.success) await refreshUserData(); // Refresh owner's staff list
+      if (result.success) await refreshUserData();
       return result;
     } catch (error: any) {
       return { success: false, message: error.message || "Failed to update staff role."};
@@ -555,7 +557,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       let unreadCount = 0;
       querySnapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        const notif = { id: docSnap.id, ...data } as AppNotification;
+        const notif = { 
+            id: docSnap.id, 
+            ...data,
+            // Ensure createdAt is a Firestore Timestamp object before calling toDate()
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt : Timestamp.now(),
+            readAt: data.readAt instanceof Timestamp ? data.readAt : undefined,
+        } as AppNotification;
         fetchedNotifs.push(notif);
         if (!notif.isRead) {
           unreadCount++;
@@ -614,7 +622,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoading(false);
     });
     return () => unsubscribe();
-  }, [refreshUserData, fetchNotifications]);
+  }, [refreshUserData, fetchNotifications]); // Added fetchNotifications here
 
   useEffect(() => {
     const currentTheme = user?.settings?.theme;
@@ -661,4 +669,3 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
-

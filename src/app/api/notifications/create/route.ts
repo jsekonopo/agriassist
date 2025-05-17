@@ -3,16 +3,16 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { Resend } from 'resend';
-import GeneralNotificationEmail from '@/emails/general-notification-email';
-import type { NotificationPreferences, User } from '@/contexts/auth-context';
+import GeneralNotificationEmail from '@/emails/general-notification-email'; // Ensure this path is correct
+import type { NotificationPreferences, User } from '@/contexts/auth-context'; // Correctly import User type
 
 interface CreateNotificationBody {
-  userId: string; // Recipient User ID
+  userId: string; 
   title: string;
   message: string;
-  type: string; // e.g., "task_reminder", "weather_alert", "ai_insight", "staff_activity"
+  type: string; 
   link?: string;
-  farmId?: string; // Optional, if notification is farm-specific
+  farmId?: string; 
 }
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -23,23 +23,22 @@ const fromEmail = process.env.RESEND_FROM_EMAIL || `AgriAssist <onboarding@resen
 
 export async function POST(request: NextRequest) {
   try {
-    // This API route should be protected and only callable by trusted backend services or admins.
-    // For simplicity, we'll check for a valid Firebase ID token from the caller,
-    // but a more robust system might use service account authentication for backend-to-backend calls.
+    // This API route should ideally be protected, e.g., by an API key or service account auth if called by other backend services.
+    // For now, if an ID token is provided by a client (e.g., an admin user triggering a notification for another user), verify it.
+    // If no token, assume it's a trusted backend call for now (this part needs hardening for production).
     const idToken = request.headers.get('Authorization')?.split('Bearer ')[1];
-    if (!idToken) {
-      // In a real scenario where only backend services call this, you might not require an ID token from a user,
-      // but rather use a different authentication mechanism (e.g. API key for the service).
-      // For now, this acts as a basic auth check.
-      // return NextResponse.json({ success: false, message: 'Unauthorized: No token provided by caller' }, { status: 401 });
-      console.warn("Notification creation attempt without ID token. Assuming trusted caller for now.");
-    } else {
+    if (idToken) {
         try {
             await adminAuth.verifyIdToken(idToken);
+            // Potentially check if the authenticated user (if any) has permissions to create notifications
         } catch (error) {
             console.error('Error verifying ID token for notification creation:', error);
             return NextResponse.json({ success: false, message: 'Unauthorized: Invalid token from caller' }, { status: 401 });
         }
+    } else {
+        // For now, allow calls without ID token, assuming it's from a trusted backend source.
+        // In production, you'd want a more secure mechanism for backend-to-backend calls.
+        console.warn("Notification creation attempt without ID token. Assuming trusted caller.");
     }
     
     const body = await request.json() as CreateNotificationBody;
@@ -58,7 +57,7 @@ export async function POST(request: NextRequest) {
       link: body.link || null,
       farmId: body.farmId || null,
       isRead: false,
-      createdAt: FieldValue.serverTimestamp() as Timestamp,
+      createdAt: FieldValue.serverTimestamp(), // Firestore server timestamp
       readAt: null,
     };
 
@@ -73,34 +72,41 @@ export async function POST(request: NextRequest) {
         const userDocRef = adminDb.collection('users').doc(body.userId);
         const userDocSnap = await userDocRef.get();
         if (userDocSnap.exists) {
-            const userData = userDocSnap.data() as User;
+            const userData = userDocSnap.data() as User; // Use the imported User type
             recipientEmail = userData.email || undefined;
             recipientName = userData.name || undefined;
             const prefs = userData.settings?.notificationPreferences;
 
             if (prefs && recipientEmail) {
-                switch (body.type) {
+                switch (body.type.toLowerCase()) { // Standardize type checking
                     case 'task_reminder':
                         if (prefs.taskRemindersEmail) shouldSendEmail = true;
                         break;
-                    case 'ai_insight': // Assuming "aiSuggestionsInApp" preference also means email for important ones
-                        if (prefs.aiInsightsEmail) shouldSendEmail = true;
+                    case 'ai_insight':
+                    case 'proactive_insight':
+                        if (prefs.aiInsightsEmail) shouldSendEmail = true; // Assuming one preference for all AI insights
                         break;
                     case 'weather_alert':
                         if (prefs.weatherAlertsEmail) shouldSendEmail = true;
                         break;
-                    // Add other cases like 'staff_activity' etc.
+                    case 'staff_activity': // Example for future staff related notifications
+                    case 'staff_invite_accepted':
+                         if (prefs.staffActivityEmail) shouldSendEmail = true;
+                         break;
+                    // Add other cases as notification types grow
                 }
             }
         } else {
-            console.warn(`User ${body.userId} not found for email notification.`);
+            console.warn(`User ${body.userId} not found for email notification. Notification created in Firestore only.`);
         }
     } catch (userFetchError) {
         console.error(`Error fetching user ${body.userId} for notification preferences:`, userFetchError);
+        // Proceed with Firestore notification, email sending will be skipped
     }
 
     if (shouldSendEmail && resend && fromEmail && recipientEmail) {
         try {
+            const emailActionLink = body.link ? (body.link.startsWith('http') ? body.link : `${appUrl}${body.link}`) : undefined;
             await resend.emails.send({
                 from: fromEmail,
                 to: [recipientEmail],
@@ -108,7 +114,7 @@ export async function POST(request: NextRequest) {
                 react: GeneralNotificationEmail({
                     notificationTitle: body.title,
                     notificationMessage: body.message,
-                    actionLink: body.link ? (body.link.startsWith('http') ? body.link : `${appUrl}${body.link}`) : undefined,
+                    actionLink: emailActionLink,
                     actionText: body.link ? "View Details" : undefined,
                     appName: appName,
                     appUrl: appUrl,
@@ -133,4 +139,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }
-
