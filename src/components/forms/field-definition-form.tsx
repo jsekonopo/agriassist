@@ -13,41 +13,37 @@ import { useState, useEffect, useMemo } from "react";
 import { Icons } from "../icons";
 import { useAuth, type PreferredAreaUnit } from "@/contexts/auth-context";
 import { db } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-
-import { MapContainer, TileLayer } from 'react-leaflet';
+import { collection, addDoc, updateDoc, doc, serverTimestamp, getDoc } from "firebase/firestore";
+import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
 import { MapDrawControl } from '@/components/map/map-draw-control';
 import type { GeoJsonObject, Feature, Geometry } from 'geojson';
 import L from 'leaflet'; 
 
 const areaUnits: PreferredAreaUnit[] = ["acres", "hectares"];
 
-// Helper to check for valid GeoJSON structure for Polygons or Features containing Polygons
 const isValidGeoJsonBoundary = (data: string): boolean => {
-  if (!data || data.trim() === "") return true; // Empty is allowed
+  if (!data || data.trim() === "") return true; 
   try {
     const parsed = JSON.parse(data);
     if (typeof parsed !== 'object' || parsed === null) return false;
 
-    const checkGeometry = (geom: Geometry) => {
+    const checkGeometry = (geom: Geometry | null | undefined): geom is Geometry => {
       if (!geom || !geom.type || !geom.coordinates) return false;
       return (geom.type === "Polygon" || geom.type === "MultiPolygon") && Array.isArray(geom.coordinates);
     };
 
     if (parsed.type === "Feature") {
-      return parsed.geometry && checkGeometry(parsed.geometry);
+      return checkGeometry(parsed.geometry);
     } else if (parsed.type === "Polygon" || parsed.type === "MultiPolygon") {
       return checkGeometry(parsed);
     } else if (parsed.type === "FeatureCollection" && Array.isArray(parsed.features)) {
-      // Allow FeatureCollection if it contains at least one valid Polygon/MultiPolygon feature
-      return parsed.features.some((feature: Feature) => feature.geometry && checkGeometry(feature.geometry));
+      return parsed.features.some((feature: Feature) => checkGeometry(feature.geometry));
     }
     return false;
   } catch (e) {
     return false;
   }
 };
-
 
 const fieldDefinitionSchema = z.object({
   fieldName: z.string().min(1, "Field name is required."),
@@ -57,7 +53,7 @@ const fieldDefinitionSchema = z.object({
   ),
   fieldSizeUnit: z.enum(areaUnits).optional(),
   geojsonBoundary: z.string().optional().refine(isValidGeoJsonBoundary, { 
-    message: "Invalid GeoJSON. Must be a valid Polygon, MultiPolygon, or a Feature/FeatureCollection containing them. Please draw or paste valid GeoJSON." 
+    message: "Invalid GeoJSON. Must be a valid Polygon, MultiPolygon, Feature or FeatureCollection containing them. Please draw or ensure valid GeoJSON." 
   }),
   notes: z.string().optional(),
 }).refine(data => (data.fieldSize !== undefined && data.fieldSize !== null) ? data.fieldSizeUnit !== undefined : true, {
@@ -66,10 +62,12 @@ const fieldDefinitionSchema = z.object({
 });
 
 interface FieldDefinitionFormProps {
-  onLogSaved?: () => void;
+  onLogSaved?: () => void; // Kept for consistency, can be part of onFormActionComplete
+  editingFieldId?: string | null;
+  onFormActionComplete?: () => void;
 }
 
-export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
+export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionComplete }: FieldDefinitionFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { user } = useAuth();
@@ -100,10 +98,67 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
   }, [user?.farmLatitude, user?.farmLongitude]);
 
   useEffect(() => {
-    if (user?.settings?.preferredAreaUnit && !form.formState.dirtyFields.fieldSizeUnit) {
-      form.setValue("fieldSizeUnit", user.settings.preferredAreaUnit, { shouldValidate: false });
+    // Set default unit based on user preference when form initializes or editingFieldId changes
+    if (!editingFieldId && !form.formState.isDirty) { // Only on initial load for new form
+        form.setValue("fieldSizeUnit", preferredAreaUnit, { shouldValidate: true });
     }
-  }, [user?.settings?.preferredAreaUnit, form, form.formState.dirtyFields.fieldSizeUnit]);
+  }, [preferredAreaUnit, form, editingFieldId]);
+
+
+  useEffect(() => {
+    const loadFieldForEditing = async () => {
+      if (editingFieldId && user?.farmId) {
+        setIsSubmitting(true); // Use isSubmitting to indicate loading field data
+        try {
+          const fieldDocRef = doc(db, "fields", editingFieldId);
+          const fieldDocSnap = await getDoc(fieldDocRef);
+          if (fieldDocSnap.exists() && fieldDocSnap.data().farmId === user.farmId) {
+            const fieldData = fieldDocSnap.data();
+            form.reset({
+              fieldName: fieldData.fieldName || "",
+              fieldSize: fieldData.fieldSize !== undefined ? Number(fieldData.fieldSize) : undefined,
+              fieldSizeUnit: fieldData.fieldSizeUnit || preferredAreaUnit,
+              geojsonBoundary: fieldData.geojsonBoundary || "",
+              notes: fieldData.notes || "",
+            });
+            // If GeoJSON exists, try to center map on it
+            if (fieldData.geojsonBoundary) {
+                try {
+                    const parsedGeoJson = JSON.parse(fieldData.geojsonBoundary);
+                    const gjLayer = L.geoJSON(parsedGeoJson);
+                    setMapCenter(gjLayer.getBounds().getCenter().lat, gjLayer.getBounds().getCenter().lng);
+                    setMapZoom(15); // Zoom in a bit
+                } catch (e) { /* stay with default farm center */ }
+            }
+
+          } else {
+            toast({ title: "Error", description: "Field not found or not accessible.", variant: "destructive" });
+            if (onFormActionComplete) onFormActionComplete(); // Reset editing mode
+          }
+        } catch (error) {
+          console.error("Error fetching field for editing:", error);
+          toast({ title: "Error", description: "Could not load field data for editing.", variant: "destructive" });
+          if (onFormActionComplete) onFormActionComplete();
+        } finally {
+          setIsSubmitting(false);
+        }
+      } else if (!editingFieldId) {
+        // Reset form to default for new entry if editingFieldId is cleared
+        form.reset({
+          fieldName: "",
+          notes: "",
+          fieldSize: undefined,
+          fieldSizeUnit: preferredAreaUnit,
+          geojsonBoundary: "",
+        });
+        // Reset map center to farm default or general default
+         setMapCenter([ user?.farmLatitude ?? 45.4215, user?.farmLongitude ?? -75.6972 ]);
+         setMapZoom(user?.farmLatitude && user?.farmLongitude ? 13 : 10);
+      }
+    };
+    loadFieldForEditing();
+  }, [editingFieldId, user?.farmId, form, toast, onFormActionComplete, preferredAreaUnit, user?.farmLatitude, user?.farmLongitude]);
+
 
   const handleShapeDrawn = (geojson: GeoJsonObject | null) => {
     if (geojson) {
@@ -128,62 +183,59 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
 
   async function onSubmit(values: z.infer<typeof fieldDefinitionSchema>) {
     if (!user || !user.farmId) { 
-      toast({
-        title: "Authentication Error",
-        description: "You must be logged in and associated with a farm to save a field definition.",
-        variant: "destructive",
-      });
+      toast({ title: "Authentication Error", description: "You must be logged in and associated with a farm.", variant: "destructive" });
       return;
     }
     setIsSubmitting(true);
     try {
-      const fieldData: any = { 
+      const fieldDataPayload: any = { 
         fieldName: values.fieldName,
-        userId: user.uid, 
         farmId: user.farmId, 
-        createdAt: serverTimestamp(),
-        // Remove deprecated individual lat/lon if using GeoJSON
-        latitude: null, 
-        longitude: null,
+        userId: user.uid, // Keep track of who created/last modified if needed at field level
+        updatedAt: serverTimestamp(),
       };
 
       if (values.fieldSize !== undefined && values.fieldSize !== null && values.fieldSizeUnit) {
-        fieldData.fieldSize = values.fieldSize;
-        fieldData.fieldSizeUnit = values.fieldSizeUnit;
-      }
-       if (values.geojsonBoundary && values.geojsonBoundary.trim() !== "") {
-        fieldData.geojsonBoundary = values.geojsonBoundary; 
+        fieldDataPayload.fieldSize = values.fieldSize;
+        fieldDataPayload.fieldSizeUnit = values.fieldSizeUnit;
       } else {
-        fieldData.geojsonBoundary = null; 
-      }
-       if (values.notes && values.notes.trim() !== "") {
-        fieldData.notes = values.notes;
+        fieldDataPayload.fieldSize = null; // Or FieldValue.delete() if you want to remove them
+        fieldDataPayload.fieldSizeUnit = null;
       }
 
-      await addDoc(collection(db, "fields"), fieldData);
-      toast({
-        title: "Field Definition Saved",
-        description: `Field: ${values.fieldName} has been saved.`,
-      });
-      form.reset({ 
-        fieldName: "", 
-        fieldSize: undefined, 
-        fieldSizeUnit: preferredAreaUnit, 
-        geojsonBoundary: "", 
-        notes: "" 
-      });
-      // Reset the MapDrawControl's internal state if possible (by changing key or initialGeoJson)
-      // For now, relying on form.reset which clears currentGeoJsonString -> initialGeoJsonForMap becomes null
-      if (onLogSaved) {
+      if (values.geojsonBoundary && values.geojsonBoundary.trim() !== "") {
+        fieldDataPayload.geojsonBoundary = values.geojsonBoundary; 
+      } else {
+        fieldDataPayload.geojsonBoundary = null; 
+      }
+      if (values.notes && values.notes.trim() !== "") {
+        fieldDataPayload.notes = values.notes;
+      } else {
+        fieldDataPayload.notes = null;
+      }
+
+      if (editingFieldId) {
+        // Update existing document
+        const fieldDocRef = doc(db, "fields", editingFieldId);
+        await updateDoc(fieldDocRef, fieldDataPayload);
+        toast({ title: "Field Updated", description: `Field: ${values.fieldName} has been updated.` });
+      } else {
+        // Add new document
+        fieldDataPayload.createdAt = serverTimestamp();
+        await addDoc(collection(db, "fields"), fieldDataPayload);
+        toast({ title: "Field Definition Saved", description: `Field: ${values.fieldName} has been saved.` });
+      }
+      
+      form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: preferredAreaUnit, geojsonBoundary: "", notes: "" });
+      if (onFormActionComplete) { // Call this to reset parent state and trigger table refresh
+        onFormActionComplete();
+      } else if (onLogSaved) { // Fallback if only onLogSaved is provided (for new entries)
         onLogSaved();
       }
+
     } catch (error) {
       console.error("Error saving field definition to Firestore:", error);
-      toast({
-        title: "Error Saving Field",
-        description: "Could not save the field definition. Ensure GeoJSON is valid if provided.",
-        variant: "destructive",
-      });
+      toast({ title: "Error Saving Field", description: "Could not save the field definition.", variant: "destructive" });
     } finally {
       setIsSubmitting(false);
     }
@@ -227,7 +279,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
                   <FormLabel>Unit</FormLabel>
                   <Select 
                     onValueChange={field.onChange} 
-                    value={form.watch('fieldSizeUnit') || preferredAreaUnit} 
+                    value={field.value || preferredAreaUnit} // Default to preferredAreaUnit if field.value is undefined
                   >
                      <FormControl>
                         <SelectTrigger>
@@ -248,8 +300,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
         <FormItem>
           <FormLabel>Field Boundary (Draw on Map)</FormLabel>
           <FormDescription>
-            Use the map tools (top-left) to draw your field boundary (polygon or rectangle). 
-            You can edit or delete the drawn shape using the tools.
+            Use the map tools (top-left) to draw your field boundary. You can edit or delete the drawn shape.
           </FormDescription>
           <div className="h-[400px] w-full rounded-md border shadow-sm overflow-hidden mt-2 bg-muted">
             <MapContainer 
@@ -257,9 +308,9 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
                 zoom={mapZoom} 
                 scrollWheelZoom={true} 
                 style={{ height: '100%', width: '100%' }} 
-                key={mapCenter.join('-') + mapZoom + (initialGeoJsonForMap ? 'map-with-geojson' : 'map-no-geojson')} // Key to force re-render if needed
+                key={`${mapCenter.join('-')}-${mapZoom}-${editingFieldId || 'new'}`} // Force re-render on key change
             >
-              <TileLayer
+               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &amp; Satellite: &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
                 url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
               />
@@ -283,7 +334,7 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
                 <FormControl>
                    <Textarea {...field} className="hidden" readOnly placeholder="GeoJSON data will appear here after drawing..."/>
                 </FormControl>
-                <FormDescription>GeoJSON data is automatically populated by drawing on the map.</FormDescription>
+                <FormDescription>GeoJSON data is automatically populated by drawing on the map. Clear by deleting shape on map.</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -308,16 +359,21 @@ export function FieldDefinitionForm({ onLogSaved }: FieldDefinitionFormProps) {
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
-          {isSubmitting ? (
-            <>
-              <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
-              Saving Field...
-            </>
-          ) : (
-            "Save Field Definition"
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+            <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
+              {isSubmitting ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin" /> Saving...</>
+                : editingFieldId ? "Update Field" : "Save New Field"
+              }
+            </Button>
+            {editingFieldId && (
+                <Button type="button" variant="outline" onClick={() => {
+                    if(onFormActionComplete) onFormActionComplete();
+                    // form.reset() will be handled by useEffect when editingFieldId becomes null
+                }} disabled={isSubmitting}>
+                    Cancel Edit
+                </Button>
+            )}
+        </div>
         {(!user || !user.farmId) && <p className="text-sm text-destructive mt-2">You must be associated with a farm to save field definitions.</p>}
       </form>
     </Form>

@@ -1,7 +1,8 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useSearchParams } from 'next/navigation';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlantingLogForm } from "./forms/planting-log-form";
@@ -31,28 +32,35 @@ import { FarmEquipmentTable } from "./data-management/farm-equipment-table";
 import { ExpenseLogTable } from "./data-management/expense-log-table";
 import { RevenueLogTable } from "./data-management/revenue-log-table";
 import { Separator } from "@/components/ui/separator";
-import { useAuth } from "@/contexts/auth-context"; // Import useAuth
-import type { UserRole } from "@/contexts/auth-context"; // Import UserRole
+import { useAuth } from "@/contexts/auth-context"; 
+import type { UserRole } from "@/contexts/auth-context"; 
 
 interface DataTab {
   value: string;
   label: string;
   icon: LucideIcon;
   description: string;
-  formComponent: React.ElementType<{ onLogSaved?: () => void }>;
-  tableComponent?: React.ElementType<{ refreshTrigger: number, onLogDeleted: () => void }>;
-  requiredRolesForAdd?: UserRole[]; // Roles that can add/use the form
+  formComponent: React.ElementType<{ onLogSaved?: () => void; editingFieldId?: string | null; onFormActionComplete?: () => void; }>;
+  tableComponent?: React.ElementType<{ refreshTrigger: number, onLogDeleted: () => void; onEditField?: (fieldId: string) => void; }>;
+  requiredRolesForAdd?: UserRole[]; 
 }
+
+const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
+const adminRoles: UserRole[] = ['admin'];
+const editorRoles: UserRole[] = ['editor'];
+
+const allDataManagementRoles: UserRole[] = [...ownerRoles, ...adminRoles, ...editorRoles];
+
 
 const dataTabs: DataTab[] = [
    {
     value: "fields",
     label: "Fields",
     icon: Icons.Location,
-    description: "Define and manage your farm fields.",
+    description: "Define and manage your farm fields, including boundaries.",
     formComponent: FieldDefinitionForm,
     tableComponent: FieldDefinitionTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "planting",
@@ -61,7 +69,7 @@ const dataTabs: DataTab[] = [
     description: "Record and view details about your planting activities.",
     formComponent: PlantingLogForm,
     tableComponent: PlantingLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "harvesting",
@@ -70,7 +78,7 @@ const dataTabs: DataTab[] = [
     description: "Keep track of your harvest yields and observations.",
     formComponent: HarvestingLogForm,
     tableComponent: HarvestingLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "inputs",
@@ -79,7 +87,7 @@ const dataTabs: DataTab[] = [
     description: "Manage your inventory of farm inputs like seeds, fertilizers, and pesticides.",
     formComponent: FarmInputLogForm,
     tableComponent: FarmInputLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "equipment",
@@ -88,7 +96,7 @@ const dataTabs: DataTab[] = [
     description: "Log and track your farm machinery and basic maintenance.",
     formComponent: FarmEquipmentForm,
     tableComponent: FarmEquipmentTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "fertilizer",
@@ -97,7 +105,7 @@ const dataTabs: DataTab[] = [
     description: "Log fertilizer applications and details.",
     formComponent: FertilizerLogForm,
     tableComponent: FertilizerLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "irrigation", 
@@ -106,7 +114,7 @@ const dataTabs: DataTab[] = [
     description: "Log water usage and irrigation activities.",
     formComponent: IrrigationLogForm,
     tableComponent: IrrigationLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "soil",
@@ -115,7 +123,7 @@ const dataTabs: DataTab[] = [
     description: "Manage soil test results and treatments.",
     formComponent: SoilDataForm,
     tableComponent: SoilDataLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "weather",
@@ -124,7 +132,7 @@ const dataTabs: DataTab[] = [
     description: "Log local weather conditions and observations.",
     formComponent: WeatherDataForm,
     tableComponent: WeatherDataLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "tasks",
@@ -133,7 +141,7 @@ const dataTabs: DataTab[] = [
     description: "Manage and track farm tasks and activities.",
     formComponent: TaskLogForm,
     tableComponent: TaskLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "expenses",
@@ -142,7 +150,7 @@ const dataTabs: DataTab[] = [
     description: "Log and track your farm expenses.",
     formComponent: ExpenseLogForm,
     tableComponent: ExpenseLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
   {
     value: "revenue",
@@ -151,35 +159,48 @@ const dataTabs: DataTab[] = [
     description: "Log and track your farm revenue.",
     formComponent: RevenueLogForm,
     tableComponent: RevenueLogTable,
-    requiredRolesForAdd: ['free', 'pro', 'agribusiness', 'admin', 'editor'],
+    requiredRolesForAdd: allDataManagementRoles,
   },
 ];
 
 export function DataManagementContent() {
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get('tab') || "fields";
   const [logRefreshTrigger, setLogRefreshTrigger] = useState(0);
-  const { user } = useAuth(); // Get current user and their role
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const { user } = useAuth(); 
 
   const handleLogSaved = () => {
     setLogRefreshTrigger(prev => prev + 1);
   };
+
+  const handleStartEditField = (fieldId: string) => {
+    setEditingFieldId(fieldId);
+    // Potentially switch to the "fields" tab if not already there, or scroll to form
+  };
+
+  const handleFormActionComplete = () => {
+    setEditingFieldId(null); // Clear editing mode
+    handleLogSaved(); // Refresh table
+  };
   
-  const gridColsClass = () => {
+  const gridColsClass = useMemo(() => {
     const count = dataTabs.length;
     if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
     if (count <= 4) return "grid-cols-2 md:grid-cols-4";
     if (count <= 6) return "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"; 
     return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6";
-  };
+  }, []);
 
   const canUserAdd = (tab: DataTab): boolean => {
     if (!user || !user.roleOnCurrentFarm) return false;
-    if (!tab.requiredRolesForAdd) return true; // If no roles defined, allow all
+    if (!tab.requiredRolesForAdd) return true; 
     return tab.requiredRolesForAdd.includes(user.roleOnCurrentFarm);
   };
 
   return (
-    <Tabs defaultValue="fields" className="w-full">
-      <TabsList className={`grid w-full ${gridColsClass()} mb-6 gap-1 h-auto`}>
+    <Tabs defaultValue={initialTab} className="w-full" onValueChange={() => setEditingFieldId(null)}> {/* Reset editing mode on tab change */}
+      <TabsList className={`grid w-full ${gridColsClass} mb-6 gap-1 h-auto`}>
         {dataTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value} className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm py-2 px-1 sm:px-3 h-auto min-h-[40px] sm:h-10">
             <tab.icon className="h-4 w-4 flex-shrink-0" />
@@ -193,13 +214,21 @@ export function DataManagementContent() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-xl md:text-2xl">
                 <tab.icon className="h-5 w-5 md:h-6 md:w-6 text-primary" />
-                {tab.label}
+                {tab.label} {tab.value === "fields" && editingFieldId ? "(Editing Field)" : ""}
               </CardTitle>
               <CardDescription className="text-sm md:text-base">{tab.description}</CardDescription>
             </CardHeader>
             <CardContent>
               {canUserAdd(tab) ? (
-                <tab.formComponent onLogSaved={handleLogSaved} />
+                 tab.value === "fields" ? (
+                    <tab.formComponent 
+                        onLogSaved={handleLogSaved} 
+                        editingFieldId={editingFieldId} 
+                        onFormActionComplete={handleFormActionComplete} 
+                    />
+                  ) : (
+                    <tab.formComponent onLogSaved={handleLogSaved} />
+                  )
               ) : (
                 <p className="text-muted-foreground">You do not have permission to add new {tab.label.toLowerCase()} records.</p>
               )}
@@ -207,7 +236,15 @@ export function DataManagementContent() {
                 <>
                   <Separator className="my-8" />
                   <h3 className="text-xl font-semibold mb-4">Recorded Entries</h3>
-                  <tab.tableComponent refreshTrigger={logRefreshTrigger} onLogDeleted={handleLogSaved} />
+                   {tab.value === "fields" ? (
+                    <tab.tableComponent 
+                        refreshTrigger={logRefreshTrigger} 
+                        onLogDeleted={handleLogSaved} 
+                        onEditField={handleStartEditField}
+                    />
+                   ) : (
+                     <tab.tableComponent refreshTrigger={logRefreshTrigger} onLogDeleted={handleLogSaved} />
+                   )}
                 </>
               )}
             </CardContent>

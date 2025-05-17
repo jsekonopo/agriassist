@@ -25,7 +25,7 @@ interface FieldDefinitionLog {
   fieldName: string;
   fieldSize?: number;
   fieldSizeUnit?: string; 
-  geojsonBoundary?: string; // Added
+  geojsonBoundary?: string | null;
   notes?: string;
   createdAt?: Timestamp | Date; 
   farmId: string;
@@ -35,15 +35,19 @@ interface FieldDefinitionLog {
 interface FieldDefinitionTableProps {
   refreshTrigger: number;
   onLogDeleted: () => void;
+  onEditField: (fieldId: string) => void; // New prop for editing
 }
 
 const ACRES_TO_HECTARES = 0.404686;
 const HECTARES_TO_ACRES = 1 / ACRES_TO_HECTARES;
 
 const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
-const rolesThatCanDeleteData: UserRole[] = [...ownerRoles, 'admin'];
+// Assuming Admins can also delete/edit fields. Editors might only edit, not delete. Viewers can do neither.
+const rolesThatCanModify: UserRole[] = [...ownerRoles, 'admin']; 
+const rolesThatCanDelete: UserRole[] = [...ownerRoles, 'admin'];
 
-export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefinitionTableProps) {
+
+export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField }: FieldDefinitionTableProps) {
   const [logs, setLogs] = useState<FieldDefinitionLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +93,9 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
     fetchFieldDefinitions();
   }, [user?.farmId, refreshTrigger, toast]);
 
-  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDeleteData.includes(user.roleOnCurrentFarm);
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDelete.includes(user.roleOnCurrentFarm);
+  const canUserEdit = user?.roleOnCurrentFarm && rolesThatCanModify.includes(user.roleOnCurrentFarm);
+
 
   const handleDeleteLog = async (logId: string) => {
     if (!canUserDelete) {
@@ -187,7 +193,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
             <TableHead className="min-w-[120px]">Size ({preferredAreaUnit})</TableHead>
             <TableHead className="min-w-[120px]">Boundary Data</TableHead>
             <TableHead className="min-w-[200px]">Notes</TableHead>
-            {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
+            {(canUserEdit || canUserDelete) && <TableHead className="text-right w-[120px]">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -197,11 +203,18 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted }: FieldDefi
               <TableCell>{formatFieldSize(log.fieldSize, log.fieldSizeUnit, preferredAreaUnit)}</TableCell>
               <TableCell>{log.geojsonBoundary && log.geojsonBoundary.trim() !== "" ? "Yes" : "No"}</TableCell>
               <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
-              {canUserDelete && (
-                <TableCell className="text-right">
-                  <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete field">
-                    <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
+              {(canUserEdit || canUserDelete) && (
+                <TableCell className="text-right space-x-1">
+                  {canUserEdit && (
+                    <Button variant="ghost" size="icon" onClick={() => onEditField(log.id)} aria-label="Edit field">
+                      <Icons.Edit3 className="h-4 w-4 text-blue-600" />
+                    </Button>
+                  )}
+                  {canUserDelete && (
+                    <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete field">
+                      <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  )}
                 </TableCell>
               )}
             </TableRow>
