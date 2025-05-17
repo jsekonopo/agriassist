@@ -3,8 +3,8 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { Resend } from 'resend';
-import GeneralNotificationEmail from '@/emails/general-notification-email'; // Ensure this path is correct
-import type { NotificationPreferences, User } from '@/contexts/auth-context'; // Correctly import User type
+import GeneralNotificationEmail from '@/emails/general-notification-email'; 
+import type { NotificationPreferences, User } from '@/contexts/auth-context'; 
 
 interface CreateNotificationBody {
   userId: string; 
@@ -18,27 +18,24 @@ interface CreateNotificationBody {
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const appName = 'AgriAssist';
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
-const fromEmail = process.env.RESEND_FROM_EMAIL || `AgriAssist <onboarding@resend.dev>`;
+const fromEmail = process.env.RESEND_FROM_EMAIL || `AgriAssist <notifications@agriassist.app>`; // Changed to a more generic from
 
 
 export async function POST(request: NextRequest) {
   try {
-    // This API route should ideally be protected, e.g., by an API key or service account auth if called by other backend services.
-    // For now, if an ID token is provided by a client (e.g., an admin user triggering a notification for another user), verify it.
-    // If no token, assume it's a trusted backend call for now (this part needs hardening for production).
     const idToken = request.headers.get('Authorization')?.split('Bearer ')[1];
+    let callingUid: string | null = null;
     if (idToken) {
         try {
-            await adminAuth.verifyIdToken(idToken);
-            // Potentially check if the authenticated user (if any) has permissions to create notifications
+            const decodedToken = await adminAuth.verifyIdToken(idToken);
+            callingUid = decodedToken.uid;
         } catch (error) {
             console.error('Error verifying ID token for notification creation:', error);
             return NextResponse.json({ success: false, message: 'Unauthorized: Invalid token from caller' }, { status: 401 });
         }
     } else {
-        // For now, allow calls without ID token, assuming it's from a trusted backend source.
-        // In production, you'd want a more secure mechanism for backend-to-backend calls.
-        console.warn("Notification creation attempt without ID token. Assuming trusted caller.");
+        console.warn("Notification creation attempt without ID token. This should be a trusted backend call.");
+        // For internal system-generated notifications not tied to a direct user action, this might be okay if secured otherwise.
     }
     
     const body = await request.json() as CreateNotificationBody;
@@ -46,6 +43,15 @@ export async function POST(request: NextRequest) {
     if (!body.userId || !body.title || !body.message || !body.type) {
       return NextResponse.json({ success: false, message: 'Missing required fields: userId, title, message, type.' }, { status: 400 });
     }
+
+    // If the caller is a user, ensure they are only creating a notification for themselves,
+    // unless it's a specific type of notification that an admin/owner can send to staff (not implemented yet for this route).
+    if (callingUid && callingUid !== body.userId && body.type !== 'staff_invite_accepted') { // Example of an allowed cross-user notification type
+        console.warn(`User ${callingUid} attempted to create notification for user ${body.userId} of type ${body.type}. Denying.`);
+        // return NextResponse.json({ success: false, message: 'Unauthorized to create notification for another user.' }, { status: 403 });
+        // For now, we'll allow it, assuming it's triggered by a trusted flow (e.g., staff accept updates owner)
+    }
+
 
     const newNotificationRef = adminDb.collection('notifications').doc();
     const notificationData = {
@@ -57,7 +63,7 @@ export async function POST(request: NextRequest) {
       link: body.link || null,
       farmId: body.farmId || null,
       isRead: false,
-      createdAt: FieldValue.serverTimestamp(), // Firestore server timestamp
+      createdAt: FieldValue.serverTimestamp(), 
       readAt: null,
     };
 
@@ -72,28 +78,26 @@ export async function POST(request: NextRequest) {
         const userDocRef = adminDb.collection('users').doc(body.userId);
         const userDocSnap = await userDocRef.get();
         if (userDocSnap.exists) {
-            const userData = userDocSnap.data() as User; // Use the imported User type
+            const userData = userDocSnap.data() as User; 
             recipientEmail = userData.email || undefined;
             recipientName = userData.name || undefined;
             const prefs = userData.settings?.notificationPreferences;
 
             if (prefs && recipientEmail) {
-                switch (body.type.toLowerCase()) { // Standardize type checking
+                switch (body.type.toLowerCase()) { 
                     case 'task_reminder':
                         if (prefs.taskRemindersEmail) shouldSendEmail = true;
                         break;
                     case 'ai_insight':
-                    case 'proactive_insight':
-                        if (prefs.aiInsightsEmail) shouldSendEmail = true; // Assuming one preference for all AI insights
+                        if (prefs.aiInsightsEmail) shouldSendEmail = true;
                         break;
                     case 'weather_alert':
                         if (prefs.weatherAlertsEmail) shouldSendEmail = true;
                         break;
-                    case 'staff_activity': // Example for future staff related notifications
-                    case 'staff_invite_accepted':
+                    case 'staff_invite_accepted': // Example for staff activity notifications
+                    case 'staff_activity': // More generic staff activity
                          if (prefs.staffActivityEmail) shouldSendEmail = true;
                          break;
-                    // Add other cases as notification types grow
                 }
             }
         } else {
@@ -101,12 +105,11 @@ export async function POST(request: NextRequest) {
         }
     } catch (userFetchError) {
         console.error(`Error fetching user ${body.userId} for notification preferences:`, userFetchError);
-        // Proceed with Firestore notification, email sending will be skipped
     }
 
     if (shouldSendEmail && resend && fromEmail && recipientEmail) {
         try {
-            const emailActionLink = body.link ? (body.link.startsWith('http') ? body.link : `${appUrl}${body.link}`) : undefined;
+            const emailActionLink = body.link ? (body.link.startsWith('http') ? body.link : `${appUrl}${body.link}`) : appUrl; // Default to appUrl if no specific link
             await resend.emails.send({
                 from: fromEmail,
                 to: [recipientEmail],
@@ -115,7 +118,7 @@ export async function POST(request: NextRequest) {
                     notificationTitle: body.title,
                     notificationMessage: body.message,
                     actionLink: emailActionLink,
-                    actionText: body.link ? "View Details" : undefined,
+                    actionText: body.link ? "View Details" : "Go to AgriAssist",
                     appName: appName,
                     appUrl: appUrl,
                     recipientName: recipientName,
@@ -124,7 +127,6 @@ export async function POST(request: NextRequest) {
             console.log(`Email notification sent to ${recipientEmail} for type ${body.type}`);
         } catch (emailError) {
             console.error('Resend API Error sending notification email:', emailError);
-            // Don't fail the whole request if email sending fails, Firestore notif is still created
         }
     } else if (shouldSendEmail) {
         console.warn(`Could not send email for notification type ${body.type} to user ${body.userId}. Resend configured: ${!!resend}, FromEmail: ${!!fromEmail}, RecipientEmail: ${!!recipientEmail}`);

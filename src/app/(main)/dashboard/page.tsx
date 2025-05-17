@@ -1,7 +1,6 @@
 
 "use client";
 
-import Image from 'next/image';
 import { PageHeader } from '@/components/layout/page-header';
 import { DashboardStatsCard } from '@/components/dashboard-stats-card';
 import { Icons } from '@/components/icons';
@@ -14,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth, type UserRoleOnFarm, type PreferredAreaUnit } from '@/contexts/auth-context'; 
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isToday, isPast, differenceInDays } from 'date-fns'; // Added isToday, isPast
 import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
 import { useToast } from "@/hooks/use-toast";
 import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; 
@@ -52,7 +51,7 @@ interface HarvestingLog {
   yieldUnit?: string;
   farmId: string;
   userId: string;
-  harvestDate: string; // Added for consistency
+  harvestDate: string; 
 }
 
 interface TaskLog {
@@ -62,6 +61,7 @@ interface TaskLog {
   status: "To Do" | "In Progress" | "Done";
   farmId: string;
   userId: string;
+  description?: string;
 }
 
 interface CropYieldData {
@@ -97,7 +97,7 @@ const ownerRoles: UserRoleOnFarm[] = ['free', 'pro', 'agribusiness'];
 const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor'];
 
 export default function DashboardPage() {
-  const { user, isLoading: authLoading, makeApiRequest, markOnboardingComplete } = useAuth(); 
+  const { user, isLoading: authLoading, makeApiRequest, markOnboardingComplete, refreshUserData } = useAuth(); 
   const { toast } = useToast();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
@@ -114,6 +114,8 @@ export default function DashboardPage() {
   const [proactiveInsights, setProactiveInsights] = useState<ProactiveFarmInsightsOutput | null>(null);
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+  const [isCheckingReminders, setIsCheckingReminders] = useState(false);
+
 
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
@@ -130,7 +132,7 @@ export default function DashboardPage() {
         lat = user.farmLatitude;
         lon = user.farmLongitude;
         locationName = `Current Weather (${user.farmName || 'Your Farm Location'})`;
-      } else if (user?.farmName) {
+      } else if (user?.farmName) { // If farmName exists but no specific lat/lon from farm doc
         locationName = `Current Weather (${user.farmName} - Using Ottawa Default)`;
       }
       setWeatherLocationDisplay(locationName);
@@ -235,7 +237,6 @@ export default function DashboardPage() {
     fetchData();
   }, [user, authLoading, preferredAreaUnit]);
 
-  // Onboarding Modal Logic
   useEffect(() => {
     if (user && !authLoading && user.onboardingCompleted === false) {
       setShowOnboardingModal(true);
@@ -261,10 +262,19 @@ export default function DashboardPage() {
       toast({ title: "Insights Generated", description: "Proactive insights for your farm are ready." });
 
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
-        const notificationTitle = "New Proactive Farm Insight Available";
-        let notificationMessage = "The AI Farm Expert has generated new insights for your farm. ";
+        let notificationTitle = "AI Farm Alert";
+        if (insights.identifiedOpportunities && insights.identifiedRisks) {
+            notificationTitle = "AI Farm Alert: Opportunities & Risks Identified!";
+        } else if (insights.identifiedOpportunities) {
+            notificationTitle = "AI Farm Alert: Opportunities Found!";
+        } else if (insights.identifiedRisks) {
+            notificationTitle = "AI Farm Alert: Potential Risks Identified!";
+        }
+        
+        let notificationMessage = "The AI Farm Expert has generated new insights. ";
         if (insights.identifiedOpportunities) notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,100)}... `;
-        if (insights.identifiedRisks) notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,100)}...`;
+        if (insights.identifiedRisks) notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,100)}... `;
+        notificationMessage += "Check your dashboard for details."
         
         try {
           await makeApiRequest('/api/notifications/create', {
@@ -289,6 +299,55 @@ export default function DashboardPage() {
       setIsLoadingInsights(false);
     }
   }, [user?.farmId, user?.uid, toast, makeApiRequest]); 
+
+  const handleCheckTaskReminders = useCallback(async () => {
+    if (!user || !user.farmId || !user.uid) {
+      toast({ title: "Error", description: "Cannot check reminders without user/farm context.", variant: "destructive"});
+      return;
+    }
+    setIsCheckingReminders(true);
+    let remindersSentCount = 0;
+    const today = new Date();
+
+    for (const task of upcomingTasks) {
+      if (task.dueDate) {
+        const dueDate = parseISO(task.dueDate);
+        let title = "";
+        let message = "";
+
+        if (isToday(dueDate)) {
+          title = `Task Reminder: "${task.taskName}" is due today!`;
+          message = `The task "${task.taskName || 'Unnamed Task'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
+        } else if (isPast(dueDate) && differenceInDays(today, dueDate) <= 7) { // Overdue within last 7 days
+          title = `Task Overdue: "${task.taskName}"`;
+          message = `The task "${task.taskName || 'Unnamed Task'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
+        }
+
+        if (title && message) {
+          try {
+            await makeApiRequest('/api/notifications/create', {
+              userId: user.uid,
+              farmId: user.farmId,
+              type: 'task_reminder',
+              title: title,
+              message: message,
+              link: '/data-management?tab=tasks' // Link to tasks tab
+            });
+            remindersSentCount++;
+          } catch (error) {
+            console.error(`Failed to create reminder for task ${task.id}:`, error);
+            toast({ title: "Reminder Error", description: `Could not create reminder for task: ${task.taskName}`, variant: "destructive"});
+          }
+        }
+      }
+    }
+    if (remindersSentCount > 0) {
+      toast({ title: "Task Reminders Sent", description: `${remindersSentCount} reminder(s) for due/overdue tasks have been generated.` });
+    } else {
+      toast({ title: "No Due Tasks", description: "No tasks are currently due today or recently overdue." });
+    }
+    setIsCheckingReminders(false);
+  }, [user, upcomingTasks, makeApiRequest, toast]);
 
 
   if (authLoading && !user) {
@@ -435,8 +494,15 @@ export default function DashboardPage() {
 
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle>Upcoming Tasks</CardTitle>
-          <CardDescription>Key activities for your farm.</CardDescription>
+          <div className="flex justify-between items-center">
+            <div>
+              <CardTitle>Upcoming Tasks</CardTitle>
+              <CardDescription>Key activities for your farm.</CardDescription>
+            </div>
+            <Button onClick={handleCheckTaskReminders} disabled={isCheckingReminders || upcomingTasks.length === 0} size="sm">
+              {isCheckingReminders ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin"/> Checking...</> : "Check for Reminders"}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {dataLoading || authLoading ? (

@@ -21,7 +21,6 @@ export default function SettingsPage() {
   const { user, updateUserSettings, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
-  // Local component state for settings to provide immediate UI feedback before Firestore save completes
   const [currentSettings, setCurrentSettings] = useState<UserSettings | undefined>(undefined);
   const [isSavingPrefs, setIsSavingPrefs] = useState(false);
 
@@ -29,9 +28,10 @@ export default function SettingsPage() {
     if (user?.settings) {
       setCurrentSettings(user.settings);
     } else if (user && !user.settings) { 
+      // This case should ideally be handled by default settings in AuthContext during user creation/fetch
       const defaultPrefs: UserSettings = {
         notificationPreferences: {
-          taskRemindersEmail: false, weatherAlertsEmail: false, aiSuggestionsInApp: true, staffActivityEmail: false,
+          taskRemindersEmail: true, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false,
         },
         preferredAreaUnit: "acres",
         preferredWeightUnit: "kg",
@@ -44,7 +44,6 @@ export default function SettingsPage() {
   const handleSettingChange = async (updatedPart: Partial<UserSettings>) => {
     if (!user || !currentSettings) return;
 
-    // Optimistically update local state for immediate UI feedback
     const newLocalSettings: UserSettings = {
       ...currentSettings,
       ...updatedPart,
@@ -53,17 +52,16 @@ export default function SettingsPage() {
         ...(updatedPart.notificationPreferences || {}),
       },
     };
-    setCurrentSettings(newLocalSettings);
+    setCurrentSettings(newLocalSettings); // Optimistic update for UI
     
     setIsSavingPrefs(true);
-    const result = await updateUserSettings(newLocalSettings); // Pass the full merged object
+    const result = await updateUserSettings(newLocalSettings); 
     
     if (result.success) {
       toast({ title: "Preferences Updated", description: result.message });
     } else {
       toast({ title: "Update Failed", description: result.message, variant: "destructive" });
-      // Revert optimistic update by re-setting from the source of truth (user context)
-      // This ensures UI consistency if save fails.
+      // Revert optimistic update if save failed by re-fetching or re-setting from user context
       if (user?.settings) setCurrentSettings(user.settings);
     }
     setIsSavingPrefs(false);
@@ -118,7 +116,7 @@ export default function SettingsPage() {
   const notificationItems: { id: NotificationPreferenceKey; label: string; description: string }[] = [
     { id: "taskRemindersEmail", label: "Email for Task Reminders", description: "Receive email notifications for upcoming or overdue tasks." },
     { id: "weatherAlertsEmail", label: "Email for Critical Weather Alerts", description: "Get notified about important weather events for your farm." },
-    { id: "aiSuggestionsInApp", label: "In-App AI Suggestions", description: "Receive proactive suggestions and insights from the AI Farm Expert." },
+    { id: "aiInsightsEmail", label: "Email for AI Insights & Suggestions", description: "Receive emails when new AI-driven insights or suggestions are available for your farm." },
     { id: "staffActivityEmail", label: "Staff Activity Summaries (Email)", description: "(For Farm Owners) Receive periodic summaries of staff activity." },
   ];
 
@@ -152,7 +150,7 @@ export default function SettingsPage() {
             <Icons.Info className="h-4 w-4" />
             <AlertTitle>Notification Delivery</AlertTitle>
             <AlertDescription>
-              Your preferences are saved. Actual notification delivery (emails, in-app messages) requires further backend service implementation.
+              Your preferences are saved. Email notifications are sent based on these settings when new alerts or insights are generated.
             </AlertDescription>
           </Alert>
           <div className="space-y-4">
@@ -189,7 +187,7 @@ export default function SettingsPage() {
             <Icons.Info className="h-4 w-4" />
             <AlertTitle>Unit Display & Input</AlertTitle>
             <AlertDescription>
-              These preferences are saved. Area and weight units are used for display and form defaults where implemented. Full app-wide usage is an ongoing enhancement.
+              These preferences set default units in forms and affect how some data is displayed.
             </AlertDescription>
           </Alert>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
