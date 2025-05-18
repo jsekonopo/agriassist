@@ -173,14 +173,14 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
-      let lat: number | null | undefined = user?.farmLatitude; // From AuthContext, which fetches from farms doc
-      let lon: number | null | undefined = user?.farmLongitude; // From AuthContext
+      let lat: number | null | undefined = user?.farmLatitude; 
+      let lon: number | null | undefined = user?.farmLongitude; 
       let currentFarmNameForWeather = user?.farmName || "Your Farm"; 
       let locationName = `Weather for ${currentFarmNameForWeather}`; 
 
-      if (lat == null || lon == null) { // Using == to catch both null and undefined
+      if (lat == null || lon == null) { 
          locationName = `Current Weather (${currentFarmNameForWeather} - Default Location)`;
-         lat = 45.4215; lon = -75.6972; // Default to Ottawa if farm location not set
+         lat = 45.4215; lon = -75.6972; 
       }
       setWeatherLocationDisplay(locationName);
 
@@ -197,17 +197,18 @@ export default function DashboardPage() {
           };
           setWeather(currentWeatherData);
 
+          const farmDisplayNameForAlert = user?.farmName ? `at ${user.farmName}` : "on your farm";
           if (currentWeatherData.temperature < FROST_TEMP_THRESHOLD_CELSIUS) {
             triggerWeatherAlertNotification(
               'frost',
-              `Weather Alert: Potential Frost at ${currentFarmNameForWeather}!`,
+              `Weather Alert: Potential Frost ${farmDisplayNameForAlert}!`,
               `Current temperature is ${currentWeatherData.temperature}°C. Take precautions for frost-sensitive crops.`
             );
           }
           if (STORM_WEATHER_CODES.includes(currentWeatherData.weathercode)) {
              triggerWeatherAlertNotification(
               'storm',
-              `Weather Alert: Storm Approaching ${currentFarmNameForWeather}!`,
+              `Weather Alert: Storm Approaching ${farmDisplayNameForAlert}!`,
               `Current weather conditions indicate a storm: ${currentWeatherData.description}. Secure equipment and livestock.`
             );
           }
@@ -224,7 +225,7 @@ export default function DashboardPage() {
     }
     if (user && !authLoading && user.farmId) { 
         fetchFarmLocationAndWeather();
-    } else if (!user && !authLoading) { // No user, no farmId
+    } else if (!user && !authLoading) { 
         setWeatherLoading(false);
         setWeatherLocationDisplay("Weather (No Farm Set - Default Location)");
     }
@@ -329,7 +330,7 @@ export default function DashboardPage() {
     try {
       const result = await updateUserPlan(user.selectedPlanId); 
       if (result.success && result.sessionId) {
-        // Stripe redirection is handled by updateUserPlan in AuthContext or pricing page
+        // Stripe redirection is handled by updateUserPlan (or pricing page which calls it)
       } else {
          toast({ title: "Payment Initiation Failed", description: result.message || result.error || "Could not start payment process.", variant: "destructive"});
       }
@@ -801,4 +802,3 @@ export default function DashboardPage() {
 }
 
     
-

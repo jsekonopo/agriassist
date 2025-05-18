@@ -35,7 +35,7 @@ This document tracks the major remaining features and potential enhancements for
 
 ## IV. Broader Application Features & User Experience:
 
-1.  **Automated & Farm-Specific Weather Integration & Alerts (Actual Alerts): COMPLETED**
+1.  **Automated & Farm-Specific Weather Integration & Alerts (Actual Alerts): COMPLETED (Client-side alert checks with cooldown implemented)**
     *   **Status:** Dashboard weather uses farm lat/lon if set by owner via profile. Client-side logic can trigger a weather alert notification. A cooldown mechanism prevents repeated alerts for the same condition.
     *   **Remaining (Iterative Refinement):** More sophisticated server-side alert logic (e.g., using forecasts, multiple weather parameters). User-configurable alert thresholds.
 2.  **Comprehensive Notification System (Triggering Logic for More Types & Automated Task Reminders):**
