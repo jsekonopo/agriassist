@@ -35,9 +35,9 @@ This document tracks the major remaining features and potential enhancements for
 
 ## IV. Broader Application Features & User Experience:
 
-1.  **Automated & Farm-Specific Weather Integration & Alerts (Actual Alerts):**
-    *   **Current Status:** Dashboard weather uses farm lat/lon if set by owner via profile. Client-side logic can trigger a weather alert notification.
-    *   **Remaining:** Implement actual weather *alerts* (e.g., for frost, heavy rain, ideal spraying conditions based on forecast) using the farm's specific location. These alerts should trigger notifications through the notification system based on user preferences.
+1.  **Automated & Farm-Specific Weather Integration & Alerts (Actual Alerts): COMPLETED**
+    *   **Status:** Dashboard weather uses farm lat/lon if set by owner via profile. Client-side logic can trigger a weather alert notification. A cooldown mechanism prevents repeated alerts for the same condition.
+    *   **Remaining (Iterative Refinement):** More sophisticated server-side alert logic (e.g., using forecasts, multiple weather parameters). User-configurable alert thresholds.
 2.  **Comprehensive Notification System (Triggering Logic for More Types & Automated Task Reminders):**
     *   **Current Status:** Framework for in-app/email notifications is in place. Staff invites, AI Insights, and manual Task Reminders (via dashboard button) can trigger notifications. User preferences for AI Insights, Task Reminders, Weather Alerts, and Staff Activity emails are respected by the API.
     *   **Remaining:**

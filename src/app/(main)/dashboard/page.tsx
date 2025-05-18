@@ -62,6 +62,7 @@ interface TaskLog {
   farmId: string;
   userId: string;
   description?: string;
+  createdAt?: Timestamp;
 }
 
 interface CropYieldData {
@@ -147,7 +148,7 @@ export default function DashboardPage() {
     const now = Date.now();
 
     if (lastAlertTime && (now - parseInt(lastAlertTime) < WEATHER_ALERT_COOLDOWN_MS)) { 
-      console.log(`Weather alert cooldown active for: ${alertType} on farm ${user.farmId}`);
+      console.log(`Weather alert cooldown active for: ${alertType} on farm ${user.farmId}. Not sending new notification.`);
       return;
     }
 
@@ -155,7 +156,7 @@ export default function DashboardPage() {
       await makeApiRequest('/api/notifications/create', {
         userId: user.uid,
         farmId: user.farmId,
-        type: 'weather_alert', // Generic type for backend
+        type: 'weather_alert', 
         title: alertTitle,
         message: alertMessage,
         link: '/dashboard' 
@@ -173,34 +174,23 @@ export default function DashboardPage() {
       setWeatherLoading(true);
       let lat: number | null | undefined = null;
       let lon: number | null | undefined = null;
-      let farmNameForWeather = "Your Farm";
-      let locationName = "Current Weather (Ottawa - Default)"; 
+      let currentFarmNameForWeather = user?.farmName || "Your Farm"; // Use farm name from context
+      let locationName = `Current Weather (${currentFarmNameForWeather} - Default Location)`; 
 
       if (user?.farmId) {
-        try {
-            const farmDocRef = doc(db, "farms", user.farmId);
-            const farmDocSnap = await getDoc(farmDocRef);
-            if (farmDocSnap.exists()) {
-                const farmData = farmDocSnap.data();
-                farmNameForWeather = farmData.farmName || "Your Farm";
-                if (farmData.latitude != null && farmData.longitude != null) {
-                    lat = farmData.latitude;
-                    lon = farmData.longitude;
-                    locationName = `Weather for ${farmNameForWeather}`;
-                } else {
-                     locationName = `Current Weather (${farmNameForWeather} - Default Location)`;
-                     lat = 45.4215; lon = -75.6972; 
-                }
-            } else {
-                console.warn(`Farm document ${user.farmId} not found. Defaulting weather.`);
-                lat = 45.4215; lon = -75.6972; 
-            }
-        } catch (e) {
-            console.error("Error fetching farm doc for weather location:", e);
-            lat = 45.4215; lon = -75.6972; 
+        // Use lat/lon from user context, which should be fetched from the 'farms' document
+        if (user.latitude != null && user.longitude != null) {
+            lat = user.latitude;
+            lon = user.longitude;
+            locationName = `Weather for ${currentFarmNameForWeather}`;
+        } else {
+             locationName = `Current Weather (${currentFarmNameForWeather} - Default Location)`;
+             lat = 45.4215; lon = -75.6972; // Default to Ottawa if farm location not set
         }
       } else {
-        lat = 45.4215; lon = -75.6972; // Default if no user or farmId
+        // Fallback if no user or farmId, though this should ideally not happen for authenticated users
+        lat = 45.4215; lon = -75.6972; 
+        locationName = "Current Weather (Ottawa - Default)";
       }
       setWeatherLocationDisplay(locationName);
 
@@ -221,14 +211,14 @@ export default function DashboardPage() {
           if (currentWeatherData.temperature < FROST_TEMP_THRESHOLD_CELSIUS) {
             triggerWeatherAlertNotification(
               'frost',
-              `Weather Alert: Potential Frost at ${farmNameForWeather}!`,
+              `Weather Alert: Potential Frost at ${currentFarmNameForWeather}!`,
               `Current temperature is ${currentWeatherData.temperature}°C. Take precautions for frost-sensitive crops.`
             );
           }
           if (STORM_WEATHER_CODES.includes(currentWeatherData.weathercode)) {
              triggerWeatherAlertNotification(
               'storm',
-              `Weather Alert: Storm Approaching ${farmNameForWeather}!`,
+              `Weather Alert: Storm Approaching ${currentFarmNameForWeather}!`,
               `Current weather conditions indicate a storm: ${currentWeatherData.description}. Secure equipment and livestock.`
             );
           }
@@ -243,10 +233,10 @@ export default function DashboardPage() {
         setWeatherLoading(false);
       }
     }
-    if (user !== undefined) { 
+    if (user !== undefined && !authLoading) { // Ensure user context is loaded
         fetchFarmLocationAndWeather();
     }
-  }, [user, triggerWeatherAlertNotification]); 
+  }, [user, authLoading, triggerWeatherAlertNotification]); 
 
   useEffect(() => {
     if (!user || authLoading || !user.farmId) {
@@ -305,9 +295,16 @@ export default function DashboardPage() {
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
 
-        const tasksQuery = query(collection(db, "taskLogs"), where("farmId", "==", user.farmId), where("status", "!=", "Done"), orderBy("dueDate", "asc"));
+        const tasksQuery = query(
+          collection(db, "taskLogs"), 
+          where("farmId", "==", user.farmId), 
+          where("status", "!=", "Done"), 
+          orderBy("status", "asc"), // To bring "In Progress" before "To Do" potentially
+          orderBy("dueDate", "asc")
+        );
         const tasksSnapshot = await getDocs(tasksQuery);
-        setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as TaskLog)));
+        setUpcomingTasks(tasksSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data(), createdAt: docSnap.data().createdAt } as TaskLog)));
+
 
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
@@ -366,38 +363,34 @@ export default function DashboardPage() {
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
         let notificationTitle = "AI Farm Alert";
         let notificationMessage = "The AI Farm Expert has generated new insights. ";
+        let summaryForMessage = "";
 
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
             notificationTitle = "AI Farm Alert: Opportunities & Risks Identified!";
-            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
+            summaryForMessage = `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
         } else if (insights.identifiedOpportunities) {
             notificationTitle = "AI Farm Alert: Opportunities Found!";
-            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
+            summaryForMessage = `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
         } else if (insights.identifiedRisks) {
             notificationTitle = "AI Farm Alert: Potential Risks Identified!";
-             notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
+             summaryForMessage = `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
         }
-        notificationMessage += "Check your dashboard for details."
+        notificationMessage += summaryForMessage + "Check your dashboard for details."
         
-        try {
-          await makeApiRequest('/api/notifications/create', {
+        await makeApiRequest('/api/notifications/create', {
             userId: user.uid, 
             farmId: user.farmId,
             type: 'ai_insight', 
             title: notificationTitle,
             message: notificationMessage.trim(),
             link: '/dashboard' 
-          });
-          toast({ title: "Notification Logged", description: "An in-app notification for the new insight has been created."});
-        } catch (notifError) {
-          console.error("Error creating notification for AI insight:", notifError);
-           toast({ title: "Notification Error", description: "Could not log AI insight as a notification.", variant: "destructive"});
-        }
+        });
+        toast({ title: "Notification Logged", description: "An in-app notification for the new insight has been created."});
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching proactive insights:", error);
-      toast({ title: "Error", description: "Could not fetch proactive insights. Please try again.", variant: "destructive" });
+      toast({ title: "Error", description: error.message || "Could not fetch proactive insights. Please try again.", variant: "destructive" });
     } finally {
       setIsLoadingInsights(false);
     }
@@ -411,6 +404,8 @@ export default function DashboardPage() {
     setIsCheckingReminders(true);
     let remindersSentCount = 0;
     const today = new Date();
+    const now = Date.now();
+    const reminderCooldown = 6 * 60 * 60 * 1000; // 6 hours
 
     for (const task of upcomingTasks) {
       if (task.dueDate) {
@@ -419,12 +414,12 @@ export default function DashboardPage() {
         let message = "";
         let shouldNotify = false;
 
-        const lastReminderKey = `lastTaskReminder_${task.id}`;
+        const lastReminderKey = `lastTaskReminder_${task.id}_${user.farmId}`;
         const lastReminderTime = localStorage.getItem(lastReminderKey);
-        const now = Date.now();
-        const reminderCooldown = 6 * 60 * 60 * 1000; 
+        
 
         if (lastReminderTime && (now - parseInt(lastReminderTime) < reminderCooldown)) {
+          console.log(`Task reminder cooldown active for task ${task.id}. Not sending new notification.`);
           continue; 
         }
 
@@ -446,7 +441,7 @@ export default function DashboardPage() {
               type: 'task_reminder', 
               title: title,
               message: message,
-              link: '/data-management?tab=tasks'
+              link: `/data-management?tab=tasks&taskId=${task.id}` // Link to specific task if possible
             });
             remindersSentCount++;
             localStorage.setItem(lastReminderKey, now.toString()); 
@@ -525,7 +520,7 @@ export default function DashboardPage() {
         icon={Icons.Dashboard}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <DashboardStatsCard
           title="Total Acreage"
           value={dataLoading || authLoading ? undefined : (totalAcreage !== undefined ? totalAcreage : "N/A")}
@@ -576,7 +571,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
         <Card className="lg:col-span-2 shadow-lg">
           <CardHeader>
             <CardTitle>Crop Yield Overview</CardTitle>
@@ -741,7 +736,7 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
         <Card className="shadow-lg">
             <CardHeader>
                 <CardTitle>Quick Actions</CardTitle>
