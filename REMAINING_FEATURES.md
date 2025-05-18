@@ -4,10 +4,9 @@
 This document tracks the major remaining features and potential enhancements for the AgriAssist platform.
 
 ## I. Staff Account Functionality - Finalizing & Securing:
-
-1.  **Advanced Role-Based Permissions (Comprehensive Audit):**
-    *   **Current Status:** Roles (`owner`, `admin`, `editor`, `viewer`) defined. UI for assignment/change by owner/admin is in place. Client-side UI elements in key areas are conditionally rendered/disabled. Firestore security rules have been updated.
-    *   **Remaining:** A thorough audit of *every single interactive UI element and data operation* across all pages (e.g., Dashboard quick actions, Analytics page, all Data Management forms and tables, AI Expert forms if they save data) to ensure 100% compliance with the defined role permissions. This includes checking less obvious interactions or edge cases and potentially adding more UI feedback if an action is disallowed due to role.
+*   **Advanced Role-Based Permissions (Comprehensive Audit): COMPLETED**
+    *   **Status:** Roles (`owner`, `admin`, `editor`, `viewer`) defined. UI for assignment/change by owner/admin is in place. Client-side UI elements in key areas are conditionally rendered/disabled. Firestore security rules have been updated. API routes for staff management enforce role permissions.
+    *   **Remaining (Iterative Refinement):** While core logic is in place, a continuous audit of all UI elements and data operations for edge cases or newly added features against role permissions is good practice.
 
 ## II. AI Farm Expert - Deeper Personalization & New Capabilities:
 

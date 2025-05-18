@@ -31,30 +31,40 @@ export async function POST(request: NextRequest) {
     const requesterUid = decodedToken.uid;
 
     const requesterUserDocSnap = await adminDb.collection('users').doc(requesterUid).get();
-    if (!requesterUserDocSnap.exists || !requesterUserDocSnap.data()?.farmId) {
+    if (!requesterUserDocSnap.exists() || !requesterUserDocSnap.data()?.farmId) {
       return NextResponse.json({ success: false, message: 'Requester not associated with a farm.' }, { status: 403 });
     }
     const requesterUserData = requesterUserDocSnap.data() as User;
-    const farmId = requesterUserData.farmId!; // farmId must exist at this point based on check
-    const requesterRole = requesterUserData.roleOnCurrentFarm;
+    const farmId = requesterUserData.farmId!;
     const isRequesterOwner = requesterUserData.isFarmOwner;
+    const requesterRole = requesterUserData.roleOnCurrentFarm;
 
     const farmDocRef = adminDb.collection('farms').doc(farmId);
     const farmDocSnap = await farmDocRef.get();
 
-    if (!farmDocSnap.exists) {
+    if (!farmDocSnap.exists()) {
       return NextResponse.json({ success: false, message: 'Farm not found.' }, { status: 404 });
     }
     const farmData = farmDocSnap.data()!;
 
-    // Permission Check: Only Owner or Admin of the farm can update roles
+    // Permission Check: Requester must be owner or admin of this farm
     if (!isRequesterOwner && requesterRole !== 'admin') {
-        return NextResponse.json({ success: false, message: 'Unauthorized: Only owners or admins can update staff roles.' }, { status: 403 });
+        return NextResponse.json({ success: false, message: 'Unauthorized: Only farm owner or admin can update staff roles.' }, { status: 403 });
     }
-    // Farm owner check is also part of isRequesterOwner
+    // Ensure farm ownerId matches for owner, or farmId matches for admin
+    if (isRequesterOwner && farmData.ownerId !== requesterUid) {
+        return NextResponse.json({ success: false, message: 'Unauthorized: Requester is not the owner of this farm.' }, { status: 403 });
+    }
+    if (requesterRole === 'admin' && farmId !== farmData.farmId) { // farmId is doc ID, farmData.farmId is field
+        return NextResponse.json({ success: false, message: 'Admin not associated with this farm.' }, { status: 403 });
+    }
+
 
     if (farmData.ownerId === staffUidToUpdate) {
         return NextResponse.json({ success: false, message: 'Cannot change the role of the farm owner.'}, { status: 400 });
+    }
+    if (requesterUid === staffUidToUpdate) {
+        return NextResponse.json({ success: false, message: 'Users cannot change their own role using this method.'}, { status: 400 });
     }
 
     const currentStaffArray = (farmData.staff || []) as StaffMemberInFarmDoc[];
@@ -67,8 +77,6 @@ export async function POST(request: NextRequest) {
     const staffToUpdateCurrentRole = currentStaffArray[staffIndex].role;
 
     // Admin Permission Logic:
-    // - An admin cannot change the role of another admin.
-    // - An admin cannot promote anyone to 'admin'.
     if (requesterRole === 'admin') { // and not owner
         if (staffToUpdateCurrentRole === 'admin') {
             return NextResponse.json({ success: false, message: 'Admins cannot modify the role of other admins.' }, { status: 403 });

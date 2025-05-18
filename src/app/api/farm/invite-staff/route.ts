@@ -5,28 +5,28 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { Resend } from 'resend';
 import StaffInvitationEmail from '@/emails/staff-invitation-email';
 import crypto from 'crypto';
-import type { UserRole } from '@/contexts/auth-context'; // Import UserRole
+import type { StaffRole, User } from '@/contexts/auth-context';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
+const fromEmail = process.env.RESEND_FROM_EMAIL || `AgriAssist Notifications <notifications@${new URL(appBaseUrl).hostname || 'agriassist.app'}>`;
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { invitedEmail, role } = body; // Expect role from client
+    const { invitedEmail, role } = body as { invitedEmail: string, role: StaffRole };
     const idToken = request.headers.get('Authorization')?.split('Bearer ')[1];
 
     if (!idToken) {
       return NextResponse.json({ success: false, message: 'Unauthorized: No token provided' }, { status: 401 });
     }
-    if (!invitedEmail || !role) { // Check for role
+    if (!invitedEmail || !role) {
       return NextResponse.json({ success: false, message: 'Missing required fields: invitedEmail and role' }, { status: 400 });
     }
-    const validRoles: UserRole[] = ['admin', 'editor', 'viewer'];
+    const validRoles: StaffRole[] = ['admin', 'editor', 'viewer'];
     if (!validRoles.includes(role)) {
       return NextResponse.json({ success: false, message: 'Invalid role provided.' }, { status: 400 });
     }
-
 
     let decodedToken;
     try {
@@ -43,12 +43,18 @@ export async function POST(request: NextRequest) {
     if (!inviterUserDocSnap.exists()) {
       return NextResponse.json({ success: false, message: 'Inviter user profile not found.' }, { status: 404 });
     }
-    const inviterUserData = inviterUserDocSnap.data();
-    if (!inviterUserData?.farmId || !inviterUserData?.isFarmOwner) {
-      return NextResponse.json({ success: false, message: 'Unauthorized: Inviter is not a farm owner or not associated with a farm.' }, { status: 403 });
+    const inviterUserData = inviterUserDocSnap.data() as User;
+
+    if (!inviterUserData?.farmId || (!inviterUserData.isFarmOwner && inviterUserData.roleOnCurrentFarm !== 'admin')) {
+      return NextResponse.json({ success: false, message: 'Unauthorized: Inviter must be a farm owner or admin.' }, { status: 403 });
     }
+
+    if (inviterUserData.roleOnCurrentFarm === 'admin' && role === 'admin') {
+        return NextResponse.json({ success: false, message: 'Admins cannot invite other users as admins.' }, { status: 403 });
+    }
+
     const inviterFarmId = inviterUserData.farmId;
-    const inviterName = inviterUserData.name || 'A farm owner';
+    const inviterName = inviterUserData.name || 'A farm manager';
 
     const farmDocRef = adminDb.collection('farms').doc(inviterFarmId);
     const farmDocSnap = await farmDocRef.get();
@@ -56,13 +62,19 @@ export async function POST(request: NextRequest) {
     if (!farmDocSnap.exists()) {
       return NextResponse.json({ success: false, message: 'Farm not found.' }, { status: 404 });
     }
-    const farmData = farmDocSnap.data();
-    if (farmData?.ownerId !== inviterUid) {
-      return NextResponse.json({ success: false, message: 'Unauthorized: Inviter is not the owner of this farm.' }, { status: 403 });
+    const farmData = farmDocSnap.data()!;
+
+    // Owner check (if inviter is not owner, but admin, they must be admin of *this* farm)
+    if (!inviterUserData.isFarmOwner && farmData.ownerId === inviterUid) { // This case implies inviter is owner, but isFarmOwner flag is false (data inconsistency)
+        console.warn(`Data inconsistency for user ${inviterUid} regarding ownership of farm ${inviterFarmId}`);
+        // Potentially allow if farmData.ownerId matches inviterUid, but log warning
+    } else if (!inviterUserData.isFarmOwner && inviterUserData.roleOnCurrentFarm === 'admin' && inviterUserData.farmId !== inviterFarmId) {
+        return NextResponse.json({ success: false, message: 'Admin inviter is not associated with the target farm.' }, { status: 403 });
     }
-    
+
+
     if (invitedEmail.toLowerCase() === decodedToken.email?.toLowerCase()) {
-      return NextResponse.json({ success: false, message: "You cannot invite yourself to your own farm." }, { status: 400 });
+      return NextResponse.json({ success: false, message: "You cannot invite yourself." }, { status: 400 });
     }
 
     let invitedUserRecord;
@@ -73,9 +85,8 @@ export async function POST(request: NextRequest) {
       const invitedUserDocRef = adminDb.collection('users').doc(invitedUserRecord.uid);
       const invitedUserDocSnap = await invitedUserDocRef.get();
       if (invitedUserDocSnap.exists()) {
-        const invitedUserData = invitedUserDocSnap.data();
-        // Check if user is part of the farm's staff array
-        const farmStaff = (farmData?.staff || []) as {uid: string, role: string}[];
+        const invitedUserData = invitedUserDocSnap.data() as User;
+        const farmStaff = (farmData.staff || []) as StaffMemberInFarmDoc[];
         if (farmStaff.some(staff => staff.uid === invitedUserRecord.uid)) {
            return NextResponse.json({ success: false, message: `${invitedEmail} is already a member of this farm.` }, { status: 400 });
         }
@@ -88,8 +99,9 @@ export async function POST(request: NextRequest) {
         console.error('Error fetching user by email:', error);
         return NextResponse.json({ success: false, message: 'Error finding user to invite.' }, { status: 500 });
       }
+      // If user not found, invitedUserUidFromAuth remains null, which is fine.
     }
-    
+
     const pendingInvitesQuery = adminDb.collection('pendingInvitations')
       .where('inviterFarmId', '==', inviterFarmId)
       .where('invitedEmail', '==', invitedEmail.toLowerCase())
@@ -101,17 +113,17 @@ export async function POST(request: NextRequest) {
     }
 
     const invitationToken = crypto.randomBytes(32).toString('hex');
-    const tokenExpiresAt = Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000); 
+    const tokenExpiresAt = Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const pendingInvitationRef = adminDb.collection('pendingInvitations').doc();
     await pendingInvitationRef.set({
       inviterFarmId: inviterFarmId,
       inviterUid: inviterUid,
       inviterName: inviterName,
-      farmName: farmData?.farmName || 'Unnamed Farm',
+      farmName: farmData.farmName || 'Unnamed Farm',
       invitedEmail: invitedEmail.toLowerCase(),
-      invitedUserUid: invitedUserUidFromAuth,
-      invitedRole: role, // Store the role for the invitation
+      invitedUserUid: invitedUserUidFromAuth, // Store UID if user exists, null otherwise
+      invitedRole: role,
       status: 'pending',
       invitationToken: invitationToken,
       tokenExpiresAt: tokenExpiresAt,
@@ -120,25 +132,26 @@ export async function POST(request: NextRequest) {
 
     const invitationLink = `${appBaseUrl}/accept-invitation?token=${invitationToken}`;
 
-    if (resend && process.env.RESEND_FROM_EMAIL) {
+    if (resend && fromEmail) {
       try {
         await resend.emails.send({
-          from: process.env.RESEND_FROM_EMAIL,
+          from: fromEmail,
           to: [invitedEmail],
-          subject: `You're invited to join ${farmData?.farmName || 'a farm'} on AgriAssist as a ${role}!`,
-          react: StaffInvitationEmail({ 
+          subject: `You're invited to join ${farmData.farmName || 'a farm'} on AgriAssist as a ${role}!`,
+          react: StaffInvitationEmail({
             invitedUserEmail: invitedEmail,
             inviterName: inviterName,
-            farmName: farmData?.farmName || 'Unnamed Farm',
+            farmName: farmData.farmName || 'Unnamed Farm',
             appName: 'AgriAssist',
             invitationLink: invitationLink,
-            role: role // Pass role to email template
+            role: role
           }) as React.ReactElement,
         });
       } catch (emailError) {
         console.error('Resend API Error (invitation email):', emailError);
-        return NextResponse.json({ 
-            success: true, 
+        // Still return success for logging invite, but message indicates email issue
+        return NextResponse.json({
+            success: true,
             message: `Invitation request for ${invitedEmail} (as ${role}) has been logged. However, there was an issue sending the invitation email.`,
             invitationId: pendingInvitationRef.id
         });
@@ -147,9 +160,9 @@ export async function POST(request: NextRequest) {
       console.warn('Resend API key or FROM_EMAIL not configured. Invitation email not sent.');
     }
 
-    return NextResponse.json({ 
-        success: true, 
-        message: `Invitation request for ${invitedEmail} (as ${role}) to farm ${farmData?.farmName || inviterFarmId} has been logged and an email sent.`,
+    return NextResponse.json({
+        success: true,
+        message: `Invitation request for ${invitedEmail} (as ${role}) to farm ${farmData.farmName || inviterFarmId} has been logged and an email sent.`,
         invitationId: pendingInvitationRef.id
     });
 
