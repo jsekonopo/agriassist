@@ -8,8 +8,8 @@ import GeneralNotificationEmail from '@/emails/general-notification-email';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const appName = 'AgriAssist';
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002'; // Ensure this is set
-const fromEmail = process.env.RESEND_FROM_EMAIL || `AgriAssist Notifications <notifications@${new URL(appUrl).hostname}>`;
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002'; 
+const fromEmail = process.env.RESEND_FROM_EMAIL || `AgriAssist Notifications <notifications@${new URL(appUrl).hostname || 'agriassist.app'}>`;
 
 
 export async function POST(request: NextRequest) {
@@ -86,26 +86,30 @@ export async function POST(request: NextRequest) {
         }
     }
 
-    const invitedRole = invitationData.invitedRole as UserRole || 'viewer'; 
+    const invitedRole = invitationData.invitedRole as StaffRole || 'viewer'; 
 
     batch.update(invitationDoc.ref, { 
         status: 'accepted', 
         acceptedAt: FieldValue.serverTimestamp(),
         acceptedByUid: acceptingUserUid,
-        ...(invitationData.invitedUserUid === null && { invitedUserUid: acceptingUserUid })
+        ...(invitationData.invitedUserUid === null && { invitedUserUid: acceptingUserUid }) // Set invitedUserUid if it was null (email-only invite)
     });
 
-    batch.update(userRef, {
-      farmId: invitationData.inviterFarmId,
-      farmName: farmData?.farmName || 'Unnamed Farm', // Add farmName to user doc
-      isFarmOwner: false,
-      roleOnCurrentFarm: invitedRole, 
-      updatedAt: FieldValue.serverTimestamp()
-    });
+    // Ensure user document exists before attempting to update it, or create it minimally if it doesn't
+    // This scenario should be rare if user had to log in to accept, meaning their user doc was created by Firebase Auth trigger or registration.
+    const userUpdateData: Partial<User> = {
+        farmId: invitationData.inviterFarmId,
+        farmName: farmData?.farmName || 'Unnamed Farm', 
+        isFarmOwner: false,
+        roleOnCurrentFarm: invitedRole, 
+        updatedAt: FieldValue.serverTimestamp()
+    };
+    batch.set(userRef, userUpdateData, { merge: true });
+
 
     const newStaffMember: StaffMemberInFarmDoc = { uid: acceptingUserUid, role: invitedRole };
     batch.update(farmRef, {
-      staff: FieldValue.arrayUnion(newStaffMember),
+      staff: FieldValue.arrayUnion(newStaffMember), // Use arrayUnion to add the staff member object
       updatedAt: FieldValue.serverTimestamp()
     });
     
@@ -130,10 +134,10 @@ export async function POST(request: NextRequest) {
             id: newNotificationRef.id,
             userId: ownerId,
             farmId: invitationData.inviterFarmId,
-            type: 'staff_invite_accepted', // More specific type
+            type: 'staff_invite_accepted', 
             title: notificationTitle,
             message: notificationMessage,
-            link: '/profile', // Link to profile or future staff management page
+            link: '/profile', 
             isRead: false,
             createdAt: FieldValue.serverTimestamp(),
             readAt: null,
@@ -172,3 +176,4 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }
+

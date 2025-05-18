@@ -4,8 +4,8 @@
 This document tracks the major remaining features and potential enhancements for the AgriAssist platform.
 
 ## I. Staff Account Functionality - Finalizing & Securing:
-*   **Advanced Role-Based Permissions (Comprehensive Audit): COMPLETED**
-    *   **Status:** Roles (`owner`, `admin`, `editor`, `viewer`) defined. UI for assignment/change by owner/admin is in place. Client-side UI elements in key areas are conditionally rendered/disabled. Firestore security rules have been updated. API routes for staff management enforce these roles.
+1.  **Advanced Role-Based Permissions (Comprehensive Audit): COMPLETED**
+    *   **Status:** Roles (`owner`, `admin`, `editor`, `viewer`) defined. UI for assignment/change by owner/admin is in place. Client-side UI elements in key areas are conditionally rendered/disabled. Firestore security rules have been updated.
     *   **Remaining (Iterative Refinement):** While core logic is in place, a continuous audit of all UI elements and data operations for edge cases or newly added features against role permissions is good practice.
 
 ## II. AI Farm Expert - Deeper Personalization & New Capabilities:
@@ -42,7 +42,7 @@ This document tracks the major remaining features and potential enhancements for
     *   **Current Status:** Framework for in-app/email notifications is in place. Staff invites, AI Insights, and manual Task Reminders (via dashboard button) can trigger notifications. User preferences for AI Insights, Task Reminders, Weather Alerts, and Staff Activity emails are respected by the API.
     *   **Remaining:**
         *   Automate Task Reminders (currently manual via button on dashboard). This would ideally involve a backend scheduled job.
-        *   Implement triggering for weather alerts once the weather integration is more advanced.
+        *   Implement triggering for weather alerts once the weather integration is more advanced (beyond current client-side checks).
         *   Potentially create more specific email templates for different notification types.
 3.  **User Onboarding & Help System (Part 2 - Contextual Help/FAQ):**
     *   **Current Status:** Multi-step onboarding modal for new users. Searchable FAQ page created.

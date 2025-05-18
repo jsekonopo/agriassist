@@ -97,9 +97,10 @@ const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3
 const ownerRoles: UserRoleOnFarm[] = ['free', 'pro', 'agribusiness'];
 const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor'];
 
-const FROST_TEMP_THRESHOLD_CELSIUS = 2; // degrees Celsius
-const STORM_WEATHER_CODES = [95, 96, 99]; // Weather codes indicating thunderstorms
+const FROST_TEMP_THRESHOLD_CELSIUS = 2; 
+const STORM_WEATHER_CODES = [95, 96, 99]; 
 const WEATHER_ALERT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
+const TASK_REMINDER_CHECK_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 const planDisplayNames: Record<PlanId, string> = {
   free: "Hobbyist Farmer (Free)",
@@ -148,7 +149,7 @@ export default function DashboardPage() {
     const now = Date.now();
 
     if (lastAlertTime && (now - parseInt(lastAlertTime) < WEATHER_ALERT_COOLDOWN_MS)) { 
-      console.log(`Weather alert cooldown active for: ${alertType} on farm ${user.farmId}. Not sending new notification.`);
+      console.log(`Weather alert cooldown active for: ${alertType} on farm ${user.farmName || user.farmId}. Not sending new notification.`);
       return;
     }
 
@@ -172,25 +173,14 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
       setWeatherLoading(true);
-      let lat: number | null | undefined = null;
-      let lon: number | null | undefined = null;
-      let currentFarmNameForWeather = user?.farmName || "Your Farm"; // Use farm name from context
-      let locationName = `Current Weather (${currentFarmNameForWeather} - Default Location)`; 
+      let lat: number | null | undefined = user?.farmLatitude; // From AuthContext, which fetches from farms doc
+      let lon: number | null | undefined = user?.farmLongitude; // From AuthContext
+      let currentFarmNameForWeather = user?.farmName || "Your Farm"; 
+      let locationName = `Weather for ${currentFarmNameForWeather}`; 
 
-      if (user?.farmId) {
-        // Use lat/lon from user context, which should be fetched from the 'farms' document
-        if (user.latitude != null && user.longitude != null) {
-            lat = user.latitude;
-            lon = user.longitude;
-            locationName = `Weather for ${currentFarmNameForWeather}`;
-        } else {
-             locationName = `Current Weather (${currentFarmNameForWeather} - Default Location)`;
-             lat = 45.4215; lon = -75.6972; // Default to Ottawa if farm location not set
-        }
-      } else {
-        // Fallback if no user or farmId, though this should ideally not happen for authenticated users
-        lat = 45.4215; lon = -75.6972; 
-        locationName = "Current Weather (Ottawa - Default)";
+      if (lat == null || lon == null) { // Using == to catch both null and undefined
+         locationName = `Current Weather (${currentFarmNameForWeather} - Default Location)`;
+         lat = 45.4215; lon = -75.6972; // Default to Ottawa if farm location not set
       }
       setWeatherLocationDisplay(locationName);
 
@@ -207,7 +197,6 @@ export default function DashboardPage() {
           };
           setWeather(currentWeatherData);
 
-          // Check for alert conditions
           if (currentWeatherData.temperature < FROST_TEMP_THRESHOLD_CELSIUS) {
             triggerWeatherAlertNotification(
               'frost',
@@ -233,8 +222,11 @@ export default function DashboardPage() {
         setWeatherLoading(false);
       }
     }
-    if (user !== undefined && !authLoading) { // Ensure user context is loaded
+    if (user && !authLoading && user.farmId) { 
         fetchFarmLocationAndWeather();
+    } else if (!user && !authLoading) { // No user, no farmId
+        setWeatherLoading(false);
+        setWeatherLocationDisplay("Weather (No Farm Set - Default Location)");
     }
   }, [user, authLoading, triggerWeatherAlertNotification]); 
 
@@ -299,7 +291,7 @@ export default function DashboardPage() {
           collection(db, "taskLogs"), 
           where("farmId", "==", user.farmId), 
           where("status", "!=", "Done"), 
-          orderBy("status", "asc"), // To bring "In Progress" before "To Do" potentially
+          orderBy("status", "asc"), 
           orderBy("dueDate", "asc")
         );
         const tasksSnapshot = await getDocs(tasksQuery);
@@ -323,6 +315,7 @@ export default function DashboardPage() {
   }, [user, authLoading]);
 
   const handleCompleteOnboarding = async () => {
+    if (!user) return;
     await markOnboardingComplete(); 
     setShowOnboardingModal(false); 
   };
@@ -366,13 +359,13 @@ export default function DashboardPage() {
         let summaryForMessage = "";
 
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
-            notificationTitle = "AI Farm Alert: Opportunities & Risks Identified!";
+            notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Opportunities & Risks Identified!`;
             summaryForMessage = `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
         } else if (insights.identifiedOpportunities) {
-            notificationTitle = "AI Farm Alert: Opportunities Found!";
+            notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Opportunities Found!`;
             summaryForMessage = `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
         } else if (insights.identifiedRisks) {
-            notificationTitle = "AI Farm Alert: Potential Risks Identified!";
+            notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Potential Risks Identified!`;
              summaryForMessage = `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
         }
         notificationMessage += summaryForMessage + "Check your dashboard for details."
@@ -401,11 +394,22 @@ export default function DashboardPage() {
       toast({ title: "Error", description: "Cannot check reminders without user/farm context.", variant: "destructive"});
       return;
     }
+
+    const lastCheckKey = `lastTaskReminderCheck_${user.farmId}`;
+    const lastCheckTime = localStorage.getItem(lastCheckKey);
+    const now = Date.now();
+
+    if (lastCheckTime && (now - parseInt(lastCheckTime) < TASK_REMINDER_CHECK_COOLDOWN_MS)) {
+      const remainingTime = TASK_REMINDER_CHECK_COOLDOWN_MS - (now - parseInt(lastCheckTime));
+      const remainingMinutes = Math.ceil(remainingTime / (1000 * 60));
+      toast({ title: "Task Reminders Recently Checked", description: `Please wait another ${remainingMinutes} minutes before checking again.`, variant: "default" });
+      return;
+    }
+    
     setIsCheckingReminders(true);
     let remindersSentCount = 0;
     const today = new Date();
-    const now = Date.now();
-    const reminderCooldown = 6 * 60 * 60 * 1000; // 6 hours
+    const reminderCooldownPerTask = 6 * 60 * 60 * 1000; // 6 hours per specific task
 
     for (const task of upcomingTasks) {
       if (task.dueDate) {
@@ -414,22 +418,22 @@ export default function DashboardPage() {
         let message = "";
         let shouldNotify = false;
 
-        const lastReminderKey = `lastTaskReminder_${task.id}_${user.farmId}`;
-        const lastReminderTime = localStorage.getItem(lastReminderKey);
+        const lastReminderKeyPerTask = `lastTaskReminder_${task.id}_${user.farmId}`;
+        const lastReminderTimePerTask = localStorage.getItem(lastReminderKeyPerTask);
         
 
-        if (lastReminderTime && (now - parseInt(lastReminderTime) < reminderCooldown)) {
+        if (lastReminderTimePerTask && (now - parseInt(lastReminderTimePerTask) < reminderCooldownPerTask)) {
           console.log(`Task reminder cooldown active for task ${task.id}. Not sending new notification.`);
           continue; 
         }
 
         if (isToday(dueDate) && task.status !== "Done") {
           title = `Task Reminder: "${task.taskName}" is due today!`;
-          message = `The task "${task.taskName || 'Unnamed Task'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
+          message = `The task "${task.taskName || 'Unnamed Task'}" for farm "${user.farmName || 'your farm'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
         } else if (isPast(dueDate) && differenceInDays(today, dueDate) <= 7 && task.status !== "Done") { 
           title = `Task Overdue: "${task.taskName}"`;
-          message = `The task "${task.taskName || 'Unnamed Task'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
+          message = `The task "${task.taskName || 'Unnamed Task'}" for farm "${user.farmName || 'your farm'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
         }
         
@@ -441,10 +445,10 @@ export default function DashboardPage() {
               type: 'task_reminder', 
               title: title,
               message: message,
-              link: `/data-management?tab=tasks&taskId=${task.id}` // Link to specific task if possible
+              link: `/data-management?tab=tasks&taskId=${task.id}` 
             });
             remindersSentCount++;
-            localStorage.setItem(lastReminderKey, now.toString()); 
+            localStorage.setItem(lastReminderKeyPerTask, now.toString()); 
           } catch (error) {
             console.error(`Failed to create reminder for task ${task.id}:`, error);
           }
@@ -456,6 +460,7 @@ export default function DashboardPage() {
     } else {
       toast({ title: "No New Task Reminders", description: "No tasks are currently due today or recently overdue that need new reminders." });
     }
+    localStorage.setItem(lastCheckKey, now.toString()); // Update overall check time
     setIsCheckingReminders(false);
   }, [user, upcomingTasks, makeApiRequest, toast]);
 
@@ -796,3 +801,4 @@ export default function DashboardPage() {
 }
 
     
+
