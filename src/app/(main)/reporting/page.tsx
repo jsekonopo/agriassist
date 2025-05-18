@@ -10,7 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, orderBy, Timestamp, QueryConstraint } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp, QueryConstraint, doc } from 'firebase/firestore';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from '@/components/ui/label';
@@ -28,6 +28,13 @@ interface HarvestingLog {
   yieldUnit?: string;
   farmId: string;
   userId: string;
+  fieldId?: string; // Added for field filtering
+}
+
+interface Field {
+  id: string;
+  fieldName: string;
+  farmId: string;
 }
 
 interface CropYieldSummary {
@@ -38,6 +45,7 @@ interface CropYieldSummary {
 
 interface TaskLog {
   id: string;
+  taskName: string;
   status: "To Do" | "In Progress" | "Done";
   dueDate?: string | null; // YYYY-MM-DD
   farmId: string;
@@ -82,6 +90,9 @@ export default function ReportingPage() {
   const [selectedCropFilter, setSelectedCropFilter] = useState<string>("All Crops");
   const [cropYieldStartDate, setCropYieldStartDate] = useState<Date | undefined>(undefined);
   const [cropYieldEndDate, setCropYieldEndDate] = useState<Date | undefined>(undefined);
+  const [farmFields, setFarmFields] = useState<Field[]>([]);
+  const [selectedYieldFieldFilter, setSelectedYieldFieldFilter] = useState<string>("All Fields");
+
 
   // Task States
   const [allTasks, setAllTasks] = useState<TaskLog[]>([]);
@@ -97,15 +108,18 @@ export default function ReportingPage() {
   
   // General Loading/Error States
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingFields, setIsLoadingFields] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
   useEffect(() => {
     if (!user || !user.farmId) {
       setIsLoading(false);
+      setIsLoadingFields(false);
       setAllCropYields([]);
       setFilteredCropYields([]);
       setUniqueCropNames([]);
+      setFarmFields([]);
       setAllTasks([]);
       setTaskSummary(null);
       setFinancialSummary(null);
@@ -113,15 +127,21 @@ export default function ReportingPage() {
     }
 
     setIsLoading(true);
+    setIsLoadingFields(true);
     setError(null);
 
     const fetchReportData = async () => {
       try {
+        // Fetch Fields for filtering
+        const fieldsQueryRef = query(collection(db, "fields"), where("farmId", "==", user.farmId), orderBy("fieldName", "asc"));
+        const fieldsSnapshot = await getDocs(fieldsQueryRef);
+        const fetchedFields: Field[] = fieldsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Field));
+        setFarmFields([{ id: "All Fields", fieldName: "All Fields", farmId: user.farmId }, ...fetchedFields]); // Add "All Fields" option
+        setIsLoadingFields(false);
+
         // Fetch Harvesting Logs based on date filters
         const harvestingQueryConstraints: QueryConstraint[] = [
           where("farmId", "==", user.farmId),
-          orderBy("harvestDate", "asc"), // Order by harvestDate for date range queries
-          orderBy("cropName", "asc") // Then by cropName
         ];
         if (cropYieldStartDate) {
           harvestingQueryConstraints.push(where("harvestDate", ">=", format(startOfDay(cropYieldStartDate), "yyyy-MM-dd")));
@@ -129,6 +149,17 @@ export default function ReportingPage() {
         if (cropYieldEndDate) {
           harvestingQueryConstraints.push(where("harvestDate", "<=", format(endOfDay(cropYieldEndDate), "yyyy-MM-dd")));
         }
+        if (selectedYieldFieldFilter && selectedYieldFieldFilter !== "All Fields") {
+            harvestingQueryConstraints.push(where("fieldId", "==", selectedYieldFieldFilter));
+        }
+        // Add default ordering or specific ordering if date range is present
+        if (cropYieldStartDate || cropYieldEndDate) {
+            harvestingQueryConstraints.push(orderBy("harvestDate", "asc"));
+        } else {
+            harvestingQueryConstraints.push(orderBy("createdAt", "desc")); // Default sort if no date filter
+        }
+        harvestingQueryConstraints.push(orderBy("cropName", "asc"));
+
         const harvestingQueryRef = query(collection(db, "harvestingLogs"), ...harvestingQueryConstraints);
         const harvestingSnapshot = await getDocs(harvestingQueryRef);
         const harvestingLogs: HarvestingLog[] = harvestingSnapshot.docs.map(doc => doc.data() as HarvestingLog);
@@ -156,7 +187,7 @@ export default function ReportingPage() {
         if (taskDueDateStart && taskDueDateEnd) {
             tasksQueryConstraints.push(where("dueDate", ">=", format(startOfDay(taskDueDateStart), "yyyy-MM-dd")));
             tasksQueryConstraints.push(where("dueDate", "<=", format(endOfDay(taskDueDateEnd), "yyyy-MM-dd")));
-            tasksQueryConstraints.push(orderBy("dueDate", "asc")); // Needs index if multiple inequalities
+            tasksQueryConstraints.push(orderBy("dueDate", "asc")); 
         } else if (taskDueDateStart) {
             tasksQueryConstraints.push(where("dueDate", ">=", format(startOfDay(taskDueDateStart), "yyyy-MM-dd")));
             tasksQueryConstraints.push(orderBy("dueDate", "asc"));
@@ -164,7 +195,6 @@ export default function ReportingPage() {
             tasksQueryConstraints.push(where("dueDate", "<=", format(endOfDay(taskDueDateEnd), "yyyy-MM-dd")));
             tasksQueryConstraints.push(orderBy("dueDate", "asc"));
         }
-        // Always add a default sort even if no date filters applied
         if (!taskDueDateStart && !taskDueDateEnd) {
             tasksQueryConstraints.push(orderBy("createdAt", "desc"));
         }
@@ -178,7 +208,7 @@ export default function ReportingPage() {
         const financialDateConstraints: QueryConstraint[] = [];
         if (financialStartDate) financialDateConstraints.push(where("date", ">=", format(startOfDay(financialStartDate), "yyyy-MM-dd")));
         if (financialEndDate) financialDateConstraints.push(where("date", "<=", format(endOfDay(financialEndDate), "yyyy-MM-dd")));
-        if (financialStartDate || financialEndDate) financialDateConstraints.push(orderBy("date", "asc")); // Order by date if filtering by it
+        if (financialStartDate || financialEndDate) financialDateConstraints.push(orderBy("date", "asc")); 
         
         const revenueQueryRef = query(collection(db, "revenueLogs"), ...baseFinancialQueryConstraints, ...financialDateConstraints);
         const revenueSnapshot = await getDocs(revenueQueryRef);
@@ -201,9 +231,8 @@ export default function ReportingPage() {
     };
 
     fetchReportData();
-  }, [user, financialStartDate, financialEndDate, cropYieldStartDate, cropYieldEndDate, taskDueDateStart, taskDueDateEnd]);
+  }, [user, financialStartDate, financialEndDate, cropYieldStartDate, cropYieldEndDate, taskDueDateStart, taskDueDateEnd, selectedYieldFieldFilter]); // Added selectedYieldFieldFilter
 
-  // Effect for filtering crop yields based on selectedCropFilter
   useEffect(() => {
     if (selectedCropFilter === "All Crops") {
       setFilteredCropYields(allCropYields);
@@ -212,7 +241,6 @@ export default function ReportingPage() {
     }
   }, [selectedCropFilter, allCropYields]);
 
-  // Effect for filtering tasks based on selectedTaskStatusFilter
   useEffect(() => {
     const tasksToSummarize = selectedTaskStatusFilter === "All Tasks" 
       ? allTasks 
@@ -237,7 +265,7 @@ export default function ReportingPage() {
   }, [selectedTaskStatusFilter, allTasks]);
 
   const clearFinancialDateFilters = () => { setFinancialStartDate(undefined); setFinancialEndDate(undefined); };
-  const clearCropYieldFilters = () => { setCropYieldStartDate(undefined); setCropYieldEndDate(undefined); setSelectedCropFilter("All Crops"); };
+  const clearCropYieldFilters = () => { setCropYieldStartDate(undefined); setCropYieldEndDate(undefined); setSelectedCropFilter("All Crops"); setSelectedYieldFieldFilter("All Fields"); };
   const clearTaskFilters = () => { setTaskDueDateStart(undefined); setTaskDueDateEnd(undefined); setSelectedTaskStatusFilter("All Tasks"); };
 
   const formatCurrency = (value: number) => value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }); 
@@ -310,16 +338,29 @@ export default function ReportingPage() {
 
       <Card className="shadow-lg">
         <CardHeader>
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div> 
                 <CardTitle>Crop Yield Summary</CardTitle> 
-                <CardDescription>Total harvested yield per crop{getDateRangeDescription(cropYieldStartDate, cropYieldEndDate, ' for harvests')}. Filtered by: {selectedCropFilter}.</CardDescription> 
+                <CardDescription>
+                    Total harvested yield per crop.
+                    {getDateRangeDescription(cropYieldStartDate, cropYieldEndDate, ' Harvests')}.
+                    {selectedCropFilter !== "All Crops" ? ` Filtered by Crop: ${selectedCropFilter}.` : ""}
+                    {selectedYieldFieldFilter !== "All Fields" && farmFields.find(f=>f.id === selectedYieldFieldFilter) ? ` Filtered by Field: ${farmFields.find(f=>f.id === selectedYieldFieldFilter)?.fieldName}.` : ""}
+                </CardDescription> 
             </div>
-            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-center">
-                <div className="w-full sm:w-[180px]"> <Label htmlFor="crop-filter" className="sr-only">Filter by Crop</Label> <Select value={selectedCropFilter} onValueChange={(value) => setSelectedCropFilter(value)}> <SelectTrigger id="crop-filter" aria-label="Filter by Crop"> <SelectValue placeholder="Filter by Crop" /> </SelectTrigger> <SelectContent> {uniqueCropNames.map(cropName => ( <SelectItem key={cropName} value={cropName}>{cropName}</SelectItem> ))} </SelectContent> </Select> </div>
+            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto items-stretch md:items-center">
+                <div className="w-full sm:w-auto md:min-w-[150px]"> <Label htmlFor="crop-filter" className="sr-only">Filter by Crop</Label> <Select value={selectedCropFilter} onValueChange={(value) => setSelectedCropFilter(value)}> <SelectTrigger id="crop-filter" aria-label="Filter by Crop"> <SelectValue placeholder="Filter by Crop" /> </SelectTrigger> <SelectContent> {uniqueCropNames.map(cropName => ( <SelectItem key={cropName} value={cropName}>{cropName}</SelectItem> ))} </SelectContent> </Select> </div>
+                <div className="w-full sm:w-auto md:min-w-[150px]"> <Label htmlFor="field-yield-filter" className="sr-only">Filter by Field</Label> 
+                    <Select value={selectedYieldFieldFilter} onValueChange={setSelectedYieldFieldFilter} disabled={isLoadingFields}> 
+                        <SelectTrigger id="field-yield-filter" aria-label="Filter by Field"> <SelectValue placeholder={isLoadingFields ? "Loading fields..." : "Filter by Field"} /> </SelectTrigger> 
+                        <SelectContent> 
+                            {farmFields.map(field => ( <SelectItem key={field.id} value={field.id}>{field.fieldName}</SelectItem> ))} 
+                        </SelectContent> 
+                    </Select> 
+                </div>
                 <Popover><PopoverTrigger asChild><Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !cropYieldStartDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{cropYieldStartDate ? format(cropYieldStartDate, "PPP") : <span>Harvest Start</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0"><Calendar mode="single" selected={cropYieldStartDate} onSelect={setCropYieldStartDate} initialFocus /></PopoverContent></Popover>
                 <Popover><PopoverTrigger asChild><Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !cropYieldEndDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{cropYieldEndDate ? format(cropYieldEndDate, "PPP") : <span>Harvest End</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0"><Calendar mode="single" selected={cropYieldEndDate} onSelect={setCropYieldEndDate} initialFocus disabled={(date) => cropYieldStartDate ? date < cropYieldStartDate : false} /></PopoverContent></Popover>
-                {(cropYieldStartDate || cropYieldEndDate || selectedCropFilter !== "All Crops") && (<Button variant="ghost" onClick={clearCropYieldFilters} size="sm" className="w-full sm:w-auto">Clear Filters</Button>)}
+                {(cropYieldStartDate || cropYieldEndDate || selectedCropFilter !== "All Crops" || selectedYieldFieldFilter !== "All Fields") && (<Button variant="ghost" onClick={clearCropYieldFilters} size="sm" className="w-full sm:w-auto self-center">Clear Filters</Button>)}
             </div>
           </div>
         </CardHeader>
@@ -331,19 +372,19 @@ export default function ReportingPage() {
               <TableHeader> <TableRow> <TableHead className="w-[200px]">Crop Name</TableHead> <TableHead className="text-right">Total Yield</TableHead> <TableHead>Unit</TableHead> </TableRow> </TableHeader>
               <TableBody> {filteredCropYields.map((crop, index) => ( <TableRow key={`${crop.cropName}-${crop.unit}-${index}`}> <TableCell className="font-medium">{crop.cropName}</TableCell> <TableCell className="text-right">{crop.totalYield.toLocaleString()}</TableCell> <TableCell>{crop.unit}</TableCell> </TableRow> ))} </TableBody>
             </Table>
-          ) : ( <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>No Yield Data</AlertTitle> <AlertDescription> {`No harvesting logs found for "${selectedCropFilter === "All Crops" ? "any crop" : selectedCropFilter}"${getDateRangeDescription(cropYieldStartDate, cropYieldEndDate, ' with harvest dates')}.`} </AlertDescription> </Alert> )}
+          ) : ( <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>No Yield Data</AlertTitle> <AlertDescription> {`No harvesting logs found for "${selectedCropFilter === "All Crops" ? "any crop" : selectedCropFilter}"${selectedYieldFieldFilter !== "All Fields" && farmFields.find(f=>f.id === selectedYieldFieldFilter) ? ` in field "${farmFields.find(f=>f.id === selectedYieldFieldFilter)?.fieldName}"` : ""}${getDateRangeDescription(cropYieldStartDate, cropYieldEndDate, ' with harvest dates')}.`} </AlertDescription> </Alert> )}
         </CardContent>
       </Card>
 
       <Card className="shadow-lg">
         <CardHeader>
-           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div> <CardTitle>Task Status Overview</CardTitle> <CardDescription>Summary of tasks by status{getDateRangeDescription(taskDueDateStart, taskDueDateEnd, ' with due dates')}. Filtered by: {selectedTaskStatusFilter}.</CardDescription> </div>
-            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-center">
-                <div className="w-full sm:w-[180px]"> <Label htmlFor="task-status-filter" className="sr-only">Filter by Task Status</Label> <Select value={selectedTaskStatusFilter} onValueChange={(value) => setSelectedTaskStatusFilter(value as TaskStatusFilter)}> <SelectTrigger id="task-status-filter" aria-label="Filter by Task Status"> <SelectValue placeholder="Filter by Status" /> </SelectTrigger> <SelectContent> <SelectItem value="All Tasks">All Tasks</SelectItem> <SelectItem value="To Do">To Do</SelectItem> <SelectItem value="In Progress">In Progress</SelectItem> <SelectItem value="Done">Done</SelectItem> </SelectContent> </Select> </div>
+            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto items-stretch md:items-center">
+                <div className="w-full sm:w-auto md:min-w-[180px]"> <Label htmlFor="task-status-filter" className="sr-only">Filter by Task Status</Label> <Select value={selectedTaskStatusFilter} onValueChange={(value) => setSelectedTaskStatusFilter(value as TaskStatusFilter)}> <SelectTrigger id="task-status-filter" aria-label="Filter by Task Status"> <SelectValue placeholder="Filter by Status" /> </SelectTrigger> <SelectContent> <SelectItem value="All Tasks">All Tasks</SelectItem> <SelectItem value="To Do">To Do</SelectItem> <SelectItem value="In Progress">In Progress</SelectItem> <SelectItem value="Done">Done</SelectItem> </SelectContent> </Select> </div>
                 <Popover><PopoverTrigger asChild><Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !taskDueDateStart && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{taskDueDateStart ? format(taskDueDateStart, "PPP") : <span>Due Start</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0"><Calendar mode="single" selected={taskDueDateStart} onSelect={setTaskDueDateStart} initialFocus /></PopoverContent></Popover>
                 <Popover><PopoverTrigger asChild><Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !taskDueDateEnd && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{taskDueDateEnd ? format(taskDueDateEnd, "PPP") : <span>Due End</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0"><Calendar mode="single" selected={taskDueDateEnd} onSelect={setTaskDueDateEnd} initialFocus disabled={(date) => taskDueDateStart ? date < taskDueDateStart : false} /></PopoverContent></Popover>
-                {(taskDueDateStart || taskDueDateEnd || selectedTaskStatusFilter !== "All Tasks") && (<Button variant="ghost" onClick={clearTaskFilters} size="sm" className="w-full sm:w-auto">Clear Filters</Button>)}
+                {(taskDueDateStart || taskDueDateEnd || selectedTaskStatusFilter !== "All Tasks") && (<Button variant="ghost" onClick={clearTaskFilters} size="sm" className="w-full sm:w-auto self-center">Clear Filters</Button>)}
             </div>
           </div>
         </CardHeader>
@@ -370,6 +411,8 @@ export default function ReportingPage() {
     </div>
   );
 }
+    
+
     
 
     
