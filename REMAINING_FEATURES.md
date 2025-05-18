@@ -5,7 +5,7 @@ This document tracks the major remaining features and potential enhancements for
 
 ## I. Staff Account Functionality - Finalizing & Securing:
 *   **Advanced Role-Based Permissions (Comprehensive Audit): COMPLETED**
-    *   **Status:** Roles (`owner`, `admin`, `editor`, `viewer`) defined. UI for assignment/change by owner/admin is in place. Client-side UI elements in key areas are conditionally rendered/disabled. Firestore security rules have been updated. API routes for staff management enforce role permissions.
+    *   **Status:** Roles (`owner`, `admin`, `editor`, `viewer`) defined. UI for assignment/change by owner/admin is in place. Client-side UI elements in key areas are conditionally rendered/disabled. Firestore security rules have been updated. API routes for staff management enforce these roles.
     *   **Remaining (Iterative Refinement):** While core logic is in place, a continuous audit of all UI elements and data operations for edge cases or newly added features against role permissions is good practice.
 
 ## II. AI Farm Expert - Deeper Personalization & New Capabilities:
@@ -54,3 +54,4 @@ This document tracks the major remaining features and potential enhancements for
     *   **Status:** Standard components provide a good baseline.
 6.  **Performance Optimization for Large Datasets.**
     *   **Status:** Not explicitly addressed.
+

@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { DashboardStatsCard } from '@/components/dashboard-stats-card';
 import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useEffect, useState, useCallback } from 'react';
@@ -96,8 +96,9 @@ const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3
 const ownerRoles: UserRoleOnFarm[] = ['free', 'pro', 'agribusiness'];
 const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor'];
 
-const FROST_TEMP_THRESHOLD_CELSIUS = 2;
-const STORM_WEATHER_CODES = [95, 96, 99]; 
+const FROST_TEMP_THRESHOLD_CELSIUS = 2; // degrees Celsius
+const STORM_WEATHER_CODES = [95, 96, 99]; // Weather codes indicating thunderstorms
+const WEATHER_ALERT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 const planDisplayNames: Record<PlanId, string> = {
   free: "Hobbyist Farmer (Free)",
@@ -113,7 +114,7 @@ export default function DashboardPage() {
     makeApiRequest, 
     markOnboardingComplete, 
     refreshUserData,
-    updateUserPlan // For re-initiating checkout
+    updateUserPlan 
   } = useAuth(); 
   const { toast } = useToast();
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -138,21 +139,23 @@ export default function DashboardPage() {
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
-  const triggerWeatherAlertNotification = useCallback(async (alertTitle: string, alertMessage: string) => {
+  const triggerWeatherAlertNotification = useCallback(async (alertType: 'frost' | 'storm', alertTitle: string, alertMessage: string) => {
     if (!user || !user.farmId || !user.uid) return;
-    try {
-      const lastAlertKey = `lastWeatherAlert_${alertTitle.replace(/\s+/g, '_')}`;
-      const lastAlertTime = localStorage.getItem(lastAlertKey);
-      const now = Date.now();
-      if (lastAlertTime && (now - parseInt(lastAlertTime) < 6 * 60 * 60 * 1000)) { 
-        console.log("Weather alert cooldown active for:", alertTitle);
-        return;
-      }
 
+    const lastAlertKey = `lastWeatherAlert_${alertType}_${user.farmId}`;
+    const lastAlertTime = localStorage.getItem(lastAlertKey);
+    const now = Date.now();
+
+    if (lastAlertTime && (now - parseInt(lastAlertTime) < WEATHER_ALERT_COOLDOWN_MS)) { 
+      console.log(`Weather alert cooldown active for: ${alertType} on farm ${user.farmId}`);
+      return;
+    }
+
+    try {
       await makeApiRequest('/api/notifications/create', {
         userId: user.uid,
         farmId: user.farmId,
-        type: 'weather_alert',
+        type: 'weather_alert', // Generic type for backend
         title: alertTitle,
         message: alertMessage,
         link: '/dashboard' 
@@ -161,6 +164,7 @@ export default function DashboardPage() {
       localStorage.setItem(lastAlertKey, now.toString());
     } catch (error) {
       console.error("Error creating weather alert notification:", error);
+      toast({ title: "Notification Error", description: "Could not send weather alert notification.", variant: "destructive"});
     }
   }, [user, makeApiRequest, toast]);
 
@@ -169,6 +173,7 @@ export default function DashboardPage() {
       setWeatherLoading(true);
       let lat: number | null | undefined = null;
       let lon: number | null | undefined = null;
+      let farmNameForWeather = "Your Farm";
       let locationName = "Current Weather (Ottawa - Default)"; 
 
       if (user?.farmId) {
@@ -177,12 +182,13 @@ export default function DashboardPage() {
             const farmDocSnap = await getDoc(farmDocRef);
             if (farmDocSnap.exists()) {
                 const farmData = farmDocSnap.data();
+                farmNameForWeather = farmData.farmName || "Your Farm";
                 if (farmData.latitude != null && farmData.longitude != null) {
                     lat = farmData.latitude;
                     lon = farmData.longitude;
-                    locationName = `Weather for ${farmData.farmName || 'Your Farm'}`;
+                    locationName = `Weather for ${farmNameForWeather}`;
                 } else {
-                     locationName = `Current Weather (${farmData.farmName || 'Your Farm'} - Default Location)`;
+                     locationName = `Current Weather (${farmNameForWeather} - Default Location)`;
                      lat = 45.4215; lon = -75.6972; 
                 }
             } else {
@@ -194,7 +200,7 @@ export default function DashboardPage() {
             lat = 45.4215; lon = -75.6972; 
         }
       } else {
-        lat = 45.4215; lon = -75.6972;
+        lat = 45.4215; lon = -75.6972; // Default if no user or farmId
       }
       setWeatherLocationDisplay(locationName);
 
@@ -211,15 +217,18 @@ export default function DashboardPage() {
           };
           setWeather(currentWeatherData);
 
+          // Check for alert conditions
           if (currentWeatherData.temperature < FROST_TEMP_THRESHOLD_CELSIUS) {
             triggerWeatherAlertNotification(
-              "Weather Alert: Potential Frost!",
+              'frost',
+              `Weather Alert: Potential Frost at ${farmNameForWeather}!`,
               `Current temperature is ${currentWeatherData.temperature}°C. Take precautions for frost-sensitive crops.`
             );
           }
           if (STORM_WEATHER_CODES.includes(currentWeatherData.weathercode)) {
              triggerWeatherAlertNotification(
-              "Weather Alert: Storm Approaching!",
+              'storm',
+              `Weather Alert: Storm Approaching ${farmNameForWeather}!`,
               `Current weather conditions indicate a storm: ${currentWeatherData.description}. Secure equipment and livestock.`
             );
           }
@@ -328,12 +337,9 @@ export default function DashboardPage() {
     }
     setIsCompletingPayment(true);
     try {
-      const result = await updateUserPlan(user.selectedPlanId); // This calls create-checkout-session API
+      const result = await updateUserPlan(user.selectedPlanId); 
       if (result.success && result.sessionId) {
         // Stripe redirection is handled by updateUserPlan in AuthContext or pricing page
-        // If not, it means Stripe.js is not loaded or there was an issue.
-        // The pricing page already handles redirectToCheckout.
-        // Here, we just initiated the process. A toast message might already be shown by updateUserPlan.
       } else {
          toast({ title: "Payment Initiation Failed", description: result.message || result.error || "Could not start payment process.", variant: "destructive"});
       }
@@ -359,17 +365,18 @@ export default function DashboardPage() {
 
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
         let notificationTitle = "AI Farm Alert";
+        let notificationMessage = "The AI Farm Expert has generated new insights. ";
+
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
             notificationTitle = "AI Farm Alert: Opportunities & Risks Identified!";
+            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
         } else if (insights.identifiedOpportunities) {
             notificationTitle = "AI Farm Alert: Opportunities Found!";
+            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
         } else if (insights.identifiedRisks) {
             notificationTitle = "AI Farm Alert: Potential Risks Identified!";
+             notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
         }
-        
-        let notificationMessage = "The AI Farm Expert has generated new insights. ";
-        if (insights.identifiedOpportunities) notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,100)}... `;
-        if (insights.identifiedRisks) notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,100)}... `;
         notificationMessage += "Check your dashboard for details."
         
         try {
@@ -384,6 +391,7 @@ export default function DashboardPage() {
           toast({ title: "Notification Logged", description: "An in-app notification for the new insight has been created."});
         } catch (notifError) {
           console.error("Error creating notification for AI insight:", notifError);
+           toast({ title: "Notification Error", description: "Could not log AI insight as a notification.", variant: "destructive"});
         }
       }
 
@@ -411,14 +419,13 @@ export default function DashboardPage() {
         let message = "";
         let shouldNotify = false;
 
-        // Basic check: Don't send same reminder for the same task ID within X hours
-        const lastReminderKey = `lastReminder_${task.id}`;
+        const lastReminderKey = `lastTaskReminder_${task.id}`;
         const lastReminderTime = localStorage.getItem(lastReminderKey);
         const now = Date.now();
-        const reminderCooldown = 6 * 60 * 60 * 1000; // 6 hours
+        const reminderCooldown = 6 * 60 * 60 * 1000; 
 
         if (lastReminderTime && (now - parseInt(lastReminderTime) < reminderCooldown)) {
-          continue; // Cooldown active for this task
+          continue; 
         }
 
         if (isToday(dueDate) && task.status !== "Done") {
@@ -442,7 +449,7 @@ export default function DashboardPage() {
               link: '/data-management?tab=tasks'
             });
             remindersSentCount++;
-            localStorage.setItem(lastReminderKey, now.toString()); // Update last reminded time
+            localStorage.setItem(lastReminderKey, now.toString()); 
           } catch (error) {
             console.error(`Failed to create reminder for task ${task.id}:`, error);
           }
