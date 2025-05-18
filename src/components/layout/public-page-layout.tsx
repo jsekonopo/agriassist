@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/auth-context';
-import { publicNavItems } from '@/lib/navigation';
+import { publicNavItems } from '@/lib/navigation'; // Ensure this is imported
 
 interface PublicPageLayoutProps {
   children: React.ReactNode;
@@ -23,7 +23,7 @@ export function PublicPageLayout({ children }: PublicPageLayoutProps) {
           <span className="ml-2 text-xl font-semibold text-foreground">AgriAssist</span>
         </Link>
         <nav className="ml-auto flex gap-2 sm:gap-4 items-center">
-          {publicNavItems.map((item) => (
+          {publicNavItems.map((item) => ( // Use publicNavItems here
             <Link
               key={item.href}
               href={item.href}
@@ -59,13 +59,13 @@ export function PublicPageLayout({ children }: PublicPageLayoutProps) {
           )}
         </nav>
       </header>
-      <main className="flex-1 pt-20 md:pt-24"> {/* Added top padding here */}
+      <main className="flex-1 pt-20 md:pt-24">
         {children}
       </main>
       <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t bg-background">
         <p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} AgriAssist. All rights reserved.</p>
         <nav className="sm:ml-auto flex gap-4 sm:gap-6">
-          {publicNavItems.map((item) => (
+          {publicNavItems.map((item) => ( // Use publicNavItems here as well
              <Link
               key={item.href}
               href={item.href}
@@ -75,12 +75,7 @@ export function PublicPageLayout({ children }: PublicPageLayoutProps) {
               {item.title}
             </Link>
           ))}
-          <Link href="/terms" className="text-xs hover:underline underline-offset-4 text-muted-foreground" prefetch={false}>
-            Terms of Service
-          </Link>
-          <Link href="/privacy" className="text-xs hover:underline underline-offset-4 text-muted-foreground" prefetch={false}>
-            Privacy
-          </Link>
+          {/* Removed hardcoded links, assuming they are now in publicNavItems */}
         </nav>
       </footer>
     </div>

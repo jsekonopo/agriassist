@@ -31,8 +31,8 @@ const faqData: FAQItem[] = [
   {
     id: 'q2',
     question: 'How do I register for AgriAssist?',
-    answer: 'You can register for AgriAssist by clicking the "Sign Up Free" button on our homepage or pricing page. The free "Hobbyist Farmer" plan allows you to get started immediately. For paid plans, you will be guided through a secure payment process via Stripe.',
-    keywords: ['register', 'signup', 'account', 'join', 'new user'],
+    answer: 'You can register for AgriAssist by clicking the "Sign Up Free" button on our homepage or pricing page. The registration process involves selecting a plan and providing your account details. For paid plans, you will be guided through a secure payment process via Stripe.',
+    keywords: ['register', 'signup', 'account', 'join', 'new user', 'plan'],
   },
   {
     id: 'q3',
@@ -55,7 +55,7 @@ const faqData: FAQItem[] = [
   {
     id: 'q6',
     question: 'Can I manage multiple staff members?',
-    answer: 'Yes! Farm owners can invite staff members and assign them roles like Admin, Editor, or Viewer, controlling their access to data and features. This helps in collaborative farm management.',
+    answer: 'Yes! Farm owners and admins can invite staff members and assign them roles like Admin, Editor, or Viewer, controlling their access to data and features. This helps in collaborative farm management.',
     keywords: ['staff', 'team', 'users', 'collaboration', 'roles', 'permissions'],
   },
   {
@@ -67,13 +67,13 @@ const faqData: FAQItem[] = [
   {
     id: 'q8',
     question: 'How do I set my farm\'s location for weather updates?',
-    answer: 'If you are the farm owner, you can set your farm\'s latitude and longitude on your Profile page. This location will be used to provide localized weather information on your Dashboard.',
-    keywords: ['weather', 'location', 'profile', 'coordinates', 'map'],
+    answer: 'If you are the farm owner, you can set your farm\'s latitude and longitude on your Profile page (in the edit mode). This location will be used to provide localized weather information on your Dashboard.',
+    keywords: ['weather', 'location', 'profile', 'coordinates', 'map', 'dashboard'],
   },
   {
     id: 'q9',
     question: 'How do I manage notification preferences?',
-    answer: 'You can manage your email notification preferences for various alerts (like task reminders, AI insights, weather alerts) on the Settings page under "Notification Preferences".',
+    answer: 'You can manage your email notification preferences for various alerts (like task reminders, AI insights, weather alerts, staff activity) on the Settings page under "Notification Preferences".',
     keywords: ['notifications', 'alerts', 'email', 'settings', 'preferences'],
   },
   {

@@ -37,15 +37,15 @@ const profileFormSchema = z.object({
   farmName: z.string().optional(),
   farmLatitude: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? null : parseFloat(String(val))),
-    z.number({invalid_type_error: "Latitude must be a number."}).min(-90).max(90).optional().nullable()
+    z.number({invalid_type_error: "Latitude must be a number or empty."}).min(-90).max(90).optional().nullable()
   ),
   farmLongitude: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? null : parseFloat(String(val))),
-    z.number({invalid_type_error: "Longitude must be a number."}).min(-180).max(180).optional().nullable()
+    z.number({invalid_type_error: "Longitude must be a number or empty."}).min(-180).max(180).optional().nullable()
   ),
 }).refine(data => {
-  if (data.farmName !== undefined && data.farmName !== null && data.farmName !== "") {
-    return data.farmName.length >= 2;
+  if (data.farmName !== undefined && data.farmName !== null && data.farmName.trim() !== "") { // Check for non-empty farmName
+    return data.farmName.trim().length >= 2;
   }
   return true;
 }, {
@@ -78,11 +78,15 @@ export default function ProfilePage() {
     inviteStaffMemberByEmail,
     removeStaffMember,
     updateStaffRole,
-    acceptInvitation,
-    declineInvitation,
+    // acceptInvitation, // Not used directly on this page for user's own invites
+    // declineInvitation, // Not used directly on this page for user's own invites
     revokeInvitation,
     refreshUserData,
-    cancelSubscription
+    cancelSubscription,
+    // For clarity, explicitly get these for the profile page's own "My Pending Invitations"
+    acceptInvitation: acceptMyInvitation,
+    declineInvitation: declineMyInvitation,
+
   } = useAuth();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
@@ -111,7 +115,7 @@ export default function ProfilePage() {
     if (user && (isEditing || !profileForm.formState.isDirty)) {
       profileForm.reset({
         name: user.name || "",
-        farmName: user.isFarmOwner ? (user.farmName || "") : undefined,
+        farmName: user.isFarmOwner ? (user.farmName || "") : undefined, // Only show/set farmName if owner
         farmLatitude: user.isFarmOwner ? (user.farmLatitude ?? null) : null,
         farmLongitude: user.isFarmOwner ? (user.farmLongitude ?? null) : null,
       });
@@ -125,8 +129,8 @@ export default function ProfilePage() {
     }
     setIsLoadingStaffDetails(true);
     try {
-        if (user.staffMembers) {
-             setStaffDetails(user.staffMembers.filter(staff => staff.uid !== user.uid));
+        if (user.staffMembers) { // staffMembers now includes role, name, email
+             setStaffDetails(user.staffMembers.filter(staff => staff.uid !== user.uid)); // Exclude owner from staff list
         } else {
             setStaffDetails([]);
         }
@@ -146,46 +150,27 @@ export default function ProfilePage() {
 
 
   const fetchMyPendingInvitations = useCallback(async () => {
-    if (!user?.uid || !user.email) { setMyPendingInvitations([]); return; }
+    if (!firebaseUser?.email) { setMyPendingInvitations([]); return; }
     setIsLoadingMyInvitations(true);
     try {
-      const invites: PendingInvitation[] = [];
-      const qByEmail = query( collection(db, "pendingInvitations"),
-        where("invitedEmail", "==", user.email.toLowerCase()),
+      const q = query(
+        collection(db, "pendingInvitations"),
+        where("invitedEmail", "==", firebaseUser.email.toLowerCase()),
         where("status", "==", "pending"),
         orderBy("createdAt", "desc")
       );
-      const emailSnapshot = await getDocs(qByEmail);
-      emailSnapshot.docs.forEach(docSnap => {
-        const data = docSnap.data();
-        if (!data.tokenExpiresAt || data.tokenExpiresAt.toMillis() > Date.now()) {
-            invites.push({ id: docSnap.id, ...data } as PendingInvitation);
-        }
-      });
-
-      if (user.uid) {
-          const qByUid = query( collection(db, "pendingInvitations"),
-            where("invitedUserUid", "==", user.uid),
-            where("status", "==", "pending"),
-            orderBy("createdAt", "desc")
-          );
-          const uidSnapshot = await getDocs(qByUid);
-          uidSnapshot.docs.forEach(docSnap => {
-            const data = docSnap.data();
-            if (!invites.find(i => i.id === docSnap.id) &&
-                (!data.tokenExpiresAt || data.tokenExpiresAt.toMillis() > Date.now())) {
-                 invites.push({ id: docSnap.id, ...data } as PendingInvitation);
-            }
-          });
-      }
-      setMyPendingInvitations(invites.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis()));
+      const querySnapshot = await getDocs(q);
+      const invites = querySnapshot.docs
+        .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as PendingInvitation))
+        .filter(invite => !invite.tokenExpiresAt || invite.tokenExpiresAt.toMillis() > Date.now()); // Filter out expired tokens client-side too
+      setMyPendingInvitations(invites);
     } catch (error) {
       console.error("Error fetching user's pending invitations:", error);
       toast({ title: "Error", description: "Could not fetch your pending invitations.", variant: "destructive" });
     } finally {
       setIsLoadingMyInvitations(false);
     }
-  }, [user?.uid, user?.email, toast]);
+  }, [firebaseUser?.email, toast]);
 
   useEffect(() => { fetchMyPendingInvitations(); }, [fetchMyPendingInvitations]);
 
@@ -228,15 +213,21 @@ export default function ProfilePage() {
     setIsSubmittingProfile(true);
     try {
       const nameUpdate = values.name;
-      const farmNameUpdate = user.isFarmOwner ? values.farmName : null; // Pass null if not owner
-      const latUpdate = user.isFarmOwner ? (values.farmLatitude === null || isNaN(values.farmLatitude as number) ? null : values.farmLatitude) : null;
-      const lonUpdate = user.isFarmOwner ? (values.farmLongitude === null || isNaN(values.farmLongitude as number) ? null : values.farmLongitude) : null;
+      let farmNameUpdate: string | null = null;
+      let latUpdate: number | null = null;
+      let lonUpdate: number | null = null;
+
+      if (user.isFarmOwner) {
+        farmNameUpdate = values.farmName?.trim() ? values.farmName.trim() : null; // Send null if empty to potentially clear
+        latUpdate = (values.farmLatitude === null || isNaN(values.farmLatitude as number)) ? null : Number(values.farmLatitude);
+        lonUpdate = (values.farmLongitude === null || isNaN(values.farmLongitude as number)) ? null : Number(values.farmLongitude);
+      }
 
       await updateUserProfile(
         nameUpdate,
-        farmNameUpdate,
-        latUpdate,
-        lonUpdate
+        user.isFarmOwner ? farmNameUpdate : undefined, // Pass undefined if not owner to prevent attempt to update farm name
+        user.isFarmOwner ? latUpdate : undefined,
+        user.isFarmOwner ? lonUpdate : undefined
       );
       toast({ title: "Profile Updated", description: "Your profile information has been successfully updated." });
       setIsEditing(false);
@@ -266,7 +257,7 @@ export default function ProfilePage() {
     });
     if (result.success) {
       inviteStaffForm.reset();
-      fetchFarmPendingInvitations();
+      fetchFarmPendingInvitations(); // Refresh the list of farm's pending invites
     }
     setIsInvitingStaff(false);
   }
@@ -285,7 +276,8 @@ export default function ProfilePage() {
     const result = await removeStaffMember(staffUid);
      toast({ title: result.success ? "Staff Removed" : "Removal Failed", description: result.message, variant: result.success ? "default" : "destructive" });
     if (result.success) {
-        // refreshUserData is called within removeStaffMember if successful, which re-triggers staff list fetch
+        await refreshUserData(); // Refresh all user data, which includes staff list for owner
+        fetchStaffDetails(); // Explicitly re-fetch staff details for UI update
         fetchFarmPendingInvitations(); // Also refresh pending in case related
     }
   }
@@ -309,27 +301,31 @@ export default function ProfilePage() {
     const result = await updateStaffRole(staffUid, newRole);
     toast({ title: result.success ? "Role Updated" : "Update Failed", description: result.message, variant: result.success ? "default" : "destructive"});
     if (result.success) {
-        // refreshUserData is called within updateStaffRole if successful
+        await refreshUserData(); // Refresh user data to get updated staff list with roles
+        fetchStaffDetails(); // Explicitly re-fetch staff details
     }
   }
 
-  async function handleAcceptInvitation(invitationId: string) {
+  async function handleAcceptMyInvitation(invitationId: string) {
     if (!firebaseUser) return;
-    const result = await acceptInvitation(invitationId); // acceptInvitation already calls refreshUserData
+    const result = await acceptMyInvitation(invitationId); 
     toast({ title: result.success ? "Invitation Accepted!" : "Acceptance Failed", description: result.message, variant: result.success ? "default" : "destructive" });
     if (result.success) {
-      fetchMyPendingInvitations();
+      await refreshUserData(); // Crucial to update farmId, roleOnCurrentFarm, etc.
+      fetchMyPendingInvitations(); // Refresh list of my invites
+      fetchStaffDetails(); // If owner, their staff list might change if they were invited to another farm and accepted.
+      fetchFarmPendingInvitations(); // If owner, their farm invites might change.
     }
   }
 
-  async function handleDeclineInvitation(invitationId: string) {
+  async function handleDeclineMyInvitation(invitationId: string) {
     if (!firebaseUser) return;
-    const result = await declineInvitation(invitationId);
+    const result = await declineMyInvitation(invitationId);
      toast({ title: result.success ? "Invitation Declined" : "Decline Failed", description: result.message, variant: result.success ? "default" : "destructive" });
     if (result.success) { fetchMyPendingInvitations(); }
   }
 
-  async function handleRevokeInvitation(invitationId: string) {
+  async function handleRevokeFarmInvitation(invitationId: string) {
     if (!firebaseUser || !(user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin')) return;
     const result = await revokeInvitation(invitationId);
     toast({ title: result.success ? "Invitation Revoked" : "Revoke Failed", description: result.message, variant: result.success ? "default" : "destructive" });
@@ -337,7 +333,7 @@ export default function ProfilePage() {
   }
 
   const userRoleDisplay = user?.roleOnCurrentFarm
-    ? (planNames[user.roleOnCurrentFarm as PlanId] || (user.roleOnCurrentFarm.charAt(0).toUpperCase() + user.roleOnCurrentFarm.slice(1)))
+    ? (planNames[user.roleOnCurrentFarm as PlanId] || (user.isFarmOwner ? planNames[user.selectedPlanId] : (user.roleOnCurrentFarm.charAt(0).toUpperCase() + user.roleOnCurrentFarm.slice(1))) )
     : 'Not associated';
 
   const canManageStaff = user?.isFarmOwner || user?.roleOnCurrentFarm === 'admin';
@@ -460,10 +456,20 @@ export default function ProfilePage() {
           {isLoadingMyInvitations ? <Skeleton className="h-20 w-full" /> : myPendingInvitations.length > 0 ? (
             <ul className="space-y-3">{myPendingInvitations.map(invite => (
                 <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
-                  <div><p className="font-medium">To join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p><p className="text-sm text-muted-foreground">Invited by: {invite.inviterName || 'Farm Owner'} (Sent: {invite.createdAt?.toDate().toLocaleDateString()}) {invite.tokenExpiresAt && `Expires: ${invite.tokenExpiresAt.toDate().toLocaleDateString()}`}</p></div>
+                  <div>
+                    <p className="font-medium">To join <span className="text-primary">{invite.farmName || 'Unnamed Farm'}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p>
+                    <p className="text-sm text-muted-foreground">Invited by: {invite.inviterName || 'Farm Owner'} (Sent: {invite.createdAt?.toDate ? format(invite.createdAt.toDate(), 'MMM dd, yyyy') : 'N/A'}) {invite.tokenExpiresAt && `Expires: ${invite.tokenExpiresAt.toDate().toLocaleDateString()}`}</p>
+                  </div>
                   <div className="flex gap-2 mt-2 sm:mt-0 shrink-0">
-                    <Button size="sm" onClick={() => handleAcceptInvitation(invite.id)} disabled={(user.farmId === invite.inviterFarmId && user.roleOnCurrentFarm !== null) || (user.isFarmOwner && user.farmId !== invite.inviterFarmId && user.farmId !== null && user.farmId !== undefined)}><Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleDeclineInvitation(invite.id)}><Icons.XCircle className="mr-2 h-4 w-4" /> Decline</Button>
+                    <Button 
+                        size="sm" 
+                        onClick={() => handleAcceptMyInvitation(invite.id)} 
+                        disabled={user.farmId === invite.inviterFarmId || (user.isFarmOwner && user.farmId !== null && user.farmId !== undefined && user.farmId !== invite.inviterFarmId)}
+                        title={user.farmId === invite.inviterFarmId ? "You are already part of this farm." : (user.isFarmOwner && user.farmId !== null && user.farmId !== undefined && user.farmId !== invite.inviterFarmId ? "You own another farm. Leave or delete it first." : "Accept Invitation")}
+                    >
+                        <Icons.CheckCircle2 className="mr-2 h-4 w-4" /> Accept
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => handleDeclineMyInvitation(invite.id)}><Icons.XCircle className="mr-2 h-4 w-4" /> Decline</Button>
                   </div>
                 </li>))}
             </ul>
@@ -489,7 +495,7 @@ export default function ProfilePage() {
                                     key={rVal}
                                     value={rVal}
                                     className="capitalize"
-                                    disabled={user.roleOnCurrentFarm === 'admin' && rVal === 'admin'}
+                                    disabled={user.roleOnCurrentFarm === 'admin' && rVal === 'admin'} // Admin cannot invite another admin
                                 >
                                     {rVal.charAt(0).toUpperCase() + rVal.slice(1)}
                                 </SelectItem>
@@ -523,7 +529,7 @@ export default function ProfilePage() {
                             disabled={
                                 staff.uid === user.uid || // Cannot change own role
                                 (user.roleOnCurrentFarm === 'admin' && staff.role === 'admin') || // Admin cannot modify another admin
-                                !user.isFarmOwner && user.roleOnCurrentFarm !== 'admin' // Editor/Viewer cannot change roles
+                                (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin') // Editor/Viewer cannot change roles
                             }
                         >
                             <SelectTrigger className="w-[120px] h-8 text-xs">
@@ -546,7 +552,10 @@ export default function ProfilePage() {
                         </Select>
                         <AlertDialog>
                           <AlertDialogTrigger asChild><Button variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 px-2"
-                            disabled={staff.uid === user.uid || (user.roleOnCurrentFarm === 'admin' && staff.role === 'admin')}
+                            disabled={
+                                staff.uid === user.uid || 
+                                (user.roleOnCurrentFarm === 'admin' && staff.role === 'admin')
+                            }
                           ><Icons.Trash2 className="mr-1 h-3 w-3"/>Remove</Button></AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogHeader><AlertDialogTitle>Remove {staff.name || 'this staff member'}?</AlertDialogTitle><AlertDialogDescription>This will remove their access to this farm. They will be reassigned to their own personal farm space. This action cannot be undone.</AlertDialogDescription></AlertDialogHeader>
@@ -562,8 +571,11 @@ export default function ProfilePage() {
                 {isLoadingFarmInvitations ? <Skeleton className="h-20 w-full"/> : farmPendingInvitations.length > 0 ? (
                      <ul className="space-y-3">{farmPendingInvitations.map(invite => (
                           <li key={invite.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 border rounded-md bg-muted/50 gap-2">
-                            <div><p className="font-medium">To: <span className="text-primary">{invite.invitedEmail}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p><p className="text-xs text-muted-foreground">Status: {invite.status} (Sent: {invite.createdAt?.toDate().toLocaleDateString()}) {invite.tokenExpiresAt && `Expires: ${invite.tokenExpiresAt.toDate().toLocaleDateString()}`}</p></div>
-                            <Button variant="outline" size="sm" onClick={() => handleRevokeInvitation(invite.id)}><Icons.XCircle className="mr-2 h-4 w-4" /> Revoke</Button>
+                            <div>
+                                <p className="font-medium">To: <span className="text-primary">{invite.invitedEmail}</span> as <span className="font-semibold capitalize">{invite.invitedRole}</span></p>
+                                <p className="text-xs text-muted-foreground">Status: {invite.status} (Sent: {invite.createdAt?.toDate ? format(invite.createdAt.toDate(), 'MMM dd, yyyy') : 'N/A'}) {invite.tokenExpiresAt && `Expires: ${format(invite.tokenExpiresAt.toDate(), 'MMM dd, yyyy')}`}</p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={() => handleRevokeFarmInvitation(invite.id)}><Icons.XCircle className="mr-2 h-4 w-4" /> Revoke</Button>
                           </li>))}
                       </ul>) : (<Alert><Icons.Info className="h-4 w-4" /><AlertTitle>No Pending Invites Sent</AlertTitle><AlertDescription>No pending invitations have been sent by your farm.</AlertDescription></Alert>)}
              </div>

@@ -15,24 +15,16 @@ import {
   updatePassword as firebaseUpdatePassword,
 } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { doc, setDoc, getDoc, updateDoc, collection, serverTimestamp, writeBatch, FieldValue, arrayUnion, arrayRemove, query, where, getDocs, Timestamp, limit, orderBy, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, serverTimestamp, writeBatch, FieldValue, query, where, getDocs, Timestamp, limit, orderBy, deleteDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import type { PlanId, SubscriptionStatus, PreferredAreaUnit, PreferredWeightUnit, ThemePreference, NotificationPreferences } from '@/contexts/auth-context'; // Ensure these types are exported or defined here
 
-export type PlanId = "free" | "pro" | "agribusiness";
-export type SubscriptionStatus = "active" | "trialing" | "cancelled" | "past_due" | "incomplete" | "pending_payment";
-export type PreferredAreaUnit = "acres" | "hectares";
-export type PreferredWeightUnit = "kg" | "lbs";
-export type ThemePreference = "light" | "dark" | "system";
+// Define types if not already imported (assuming they might be in a central types file)
+export type { PlanId, SubscriptionStatus, PreferredAreaUnit, PreferredWeightUnit, ThemePreference, NotificationPreferences };
+
 export type StaffRole = 'admin' | 'editor' | 'viewer';
-export type UserRoleOnFarm = PlanId | StaffRole | null;
+export type UserRoleOnFarm = PlanId | StaffRole | null; // Owner uses PlanId, staff uses StaffRole
 
-
-export interface NotificationPreferences {
-  taskRemindersEmail?: boolean;
-  weatherAlertsEmail?: boolean;
-  aiInsightsEmail?: boolean;
-  staffActivityEmail?: boolean;
-}
 export interface UserSettings {
   notificationPreferences?: NotificationPreferences;
   preferredAreaUnit?: PreferredAreaUnit;
@@ -40,11 +32,12 @@ export interface UserSettings {
   theme?: ThemePreference;
 }
 
-export interface StaffMemberInFarmDoc {
+export interface StaffMemberInFarmDoc { // Stored in farms/{farmId}.staff array
   uid: string;
   role: StaffRole;
 }
-export interface StaffMemberWithDetails {
+
+export interface StaffMemberWithDetails { // Used in AuthContext user object for owners to see staff
   uid: string;
   name: string | null;
   email: string | null;
@@ -60,8 +53,8 @@ export interface User {
   farmLatitude?: number | null;
   farmLongitude?: number | null;
   isFarmOwner?: boolean;
-  staffMembers?: StaffMemberWithDetails[];
-  roleOnCurrentFarm?: UserRoleOnFarm; // This will store 'free'/'pro'/'agribusiness' for owners, or 'admin'/'editor'/'viewer' for staff
+  staffMembers?: StaffMemberWithDetails[]; // Populated for farm owner
+  roleOnCurrentFarm?: UserRoleOnFarm;
   selectedPlanId: PlanId;
   subscriptionStatus: SubscriptionStatus;
   stripeCustomerId?: string | null;
@@ -70,6 +63,27 @@ export interface User {
   settings?: UserSettings;
   onboardingCompleted?: boolean;
 }
+
+export interface PendingInvitation {
+  id: string; // Firestore document ID
+  inviterFarmId: string;
+  inviterUid: string;
+  inviterName?: string; // Denormalized inviter's name
+  farmName?: string;    // Denormalized farm name
+  invitedEmail: string;
+  invitedUserUid: string | null; // UID of the user if they exist, null otherwise
+  invitedRole: StaffRole;
+  status: 'pending' | 'accepted' | 'declined' | 'expired' | 'revoked' | 'error_farm_not_found';
+  invitationToken?: string; // Only present for 'pending' status
+  tokenExpiresAt?: Timestamp; // Only present for 'pending' status
+  createdAt: Timestamp;
+  updatedAt?: Timestamp;
+  acceptedAt?: Timestamp;
+  declinedAt?: Timestamp;
+  revokedAt?: Timestamp;
+  acceptedByUid?: string;
+}
+
 
 export interface AppNotification {
   id: string;
@@ -92,17 +106,17 @@ interface AuthContextType {
   notifications: AppNotification[];
   unreadNotificationCount: number;
   loginUser: (email: string, password: string) => Promise<void>;
-  registerUser: (name: string, farmNameFromInput: string, email: string, password: string, selectedPlanId: PlanId) => Promise<void | string>;
+  registerUser: (name: string, farmNameFromInput: string, email: string, password: string, selectedPlanId: PlanId) => Promise<string | void>;
   logoutUser: () => Promise<void>;
   updateUserProfile: (nameUpdate: string, newFarmName?: string | null, farmLatInput?: number | null, farmLngInput?: number | null) => Promise<void>;
   changeUserPassword: (currentPassword: string, newPassword: string) => Promise<void>;
   makeApiRequest: (endpoint: string, body: any, method?: 'POST' | 'GET' | 'PUT' | 'DELETE') => Promise<any>;
-  inviteStaffMemberByEmail: (emailToInvite: string, role: StaffRole) => Promise<{success: boolean; message: string}>;
+  inviteStaffMemberByEmail: (emailToInvite: string, role: StaffRole) => Promise<{success: boolean; message: string; invitationId?: string}>;
   removeStaffMember: (staffUidToRemove: string) => Promise<{success: boolean; message: string}>;
   updateStaffRole: (staffUid: string, newRole: StaffRole) => Promise<{success: boolean; message: string}>;
-  acceptInvitation: (invitationToken: string) => Promise<{success: boolean; message: string}>;
-  declineInvitation: (invitationId: string) => Promise<{success: boolean; message: string}>;
-  revokeInvitation: (invitationId: string) => Promise<{success: boolean; message: string}>;
+  acceptInvitation: (invitationId: string) => Promise<{success: boolean; message: string}>; // Used by user for their own invites
+  declineInvitation: (invitationId: string) => Promise<{success: boolean; message: string}>; // Used by user for their own invites
+  revokeInvitation: (invitationId: string) => Promise<{success: boolean; message: string}>;  // Used by owner for farm's invites
   refreshUserData: () => Promise<void>;
   updateUserPlan: (planId: PlanId) => Promise<{success: boolean; message: string; sessionId?: string; error?: string}>;
   cancelSubscription: () => Promise<{success: boolean; message: string}>;
@@ -152,27 +166,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (userDocSnap.exists()) {
       const appUserDataFromDb = userDocSnap.data() as Partial<User>;
-      let currentFarmName: string | null = appUserDataFromDb.farmName || null;
-      let currentIsFarmOwner = appUserDataFromDb.isFarmOwner || false;
-      let currentFarmId: string | null = appUserDataFromDb.farmId || null;
-      let userRoleOnFarm: UserRoleOnFarm = null;
-      let staffDetailsForOwnerOrAdmin: StaffMemberWithDetails[] = [];
-      let currentFarmLatitude: number | null = appUserDataFromDb.farmLatitude ?? null; // Use ?? for direct properties on user doc
-      let currentFarmLongitude: number | null = appUserDataFromDb.farmLongitude ?? null;
+      let currentFarmNameFromFarmDoc: string | null = null;
+      let currentFarmLatitude: number | null = null;
+      let currentFarmLongitude: number | null = null;
+      let staffDetailsForOwner: StaffMemberWithDetails[] = [];
+      let derivedRoleOnCurrentFarm: UserRoleOnFarm = appUserDataFromDb.roleOnCurrentFarm || null; // Start with what's on user doc
 
-      if (currentFarmId) {
+      if (appUserDataFromDb.farmId) {
         try {
-            const farmDocRef = doc(db, "farms", currentFarmId);
+            const farmDocRef = doc(db, "farms", appUserDataFromDb.farmId);
             const farmDocSnap = await getDoc(farmDocRef);
             if (farmDocSnap.exists()) {
               const farmData = farmDocSnap.data();
-              currentFarmName = farmData?.farmName || currentFarmName || 'Unnamed Farm';
-              currentFarmLatitude = typeof farmData?.latitude === 'number' ? farmData.latitude : currentFarmLatitude;
-              currentFarmLongitude = typeof farmData?.longitude === 'number' ? farmData.longitude : currentFarmLongitude;
+              currentFarmNameFromFarmDoc = farmData?.farmName || 'Unnamed Farm';
+              currentFarmLatitude = typeof farmData?.latitude === 'number' ? farmData.latitude : null;
+              currentFarmLongitude = typeof farmData?.longitude === 'number' ? farmData.longitude : null;
 
-              if (farmData?.ownerId === fbUser.uid) {
-                currentIsFarmOwner = true;
-                userRoleOnFarm = appUserDataFromDb.selectedPlanId || 'free'; // Owner's role is their plan
+              if (appUserDataFromDb.isFarmOwner && farmData?.ownerId === fbUser.uid) {
+                derivedRoleOnCurrentFarm = appUserDataFromDb.selectedPlanId || 'free'; // Owner's role is their plan
 
                 if (farmData?.staff && Array.isArray(farmData.staff)) {
                   const staffPromises = (farmData.staff as StaffMemberInFarmDoc[]).map(async (staffMember) => {
@@ -182,47 +193,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                       uid: staffMember.uid,
                       name: staffUserData?.name || staffMember.uid,
                       email: staffUserData?.email || 'N/A',
-                      role: staffMember.role
+                      role: staffMember.role // Role from farm.staff array
                     };
                   });
-                  staffDetailsForOwnerOrAdmin = await Promise.all(staffPromises);
+                  staffDetailsForOwner = await Promise.all(staffPromises);
                 }
-              } else {
-                currentIsFarmOwner = false;
+              } else if (!appUserDataFromDb.isFarmOwner) {
                 const farmStaffArray = (farmData?.staff || []) as StaffMemberInFarmDoc[];
                 const staffEntry = farmStaffArray.find(s => s.uid === fbUser.uid);
-                userRoleOnFarm = staffEntry ? staffEntry.role : null;
-                // If admin, they might also need to see staff list (though typically owner manages)
-                if (userRoleOnFarm === 'admin' && farmData?.staff && Array.isArray(farmData.staff)){
-                    const staffPromises = (farmData.staff as StaffMemberInFarmDoc[]).filter(s => s.uid !== fbUser.uid) // Admins see other staff, not themselves
-                    .map(async (staffMember) => {
-                      const staffUserDoc = await getDoc(doc(db, "users", staffMember.uid));
-                      const staffUserData = staffUserDoc.exists() ? staffUserDoc.data() : null;
-                      return {
-                        uid: staffMember.uid,
-                        name: staffUserData?.name || staffMember.uid,
-                        email: staffUserData?.email || 'N/A',
-                        role: staffMember.role
-                      };
-                    });
-                    staffDetailsForOwnerOrAdmin = await Promise.all(staffPromises);
-                }
+                derivedRoleOnCurrentFarm = staffEntry ? staffEntry.role : null;
               }
             } else {
-              console.warn(`Farm document ${appUserDataFromDb.farmId} not found for user ${fbUser.uid}.`);
-              currentFarmId = null; currentFarmName = null; currentIsFarmOwner = false; userRoleOnFarm = null;
+              console.warn(`Farm document ${appUserDataFromDb.farmId} not found for user ${fbUser.uid}. User might be orphaned from farm.`);
+              // Consider resetting farmId and isFarmOwner if farm doesn't exist
             }
         } catch (farmError) {
             console.error(`Error fetching farm ${appUserDataFromDb.farmId} for user ${fbUser.uid}:`, farmError);
-            currentFarmId = null; currentFarmName = null; currentIsFarmOwner = false; userRoleOnFarm = null;
         }
       }
-
+      
       const defaultNotificationPreferences: NotificationPreferences = {
         taskRemindersEmail: true, weatherAlertsEmail: false, aiInsightsEmail: true, staffActivityEmail: false,
       };
-      const defaultSettings: UserSettings = {
-        notificationPreferences: { ...defaultNotificationPreferences, ...(appUserDataFromDb.settings?.notificationPreferences || {}) },
+
+      const finalSettings: UserSettings = {
+        notificationPreferences: {
+          ...defaultNotificationPreferences,
+          ...(appUserDataFromDb.settings?.notificationPreferences || {}),
+        },
         preferredAreaUnit: appUserDataFromDb.settings?.preferredAreaUnit || "acres",
         preferredWeightUnit: appUserDataFromDb.settings?.preferredWeightUnit || "kg",
         theme: appUserDataFromDb.settings?.theme || "system",
@@ -230,41 +228,41 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       return {
         uid: fbUser.uid,
-        email: fbUser.email,
+        email: fbUser.email?.toLowerCase() || null,
         name: appUserDataFromDb.name || fbUser.displayName,
-        farmId: currentFarmId,
-        farmName: currentFarmName,
+        farmId: appUserDataFromDb.farmId || null,
+        farmName: currentFarmNameFromFarmDoc || appUserDataFromDb.farmName, // Prefer name from farm doc if available
         farmLatitude: currentFarmLatitude,
         farmLongitude: currentFarmLongitude,
-        isFarmOwner: currentIsFarmOwner,
-        staffMembers: staffDetailsForOwnerOrAdmin,
-        roleOnCurrentFarm: userRoleOnFarm,
+        isFarmOwner: appUserDataFromDb.isFarmOwner || false,
+        staffMembers: staffDetailsForOwner,
+        roleOnCurrentFarm: derivedRoleOnCurrentFarm,
         selectedPlanId: appUserDataFromDb.selectedPlanId || "free",
         subscriptionStatus: appUserDataFromDb.subscriptionStatus || (appUserDataFromDb.selectedPlanId === "free" ? "active" : "pending_payment"),
         stripeCustomerId: appUserDataFromDb.stripeCustomerId || null,
         stripeSubscriptionId: appUserDataFromDb.stripeSubscriptionId || null,
         subscriptionCurrentPeriodEnd: appUserDataFromDb.subscriptionCurrentPeriodEnd || null,
-        settings: defaultSettings,
+        settings: finalSettings,
         onboardingCompleted: typeof appUserDataFromDb.onboardingCompleted === 'boolean' ? appUserDataFromDb.onboardingCompleted : false,
       };
     } else {
-        // This case should only happen during the brief moment of registration before the user doc is created by an API route.
-        // If it happens for an already "logged in" user, it indicates a data inconsistency.
-        console.warn(`User document not found in Firestore for UID: ${fbUser.uid}. This is unexpected for an authenticated user post-registration.`);
-        return null;
+        console.warn(`User document not found in Firestore for UID: ${fbUser.uid} during fetchAppUserDataFromDb.`);
+        return null; // Should be handled by calling functions (e.g., during registration this is expected briefly)
     }
   }, []);
 
   const refreshUserData = useCallback(async () => {
-    const currentFbUser = auth.currentUser;
+    const currentFbUser = auth.currentUser; // Get fresh instance
     if (currentFbUser) {
-      setIsLoading(true);
+      setIsLoading(true); // Set loading true at the start of refresh
       try {
         const appUserData = await fetchAppUserDataFromDb(currentFbUser);
         setUser(appUserData);
+        setFirebaseUser(currentFbUser); // ensure firebaseUser state is also in sync
       } catch (error) {
         console.error("Error refreshing user data:", error);
-        setUser(null);
+        setUser(null); 
+        setFirebaseUser(null);
         toast({ title: "Error", description: "Could not refresh user data.", variant: "destructive" });
       } finally {
         setIsLoading(false);
@@ -278,10 +276,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const loginUser = useCallback(async (email: string, password: string): Promise<void> => {
     await signInWithEmailAndPassword(auth, email, password);
-    // onAuthStateChanged will call refreshUserData
+    // onAuthStateChanged will trigger refreshUserData
   }, []);
 
-  const registerUser = useCallback(async (name: string, farmNameFromInput: string, email: string, password: string, selectedPlanId: PlanId): Promise<void | string> => {
+  const registerUser = useCallback(async (name: string, farmNameFromInput: string, email: string, password: string, selectedPlanId: PlanId): Promise<string | void> => {
     if (selectedPlanId === "free") {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const fbUser = userCredential.user;
@@ -289,8 +287,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const batch = writeBatch(db);
       const userDocRef = doc(db, "users", fbUser.uid);
-      const newFarmDocRef = doc(db, "farms", fbUser.uid); // Owner's farmId is their UID for free plan simplicity
-      const newFarmId = fbUser.uid;
+      
+      // For free plan, user's UID is their farmId
+      const newFarmId = fbUser.uid; 
+      const newFarmDocRef = doc(db, "farms", newFarmId);
 
       const actualFarmName = farmNameFromInput.trim() || `${name}'s Farm`;
       const defaultSettings : UserSettings = {
@@ -301,9 +301,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       batch.set(userDocRef, {
         uid: fbUser.uid, email: fbUser.email?.toLowerCase(), name: name,
         farmId: newFarmId,
-        farmName: actualFarmName,
+        farmName: actualFarmName, // Store it on user doc too for convenience during initial load
         isFarmOwner: true,
-        roleOnCurrentFarm: selectedPlanId,
+        roleOnCurrentFarm: selectedPlanId as UserRoleOnFarm, // 'free' plan is owner role
         selectedPlanId: selectedPlanId,
         subscriptionStatus: "active" as SubscriptionStatus,
         settings: defaultSettings,
@@ -313,18 +313,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
 
       batch.set(newFarmDocRef, {
-        farmId: newFarmId,
+        farmId: newFarmId, // Store farmId on farm doc as well
         farmName: actualFarmName,
         ownerId: fbUser.uid,
-        staff: [],
+        staff: [], // Empty staff array for new farm
         latitude: null,
         longitude: null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-
       await batch.commit();
-
+      
+      // Check for pending invitations for this email
       try {
         const invitesQuery = query(
           collection(db, "pendingInvitations"),
@@ -338,21 +338,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const invitationToken = invitationDoc.data().invitationToken;
           if (invitationToken) {
             toast({ title: "Invitation Found!", description: "We found a pending invitation for you. Redirecting to accept..." });
-            router.push(`/accept-invitation?token=${invitationToken}`); // router.push is fine here
-            return; // Explicitly return to prevent dashboard redirect
+            return `/accept-invitation?token=${invitationToken}`; // Return path for form to redirect
           }
         }
       } catch (error) {
           console.error("Error checking for pending invitations after registration:", error);
       }
-      await refreshUserData(); // Call after user and farm docs are created
-      router.push("/dashboard"); // Default redirect if no invite found
+      // No await refreshUserData() here, onAuthStateChanged will handle it.
+      // The form will handle router.push to dashboard if no invite path returned
     } else {
-      // Paid plan registration is handled by RegisterForm calling API
-      // This part of registerUser is mainly for free plan now.
-      throw new Error("Paid plan registration should be initiated via API.");
+      // Paid plan registration is initiated via API from RegisterForm directly after Firebase Auth user creation
+      // This part of registerUser is now primarily for the 'free' plan path.
+      throw new Error("Paid plan registration should be handled by the form calling the API.");
     }
-  }, [toast, router, refreshUserData]);
+  }, [toast]);
 
   const logoutUser = useCallback(async () => {
     try { await firebaseSignOut(auth); } catch (error) { console.error("Error signing out: ", error); }
@@ -368,38 +367,46 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const updateUserProfile = useCallback(async (nameUpdate: string, newFarmName?: string | null, farmLatInput?: number | null, farmLngInput?: number | null): Promise<void> => {
     const currentFbUser = auth.currentUser;
-    const currentAppContextUser = user;
+    const currentAppContextUser = user; // Use user from state which should be up-to-date
     if (!currentFbUser || !currentAppContextUser) throw new Error("User not authenticated.");
 
     const batch = writeBatch(db);
     const userDocRef = doc(db, "users", currentFbUser.uid);
     const userUpdateData: any = { updatedAt: serverTimestamp() };
+    let userProfileNeedsUpdate = false;
 
     if (nameUpdate.trim() && nameUpdate.trim() !== (currentAppContextUser.name || "")) {
       userUpdateData.name = nameUpdate.trim();
-      await firebaseUpdateProfile(currentFbUser, { displayName: nameUpdate.trim() });
+      await firebaseUpdateProfile(currentFbUser, { displayName: nameUpdate.trim() }); // Firebase Auth profile
+      userProfileNeedsUpdate = true;
     }
 
     if (currentAppContextUser.isFarmOwner && newFarmName !== undefined) {
-        if (newFarmName.trim() && newFarmName.trim() !== (currentAppContextUser.farmName || "")) {
-            userUpdateData.farmName = newFarmName.trim();
-        }
+      // If newFarmName is an empty string, it implies clearing; store null or empty string based on preference.
+      // Let's treat empty string from form as wanting to clear, so save null.
+      const farmNameToSave = newFarmName === "" ? null : newFarmName;
+      if (farmNameToSave !== (currentAppContextUser.farmName || null)) {
+        userUpdateData.farmName = farmNameToSave; // Update user's copy of farmName
+        userProfileNeedsUpdate = true;
+      }
     }
-    if (Object.keys(userUpdateData).length > 1) { // If only updatedAt, no need to batch.update userDoc just yet
+    if(userProfileNeedsUpdate) {
         batch.update(userDocRef, userUpdateData);
     }
-
+    
     if (currentAppContextUser.isFarmOwner && currentAppContextUser.farmId) {
       const farmDocRef = doc(db, "farms", currentAppContextUser.farmId);
       const farmUpdates: any = { updatedAt: serverTimestamp() };
       let farmDocNeedsUpdate = false;
 
-      if (newFarmName !== undefined && newFarmName.trim() && newFarmName.trim() !== (currentAppContextUser.farmName || "")) {
-        farmUpdates.farmName = newFarmName.trim();
+      const farmNameToSaveOnFarmDoc = newFarmName === "" ? null : newFarmName;
+      if (newFarmName !== undefined && farmNameToSaveOnFarmDoc !== (currentAppContextUser.farmName || null) ) {
+        farmUpdates.farmName = farmNameToSaveOnFarmDoc;
         farmDocNeedsUpdate = true;
       }
-      const latToSave = farmLatInput === undefined || farmLatInput === null || isNaN(farmLatInput) ? null : farmLatInput;
-      const lonToSave = farmLngInput === undefined || farmLngInput === null || isNaN(farmLngInput) ? null : farmLngInput;
+      
+      const latToSave = (farmLatInput === null || farmLatInput === undefined || isNaN(farmLatInput)) ? null : Number(farmLatInput);
+      const lonToSave = (farmLngInput === null || farmLngInput === undefined || isNaN(farmLngInput)) ? null : Number(farmLngInput);
 
       if (latToSave !== currentAppContextUser.farmLatitude || lonToSave !== currentAppContextUser.farmLongitude) {
         farmUpdates.latitude = latToSave;
@@ -423,52 +430,44 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await firebaseUpdatePassword(currentFbUser, newPassword);
   }, []);
 
-  const inviteStaffMemberByEmail = useCallback(async (emailToInvite: string, role: StaffRole): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.farmId || (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin')) {
-      return { success: false, message: "Unauthorized to invite staff." };
-    }
+  const inviteStaffMemberByEmail = useCallback(async (emailToInvite: string, role: StaffRole): Promise<{success: boolean; message: string; invitationId?: string}> => {
     try {
       const result = await makeApiRequest('/api/farm/invite-staff', { invitedEmail: emailToInvite, role: role });
+      // No refreshUserData here; profile page will re-fetch its own lists.
       return result;
     } catch(error: any) { return { success: false, message: error.message || "Failed to log invitation request."}; }
-  }, [user, makeApiRequest]);
+  }, [makeApiRequest]);
 
   const removeStaffMember = useCallback(async (staffUidToRemove: string): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.farmId || (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin')) {
-      return { success: false, message: "Unauthorized to remove staff." };
-    }
     try {
         const result = await makeApiRequest('/api/farm/remove-staff', { staffUidToRemove });
-        if (result.success) await refreshUserData();
+        if (result.success) await refreshUserData(); // Refresh to update owner's staffMembers list & staff user's farmId
         return result;
     } catch (error: any) { return { success: false, message: error.message || "Failed to remove staff member."}; }
-  }, [user, makeApiRequest, refreshUserData]);
+  }, [makeApiRequest, refreshUserData]);
 
   const updateStaffRole = useCallback(async (staffUid: string, newRole: StaffRole): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.farmId || (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin')) {
-      return { success: false, message: "Unauthorized to update staff roles." };
-    }
     try {
       const result = await makeApiRequest('/api/farm/update-staff-role', { staffUidToUpdate: staffUid, newRole: newRole });
-      if (result.success) await refreshUserData();
+      if (result.success) await refreshUserData(); // Refresh to update owner's staffMembers list & staff user's roleOnCurrentFarm
       return result;
     } catch (error: any) {
       return { success: false, message: error.message || "Failed to update staff role."};
     }
-  }, [user, makeApiRequest, refreshUserData]);
+  }, [makeApiRequest, refreshUserData]);
 
-  const acceptInvitation = useCallback(async (invitationToken: string): Promise<{success: boolean; message: string}> => {
+  const acceptInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
     try {
-        const result = await makeApiRequest('/api/farm/invitations/process-token', { invitationToken });
+        const result = await makeApiRequest('/api/farm/invitations/accept', { invitationId }); // This was the old direct client-side one, now unused
         if (result.success) {
-          await refreshUserData();
+          await refreshUserData(); // Crucial: user's farmId, roleOnCurrentFarm changes
         }
         return result;
     } catch (error: any) { return { success: false, message: error.message || "Failed to accept invitation."}; }
   }, [makeApiRequest, refreshUserData]);
 
   const declineInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
-    if (!firebaseUser) return { success: false, message: "User not authenticated."};
+    if (!firebaseUser) return { success: false, message: "User not authenticated."}; // firebaseUser might be null briefly
     try {
       return await makeApiRequest('/api/farm/invitations/decline', { invitationId });
     }
@@ -476,17 +475,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [firebaseUser, makeApiRequest]);
 
   const revokeInvitation = useCallback(async (invitationId: string): Promise<{success: boolean; message: string}> => {
-    if (!user || !user.farmId || (!user.isFarmOwner && user.roleOnCurrentFarm !== 'admin')) {
-      return { success: false, message: "Unauthorized to revoke invitation." };
-    }
     try {
       return await makeApiRequest('/api/farm/invitations/revoke', { invitationId });
     }
     catch(error: any) { return { success: false, message: error.message || "Failed to revoke invitation."}; }
-  }, [user, makeApiRequest]);
+  }, [makeApiRequest]);
 
   const cancelSubscription = useCallback(async (): Promise<{success: boolean; message: string}> => {
-    if (!user || !firebaseUser) {
+    if (!user || !firebaseUser) { // Check against user from state as well
       return { success: false, message: "User not authenticated." };
     }
     try {
@@ -506,18 +502,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (planId === 'free') {
       if (user.selectedPlanId !== 'free' && user.subscriptionStatus === 'active') {
-        return cancelSubscription(); // Call the stable cancelSubscription
+        return cancelSubscription(); 
       } else if (user.selectedPlanId === 'free') {
         return { success: true, message: "You are already on the Free plan." };
-      } else {
-         await updateDoc(doc(db, "users", user.uid), { selectedPlanId: 'free', subscriptionStatus: 'active', stripeSubscriptionId: null, updatedAt: serverTimestamp() });
+      } else { // e.g. pending_payment for a paid plan, now wants free
+         await updateDoc(doc(db, "users", user.uid), { selectedPlanId: 'free', subscriptionStatus: 'active', stripeSubscriptionId: null, stripeCustomerId: null, updatedAt: serverTimestamp() });
          await refreshUserData();
          return { success: true, message: "Switched to Free plan."};
       }
     }
+    // For paid plans, initiate checkout
     try {
       const response = await makeApiRequest('/api/billing/create-checkout-session', { planId });
       if (response.success && response.sessionId) {
+        // refreshUserData will be called if payment is successful via webhook, or if user returns to pricing page with session_id
         return { success: true, message: 'Checkout session created.', sessionId: response.sessionId };
       } else {
         return { success: false, message: response.message || 'Failed to create session.', error: response.message };
@@ -526,7 +524,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const message = error instanceof Error ? error.message : "Could not initiate plan change.";
       return { success: false, message, error: message };
     }
-  }, [user, firebaseUser, makeApiRequest, refreshUserData, cancelSubscription]);
+  }, [user, firebaseUser, makeApiRequest, cancelSubscription, refreshUserData]);
 
 
   const updateUserSettings = useCallback(async (newSettings: Partial<UserSettings>): Promise<{success: boolean; message: string}> => {
@@ -577,9 +575,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const data = docSnap.data();
         const notif = {
             id: docSnap.id,
-            ...data,
+            userId: data.userId, // ensure all fields are explicitly mapped
+            farmId: data.farmId || null,
             type: data.type || 'general',
-            createdAt: data.createdAt instanceof Timestamp ? data.createdAt : Timestamp.now(),
+            title: data.title,
+            message: data.message,
+            link: data.link || null,
+            isRead: data.isRead || false,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt : Timestamp.now(), // Ensure createdAt is Timestamp
             readAt: data.readAt instanceof Timestamp ? data.readAt : undefined,
         } as AppNotification;
         fetchedNotifs.push(notif);
@@ -600,7 +603,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const notifRef = doc(db, "notifications", notificationId);
       await updateDoc(notifRef, { isRead: true, readAt: serverTimestamp() });
-      await fetchNotifications();
+      await fetchNotifications(); // Re-fetch to update count and list
     } catch (error) {
       console.error("Error marking notification as read:", error);
     }
@@ -610,26 +613,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const currentFbUser = auth.currentUser;
     if (!currentFbUser || unreadNotificationCount === 0) return;
     try {
-      const batch = writeBatch(db);
+      const batchCommits = writeBatch(db);
       const unreadNotifsOnClient = notifications.filter(n => !n.isRead);
       if (unreadNotifsOnClient.length > 0) {
         unreadNotifsOnClient.forEach(notif => {
           const notifRef = doc(db, "notifications", notif.id);
-          batch.update(notifRef, { isRead: true, readAt: serverTimestamp() });
+          batchCommits.update(notifRef, { isRead: true, readAt: serverTimestamp() });
         });
-        await batch.commit();
+        await batchCommits.commit();
       }
-      await fetchNotifications();
+      await fetchNotifications(); // Re-fetch
     } catch (error) {
       console.error("Error marking all notifications as read:", error);
     }
   }, [notifications, unreadNotificationCount, fetchNotifications]);
 
   const markOnboardingComplete = useCallback(async () => {
-    const currentFbUser = auth.currentUser;
-    if (!user || !currentFbUser) {
-      return;
-    }
+    if (!user || !auth.currentUser) return;
     try {
       const userDocRef = doc(db, "users", user.uid);
       await updateDoc(userDocRef, { onboardingCompleted: true, updatedAt: serverTimestamp() });
@@ -642,19 +642,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUserInstance) => {
       setIsLoading(true);
-      setFirebaseUser(fbUserInstance);
       if (fbUserInstance) {
-        await refreshUserData(); // This fetches full user data
+        setFirebaseUser(fbUserInstance); // Set FirebaseUser first
+        await refreshUserData();    // Then refresh all app user data
         await fetchNotifications();
       } else {
         setUser(null);
+        setFirebaseUser(null);
         setNotifications([]);
         setUnreadNotificationCount(0);
       }
       setIsLoading(false);
     });
     return () => unsubscribe();
-  }, [refreshUserData, fetchNotifications]); // refreshUserData is stable
+  }, [refreshUserData, fetchNotifications]); // refreshUserData & fetchNotifications are stable
 
   useEffect(() => {
     const currentTheme = user?.settings?.theme;

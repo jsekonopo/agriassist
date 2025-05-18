@@ -53,10 +53,10 @@ export const mainNavItems: NavItem[] = [
 
 // Navigation items for the public-facing site header and footer
 export const publicNavItems: NavItem[] = [
-  {
+   {
     title: 'Features',
     href: '/features',
-    icon: Icons.ListChecksFeatures,
+    icon: Icons.ListChecksFeatures, // This icon was added before
   },
   {
     title: 'Pricing', 
@@ -87,4 +87,3 @@ export const settingsNavItem: NavItem = {
   icon: Settings,
   disabled: false, 
 };
-
