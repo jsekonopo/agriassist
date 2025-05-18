@@ -28,26 +28,25 @@ interface DynamicYieldData {
   [cropNameAndUnit: string]: number | string; // e.g., "Corn (kg)": 5000
 }
 
-interface MonthlyUsageData {
+interface MonthlyUsageDataPoint {
   month: string; // e.g., "Jan"
-  usage: number;
+  [unitKey: string]: number | string; // e.g., "kg": 50, "lbs/acre": 20
 }
+
 
 interface FertilizerLog {
   id: string;
   dateApplied: string; // YYYY-MM-DD
-  amountApplied: number; 
-  // fertilizerType: string;
-  // amountUnit: string; // Assuming this unit is for the amountApplied
+  amountApplied: number;
+  amountUnit: string;
   farmId: string;
 }
 
 interface IrrigationLog {
   id: string;
   irrigationDate: string; // YYYY-MM-DD
-  amountApplied: number; 
-  // waterSource: string;
-  // amountUnit: string; // Assuming this unit is for the amountApplied
+  amountApplied: number;
+  amountUnit: string;
   farmId: string;
 }
 
@@ -64,13 +63,17 @@ const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep
 export default function AnalyticsPage() {
   const { user } = useAuth();
   const [dynamicYieldData, setDynamicYieldData] = useState<DynamicYieldData[]>([]);
-  const [uniqueCropUnitKeysForChart, setUniqueCropUnitKeysForChart] = useState<string[]>([]); // Stores keys like "Corn (kg)"
+  const [uniqueCropUnitKeysForChart, setUniqueCropUnitKeysForChart] = useState<string[]>([]);
   const [isLoadingYieldData, setIsLoadingYieldData] = useState(true);
 
-  const [fertilizerChartData, setFertilizerChartData] = useState<MonthlyUsageData[]>([]);
+  const [fertilizerChartData, setFertilizerChartData] = useState<MonthlyUsageDataPoint[]>([]);
+  const [uniqueFertilizerUnitKeys, setUniqueFertilizerUnitKeys] = useState<string[]>([]);
   const [isLoadingFertilizerData, setIsLoadingFertilizerData] = useState(true);
-  const [waterChartData, setWaterChartData] = useState<MonthlyUsageData[]>([]);
+
+  const [waterChartData, setWaterChartData] = useState<MonthlyUsageDataPoint[]>([]);
+  const [uniqueWaterUnitKeys, setUniqueWaterUnitKeys] = useState<string[]>([]);
   const [isLoadingWaterData, setIsLoadingWaterData] = useState(true);
+
 
   useEffect(() => {
     if (!user || !user.farmId) {
@@ -78,9 +81,11 @@ export default function AnalyticsPage() {
       setDynamicYieldData([]);
       setUniqueCropUnitKeysForChart([]);
       setIsLoadingFertilizerData(false);
-      setFertilizerChartData(monthNames.map(month => ({ month, usage: 0 })));
+      setFertilizerChartData([]);
+      setUniqueFertilizerUnitKeys([]);
       setIsLoadingWaterData(false);
-      setWaterChartData(monthNames.map(month => ({ month, usage: 0 })));
+      setWaterChartData([]);
+      setUniqueWaterUnitKeys([]);
       return;
     }
 
@@ -117,7 +122,7 @@ export default function AnalyticsPage() {
                 yearData[key] = cropUnits[key] || 0;
               });
               return yearData;
-            }).sort((a, b) => parseInt(a.year) - parseInt(b.year)); // Ensure years are sorted
+            }).sort((a, b) => parseInt(a.year) - parseInt(b.year)); 
             setDynamicYieldData(chartData);
         } else {
             setDynamicYieldData([]);
@@ -138,21 +143,37 @@ export default function AnalyticsPage() {
         const fertilizerSnapshot = await getDocs(fertilizerQuery);
         const fertilizerLogs = fertilizerSnapshot.docs.map(doc => doc.data() as FertilizerLog);
         
-        const usageByMonth: { [month: string]: number } = {};
-        monthNames.forEach(m => usageByMonth[m] = 0); 
+        const usageByMonthAndUnit: { [month: string]: { [unit: string]: number } } = {};
+        monthNames.forEach(m => usageByMonthAndUnit[m] = {});
+        const allFertilizerUnits = new Set<string>();
 
         if (fertilizerLogs.length > 0) {
             fertilizerLogs.forEach(log => {
-                if (log.dateApplied && typeof log.amountApplied === 'number') {
+                if (log.dateApplied && typeof log.amountApplied === 'number' && log.amountUnit) {
                     const monthName = format(parseISO(log.dateApplied), 'MMM');
-                    usageByMonth[monthName] += log.amountApplied;
+                    const unitKey = `${log.amountUnit}`; // e.g. "kg", "lbs/acre"
+                    allFertilizerUnits.add(unitKey);
+                    if (!usageByMonthAndUnit[monthName][unitKey]) usageByMonthAndUnit[monthName][unitKey] = 0;
+                    usageByMonthAndUnit[monthName][unitKey] += log.amountApplied;
                 }
             });
         }
-        setFertilizerChartData(monthNames.map(month => ({ month, usage: usageByMonth[month] || 0 })));
+        const uniqueUnits = Array.from(allFertilizerUnits).sort();
+        setUniqueFertilizerUnitKeys(uniqueUnits);
+        
+        const fertChartData: MonthlyUsageDataPoint[] = monthNames.map(month => {
+            const monthData: MonthlyUsageDataPoint = { month };
+            uniqueUnits.forEach(unit => {
+                monthData[`Fertilizer (${unit})`] = usageByMonthAndUnit[month]?.[unit] || 0;
+            });
+            return monthData;
+        });
+        setFertilizerChartData(fertChartData);
+
       } catch (error) {
         console.error("Error fetching fertilizer data:", error);
-        setFertilizerChartData(monthNames.map(month => ({ month, usage: 0 })));
+        setFertilizerChartData([]);
+        setUniqueFertilizerUnitKeys([]);
       } finally {
         setIsLoadingFertilizerData(false);
       }
@@ -164,21 +185,37 @@ export default function AnalyticsPage() {
         const waterSnapshot = await getDocs(waterQuery);
         const waterLogs = waterSnapshot.docs.map(doc => doc.data() as IrrigationLog);
 
-        const usageByMonth: { [month: string]: number } = {};
-        monthNames.forEach(m => usageByMonth[m] = 0);
+        const usageByMonthAndUnit: { [month: string]: { [unit: string]: number } } = {};
+        monthNames.forEach(m => usageByMonthAndUnit[m] = {});
+        const allWaterUnits = new Set<string>();
 
         if (waterLogs.length > 0) {
             waterLogs.forEach(log => {
-                if (log.irrigationDate && typeof log.amountApplied === 'number') {
+                if (log.irrigationDate && typeof log.amountApplied === 'number' && log.amountUnit) {
                     const monthName = format(parseISO(log.irrigationDate), 'MMM');
-                    usageByMonth[monthName] += log.amountApplied;
+                    const unitKey = `${log.amountUnit}`; // e.g. "mm", "gallons"
+                    allWaterUnits.add(unitKey);
+                    if (!usageByMonthAndUnit[monthName][unitKey]) usageByMonthAndUnit[monthName][unitKey] = 0;
+                    usageByMonthAndUnit[monthName][unitKey] += log.amountApplied;
                 }
             });
         }
-        setWaterChartData(monthNames.map(month => ({ month, usage: usageByMonth[month] || 0 })));
+        const uniqueUnits = Array.from(allWaterUnits).sort();
+        setUniqueWaterUnitKeys(uniqueUnits);
+
+        const watChartData: MonthlyUsageDataPoint[] = monthNames.map(month => {
+            const monthData: MonthlyUsageDataPoint = { month };
+            uniqueUnits.forEach(unit => {
+                monthData[`Water (${unit})`] = usageByMonthAndUnit[month]?.[unit] || 0;
+            });
+            return monthData;
+        });
+        setWaterChartData(watChartData);
+
       } catch (error) {
         console.error("Error fetching water usage data:", error);
-        setWaterChartData(monthNames.map(month => ({ month, usage: 0 })));
+        setWaterChartData([]);
+        setUniqueWaterUnitKeys([]);
       } finally {
         setIsLoadingWaterData(false);
       }
@@ -199,22 +236,22 @@ export default function AnalyticsPage() {
         <Icons.Info className="h-4 w-4" />
         <AlertTitle>Data Source Information</AlertTitle>
         <AlertDescription>
-          Charts below are generated from your farm's logged data in Firestore. Ensure you have logged sufficient data (including units) for meaningful trends. Units for fertilizer and water usage are summed directly from logged amounts.
+          Charts below are generated from your farm's logged data in Firestore. Ensure you have logged sufficient data (including units) for meaningful trends. Different units for resources (fertilizer, water) will be shown as separate series in their respective charts.
         </AlertDescription>
       </Alert>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
         <Card className="shadow-lg">
           <CardHeader>
             <CardTitle>Fertilizer Usage Trend</CardTitle>
-            <CardDescription>Monthly fertilizer application overview (sum of amounts logged). Units are as logged.</CardDescription>
+            <CardDescription>Monthly fertilizer application. Different units are shown as separate series.</CardDescription>
           </CardHeader>
           <CardContent className="h-[300px]">
             {isLoadingFertilizerData ? (
                 <div className="flex items-center justify-center h-full">
                     <Skeleton className="w-full h-[280px]" />
                 </div>
-            ) : fertilizerChartData.some(d => d.usage > 0) ? (
+            ) : fertilizerChartData.length > 0 && uniqueFertilizerUnitKeys.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={fertilizerChartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -225,12 +262,20 @@ export default function AnalyticsPage() {
                       labelStyle={{ color: 'hsl(var(--foreground))' }}
                   />
                   <Legend wrapperStyle={{fontSize: "12px"}}/>
-                  <Bar dataKey="usage" fill="hsl(var(--chart-1))" name="Fertilizer Amount (mixed units)" radius={[4, 4, 0, 0]} />
+                  {uniqueFertilizerUnitKeys.map((unitKey, index) => (
+                    <Bar 
+                        key={`fert-${unitKey}`} 
+                        dataKey={`Fertilizer (${unitKey})`} 
+                        fill={chartColors[index % chartColors.length]} 
+                        name={`Fertilizer (${unitKey})`} 
+                        radius={[4, 4, 0, 0]} 
+                    />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
             ) : (
                 <div className="flex items-center justify-center h-full">
-                    <p className="text-muted-foreground">No fertilizer data logged for this farm.</p>
+                    <p className="text-muted-foreground">No fertilizer data with units logged for this farm.</p>
                 </div>
             )}
           </CardContent>
@@ -239,14 +284,14 @@ export default function AnalyticsPage() {
         <Card className="shadow-lg">
           <CardHeader>
             <CardTitle>Water Usage Trend</CardTitle>
-            <CardDescription>Monthly water consumption overview (sum of amounts logged). Units are as logged.</CardDescription>
+            <CardDescription>Monthly water consumption. Different units are shown as separate series.</CardDescription>
           </CardHeader>
           <CardContent className="h-[300px]">
              {isLoadingWaterData ? (
                 <div className="flex items-center justify-center h-full">
                     <Skeleton className="w-full h-[280px]" />
                 </div>
-            ) : waterChartData.some(d => d.usage > 0) ? (
+            ) : waterChartData.length > 0 && uniqueWaterUnitKeys.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={waterChartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -257,19 +302,30 @@ export default function AnalyticsPage() {
                       labelStyle={{ color: 'hsl(var(--foreground))' }}
                   />
                   <Legend wrapperStyle={{fontSize: "12px"}}/>
-                  <Line type="monotone" dataKey="usage" stroke="hsl(var(--chart-2))" name="Water Amount (mixed units)" strokeWidth={2} dot={{ r: 4, fill: "hsl(var(--chart-2))" }} activeDot={{ r: 6 }} />
+                  {uniqueWaterUnitKeys.map((unitKey, index) => (
+                    <Line 
+                        key={`water-${unitKey}`} 
+                        type="monotone" 
+                        dataKey={`Water (${unitKey})`} 
+                        stroke={chartColors[(index + 1) % chartColors.length]}  // Offset color to avoid clashing with fertilizer
+                        name={`Water (${unitKey})`} 
+                        strokeWidth={2} 
+                        dot={{ r: 4, fill: chartColors[(index + 1) % chartColors.length] }} 
+                        activeDot={{ r: 6 }} 
+                    />
+                  ))}
                 </LineChart>
               </ResponsiveContainer>
             ) : (
                 <div className="flex items-center justify-center h-full">
-                    <p className="text-muted-foreground">No irrigation data logged for this farm.</p>
+                    <p className="text-muted-foreground">No irrigation data with units logged for this farm.</p>
                 </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-       <Card className="shadow-lg">
+       <Card className="shadow-lg mt-6"> {/* Added mt-6 for spacing */}
         <CardHeader>
           <CardTitle>Historical Yield Comparison</CardTitle>
           <CardDescription>Year-over-year yield trends. Different units for the same crop are shown as separate series.</CardDescription>
@@ -309,7 +365,7 @@ export default function AnalyticsPage() {
         </CardContent>
       </Card>
 
-      <Card className="shadow-lg">
+      <Card className="shadow-lg mt-6"> {/* Added mt-6 for spacing */}
         <CardHeader>
           <CardTitle>Resource Optimization Tips</CardTitle>
         </CardHeader>
@@ -332,3 +388,4 @@ export default function AnalyticsPage() {
     </div>
   );
 }
+
