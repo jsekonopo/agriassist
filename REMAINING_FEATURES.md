@@ -17,10 +17,10 @@ This document tracks the major remaining features and potential enhancements for
 ## III. Core Farming Features - Expanding Capabilities:
 
 1.  **Visual Field Mapping (Advanced - Interaction & Robustness):**
-    *   **Current Status:** Users can define fields, input/draw/edit/delete GeoJSON boundaries within the `FieldDefinitionForm`, and these are displayed as polygons on the main map with informative popups.
+    *   **Current Status:** Users can define fields, input/draw/edit/delete GeoJSON boundaries within the `FieldDefinitionForm`, and these are displayed as polygons on the main map with informative popups. Basic click-to-zoom interaction added. GeoJSON validation in the form improved.
     *   **Remaining:**
-        *   More robust GeoJSON validation (client and/or server-side) if users were allowed to paste GeoJSON directly again.
-        *   More interactive map features on the `FarmMapView` (e.g., clicking a field polygon directly navigates to a dedicated field detail page or modal showing all associated logs – the current popup has a basic link).
+        *   More robust server-side GeoJSON validation if direct pasting of GeoJSON were re-enabled.
+        *   More interactive map features on the `FarmMapView` (e.g., highlighting related logs on field click).
 2.  **Advanced Reporting & Data Export (Further Enhancements):**
     *   **Current Status:** Basic summary reports with filtering options for financial overview, crop yield, and task status exist.
     *   **Remaining:**

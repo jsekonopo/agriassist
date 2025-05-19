@@ -16,30 +16,31 @@ import { db } from "@/lib/firebase";
 import { collection, addDoc, updateDoc, doc, serverTimestamp, getDoc } from "firebase/firestore";
 import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
 import { MapDrawControl } from '@/components/map/map-draw-control';
-import type { GeoJsonObject, Feature, Geometry } from 'geojson';
+import type { GeoJsonObject, Feature, Geometry, Polygon, MultiPolygon } from 'geojson';
 import L from 'leaflet'; 
 
 const areaUnits: PreferredAreaUnit[] = ["acres", "hectares"];
 
+const isValidGeoJsonGeometry = (geom: Geometry | null | undefined): geom is Polygon | MultiPolygon => {
+  if (!geom || !geom.type || !geom.coordinates) return false;
+  return (geom.type === "Polygon" || geom.type === "MultiPolygon") && Array.isArray(geom.coordinates);
+};
+
 const isValidGeoJsonBoundary = (data: string): boolean => {
   if (!data || data.trim() === "") return true; 
   try {
-    const parsed = JSON.parse(data);
+    const parsed = JSON.parse(data) as GeoJsonObject; // Type assertion
     if (typeof parsed !== 'object' || parsed === null) return false;
 
-    const checkGeometry = (geom: Geometry | null | undefined): geom is Geometry => {
-      if (!geom || !geom.type || !geom.coordinates) return false;
-      return (geom.type === "Polygon" || geom.type === "MultiPolygon") && Array.isArray(geom.coordinates);
-    };
-
     if (parsed.type === "Feature") {
-      return checkGeometry(parsed.geometry);
+      return isValidGeoJsonGeometry((parsed as Feature).geometry);
     } else if (parsed.type === "Polygon" || parsed.type === "MultiPolygon") {
-      return checkGeometry(parsed);
+      return isValidGeoJsonGeometry(parsed as Geometry);
     } else if (parsed.type === "FeatureCollection" && Array.isArray(parsed.features)) {
-      return parsed.features.some((feature: Feature) => checkGeometry(feature.geometry));
+      // For a FeatureCollection, at least one feature must contain a valid Polygon or MultiPolygon
+      return parsed.features.some((feature: Feature) => isValidGeoJsonGeometry(feature.geometry));
     }
-    return false;
+    return false; // Not a supported top-level GeoJSON type for a boundary
   } catch (e) {
     return false;
   }
@@ -53,7 +54,7 @@ const fieldDefinitionSchema = z.object({
   ),
   fieldSizeUnit: z.enum(areaUnits).optional(),
   geojsonBoundary: z.string().optional().refine(isValidGeoJsonBoundary, { 
-    message: "Invalid GeoJSON. Must be a valid Polygon, MultiPolygon, Feature or FeatureCollection containing them. Please draw or ensure valid GeoJSON." 
+    message: "Invalid GeoJSON structure. Please draw or ensure valid GeoJSON (Polygon, MultiPolygon, or Feature/FeatureCollection containing them)." 
   }),
   notes: z.string().optional(),
 }).refine(data => (data.fieldSize !== undefined && data.fieldSize !== null) ? data.fieldSizeUnit !== undefined : true, {
@@ -62,7 +63,7 @@ const fieldDefinitionSchema = z.object({
 });
 
 interface FieldDefinitionFormProps {
-  onLogSaved?: () => void; // Kept for consistency, can be part of onFormActionComplete
+  onLogSaved?: () => void;
   editingFieldId?: string | null;
   onFormActionComplete?: () => void;
 }
@@ -78,6 +79,7 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
     user?.farmLongitude ?? -75.6972
   ]); 
   const [mapZoom, setMapZoom] = useState(user?.farmLatitude && user?.farmLongitude ? 13 : 10);
+  const [mapInstanceKey, setMapInstanceKey] = useState(Date.now()); // Key to force remount map
 
   const form = useForm<z.infer<typeof fieldDefinitionSchema>>({
     resolver: zodResolver(fieldDefinitionSchema),
@@ -98,17 +100,15 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
   }, [user?.farmLatitude, user?.farmLongitude]);
 
   useEffect(() => {
-    // Set default unit based on user preference when form initializes or editingFieldId changes
-    if (!editingFieldId && !form.formState.isDirty) { // Only on initial load for new form
+    if (!editingFieldId && !form.formState.isDirty) {
         form.setValue("fieldSizeUnit", preferredAreaUnit, { shouldValidate: true });
     }
   }, [preferredAreaUnit, form, editingFieldId]);
 
-
   useEffect(() => {
     const loadFieldForEditing = async () => {
       if (editingFieldId && user?.farmId) {
-        setIsSubmitting(true); // Use isSubmitting to indicate loading field data
+        setIsSubmitting(true); 
         try {
           const fieldDocRef = doc(db, "fields", editingFieldId);
           const fieldDocSnap = await getDoc(fieldDocRef);
@@ -121,19 +121,21 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
               geojsonBoundary: fieldData.geojsonBoundary || "",
               notes: fieldData.notes || "",
             });
-            // If GeoJSON exists, try to center map on it
+            setMapInstanceKey(Date.now()); // Force remount of map to pick up initialGeoJson
             if (fieldData.geojsonBoundary) {
                 try {
                     const parsedGeoJson = JSON.parse(fieldData.geojsonBoundary);
                     const gjLayer = L.geoJSON(parsedGeoJson);
-                    setMapCenter(gjLayer.getBounds().getCenter().lat, gjLayer.getBounds().getCenter().lng);
-                    setMapZoom(15); // Zoom in a bit
+                    const bounds = gjLayer.getBounds();
+                    if (bounds.isValid()) {
+                        setMapCenter([bounds.getCenter().lat, bounds.getCenter().lng]);
+                        setMapZoom(15); 
+                    }
                 } catch (e) { /* stay with default farm center */ }
             }
-
           } else {
             toast({ title: "Error", description: "Field not found or not accessible.", variant: "destructive" });
-            if (onFormActionComplete) onFormActionComplete(); // Reset editing mode
+            if (onFormActionComplete) onFormActionComplete(); 
           }
         } catch (error) {
           console.error("Error fetching field for editing:", error);
@@ -143,7 +145,6 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
           setIsSubmitting(false);
         }
       } else if (!editingFieldId) {
-        // Reset form to default for new entry if editingFieldId is cleared
         form.reset({
           fieldName: "",
           notes: "",
@@ -151,9 +152,9 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
           fieldSizeUnit: preferredAreaUnit,
           geojsonBoundary: "",
         });
-        // Reset map center to farm default or general default
-         setMapCenter([ user?.farmLatitude ?? 45.4215, user?.farmLongitude ?? -75.6972 ]);
-         setMapZoom(user?.farmLatitude && user?.farmLongitude ? 13 : 10);
+        setMapInstanceKey(Date.now()); // Force remount for new entry
+        setMapCenter([ user?.farmLatitude ?? 45.4215, user?.farmLongitude ?? -75.6972 ]);
+        setMapZoom(user?.farmLatitude && user?.farmLongitude ? 13 : 10);
       }
     };
     loadFieldForEditing();
@@ -191,7 +192,7 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
       const fieldDataPayload: any = { 
         fieldName: values.fieldName,
         farmId: user.farmId, 
-        userId: user.uid, // Keep track of who created/last modified if needed at field level
+        userId: user.uid,
         updatedAt: serverTimestamp(),
       };
 
@@ -199,7 +200,7 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
         fieldDataPayload.fieldSize = values.fieldSize;
         fieldDataPayload.fieldSizeUnit = values.fieldSizeUnit;
       } else {
-        fieldDataPayload.fieldSize = null; // Or FieldValue.delete() if you want to remove them
+        fieldDataPayload.fieldSize = null;
         fieldDataPayload.fieldSizeUnit = null;
       }
 
@@ -215,23 +216,22 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
       }
 
       if (editingFieldId) {
-        // Update existing document
         const fieldDocRef = doc(db, "fields", editingFieldId);
         await updateDoc(fieldDocRef, fieldDataPayload);
         toast({ title: "Field Updated", description: `Field: ${values.fieldName} has been updated.` });
       } else {
-        // Add new document
         fieldDataPayload.createdAt = serverTimestamp();
         await addDoc(collection(db, "fields"), fieldDataPayload);
         toast({ title: "Field Definition Saved", description: `Field: ${values.fieldName} has been saved.` });
       }
       
-      form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: preferredAreaUnit, geojsonBoundary: "", notes: "" });
-      if (onFormActionComplete) { // Call this to reset parent state and trigger table refresh
+      if (onFormActionComplete) {
         onFormActionComplete();
-      } else if (onLogSaved) { // Fallback if only onLogSaved is provided (for new entries)
+      } else if (onLogSaved) { 
         onLogSaved();
       }
+      // Form reset is handled by useEffect when editingFieldId changes or becomes null
+      // form.reset({ fieldName: "", fieldSize: undefined, fieldSizeUnit: preferredAreaUnit, geojsonBoundary: "", notes: "" });
 
     } catch (error) {
       console.error("Error saving field definition to Firestore:", error);
@@ -279,7 +279,7 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
                   <FormLabel>Unit</FormLabel>
                   <Select 
                     onValueChange={field.onChange} 
-                    value={field.value || preferredAreaUnit} // Default to preferredAreaUnit if field.value is undefined
+                    value={form.watch('fieldSizeUnit') || preferredAreaUnit} 
                   >
                      <FormControl>
                         <SelectTrigger>
@@ -300,7 +300,7 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
         <FormItem>
           <FormLabel>Field Boundary (Draw on Map)</FormLabel>
           <FormDescription>
-            Use the map tools (top-left) to draw your field boundary. You can edit or delete the drawn shape.
+            Use the map tools (top-left) to draw your field boundary. Click shapes to edit or delete them.
           </FormDescription>
           <div className="h-[400px] w-full rounded-md border shadow-sm overflow-hidden mt-2 bg-muted">
             <MapContainer 
@@ -308,7 +308,7 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
                 zoom={mapZoom} 
                 scrollWheelZoom={true} 
                 style={{ height: '100%', width: '100%' }} 
-                key={`${mapCenter.join('-')}-${mapZoom}-${editingFieldId || 'new'}`} // Force re-render on key change
+                key={mapInstanceKey} // Use key to force re-render
             >
                <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &amp; Satellite: &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
@@ -334,13 +334,12 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
                 <FormControl>
                    <Textarea {...field} className="hidden" readOnly placeholder="GeoJSON data will appear here after drawing..."/>
                 </FormControl>
-                <FormDescription>GeoJSON data is automatically populated by drawing on the map. Clear by deleting shape on map.</FormDescription>
+                <FormDescription>GeoJSON is auto-populated by drawing. Clear by deleting shape on map.</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
         </FormItem>
-
 
         <FormField
           control={form.control}
@@ -362,13 +361,13 @@ export function FieldDefinitionForm({ onLogSaved, editingFieldId, onFormActionCo
         <div className="flex items-center gap-2">
             <Button type="submit" disabled={isSubmitting || !user || !user.farmId}>
               {isSubmitting ? <><Icons.Search className="mr-2 h-4 w-4 animate-spin" /> Saving...</>
-                : editingFieldId ? "Update Field" : "Save New Field"
+                : editingFieldId ? <><Icons.Edit3 className="mr-2 h-4 w-4"/> Update Field</> 
+                : <><Icons.PlusCircle className="mr-2 h-4 w-4"/> Save New Field</>
               }
             </Button>
             {editingFieldId && (
                 <Button type="button" variant="outline" onClick={() => {
                     if(onFormActionComplete) onFormActionComplete();
-                    // form.reset() will be handled by useEffect when editingFieldId becomes null
                 }} disabled={isSubmitting}>
                     Cancel Edit
                 </Button>

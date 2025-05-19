@@ -1,3 +1,4 @@
+
 "use client";
 
 import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap } from 'react-leaflet';
@@ -8,13 +9,13 @@ import "leaflet-defaulticon-compatibility";
 import { useAuth, type PreferredAreaUnit } from '@/contexts/auth-context';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Icons } from '@/components/icons';
-import { useEffect, useState, useMemo, useRef } from 'react'; // Added useRef
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { Skeleton } from '../ui/skeleton';
-import type { GeoJsonObject, Feature } from 'geojson'; // Import GeoJSON types
-import L from 'leaflet'; // Import Leaflet library itself
-import Link from 'next/link'; // For "View Details" link
+import type { GeoJsonObject, Feature, Geometry } from 'geojson';
+import L from 'leaflet'; 
+import Link from 'next/link';
 
 interface FieldData {
   id: string;
@@ -22,6 +23,7 @@ interface FieldData {
   fieldSize?: number;
   fieldSizeUnit?: string;
   geojsonBoundary?: string | null; 
+  // latitude & longitude are deprecated if geojsonBoundary is used, but kept for backward compatibility
   latitude?: number | null; 
   longitude?: number | null; 
 }
@@ -30,146 +32,62 @@ const ACRES_TO_HECTARES = 0.404686;
 const HECTARES_TO_ACRES = 1 / ACRES_TO_HECTARES;
 
 // Component to adjust map bounds and store map reference
-const MapEffects = ({ features }: { features: FieldData[] }) => {
-  const map = useMap();
-  
+const MapEffects = ({ features, mapInstance }: { features: FieldData[], mapInstance: L.Map | null }) => {
   useEffect(() => {
-    if (map) {
-      // This properly handles the map instance without the deprecated whenCreated
-      // (window as any).mapInstanceRef = map; // REMOVE THIS LINE
+    if (mapInstance && features.length > 0) {
+      const bounds = L.latLngBounds([]);
+      let hasValidFeature = false;
       
-      // If features exist, fit bounds
-      if (features.length > 0) {
-        const bounds = L.latLngBounds([]);
-        let hasValidFeature = false;
-        
-        features.forEach(field => {
-          if (field.geojsonBoundary) {
-            try {
-              const geoJsonData = JSON.parse(field.geojsonBoundary) as GeoJsonObject;
-              const layer = L.geoJSON(geoJsonData);
-              bounds.extend(layer.getBounds());
+      features.forEach(field => {
+        if (field.geojsonBoundary) {
+          try {
+            const geoJsonData = JSON.parse(field.geojsonBoundary) as GeoJsonObject;
+            const layer = L.geoJSON(geoJsonData);
+            const layerBounds = layer.getBounds();
+            if (layerBounds.isValid()) {
+              bounds.extend(layerBounds);
               hasValidFeature = true;
-            } catch (e) {
-              if (field.latitude != null && field.longitude != null) {
-                bounds.extend([field.latitude, field.longitude]);
-                hasValidFeature = true;
-              }
             }
-          } else if (field.latitude != null && field.longitude != null) {
-            bounds.extend([field.latitude, field.longitude]);
-            hasValidFeature = true;
+          } catch (e) {
+            // Fallback for simple lat/lon if GeoJSON is invalid or just a point feature
+            if (field.latitude != null && field.longitude != null) {
+              bounds.extend([field.latitude, field.longitude]);
+              hasValidFeature = true;
+            }
           }
-        });
-
-        if (hasValidFeature && bounds.isValid()) {
-          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+        } else if (field.latitude != null && field.longitude != null) {
+          bounds.extend([field.latitude, field.longitude]);
+          hasValidFeature = true;
         }
+      });
+
+      if (hasValidFeature && bounds.isValid()) {
+        mapInstance.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
       }
     }
-  }, [features, map]);
+  }, [features, mapInstance]);
 
   return null;
 };
 
-// Main map component
-const DynamicMap = ({ 
-  mapKey, // Add mapKey to props
-  mapCenter, 
-  mapZoom, 
-  farmFields, 
-  user, 
-  preferredAreaUnit, 
-  formatFieldSizeForPopup, 
-  parsedGeoJsonFeatures, 
-  onEachFeature 
-}: {
-  mapKey: string; // Add mapKey to props interface
-  mapCenter: [number, number];
-  mapZoom: number;
-  farmFields: FieldData[];
-  user: any;
-  preferredAreaUnit: string;
-  formatFieldSizeForPopup: any;
-  parsedGeoJsonFeatures: Feature[];
-  onEachFeature: any;
-}) => {
-  return (
-    <div style={{ height: '100%', width: '100%' }}>
-      <MapContainer 
-        key={mapKey} // Apply the passed-in mapKey here
-        center={mapCenter} 
-        zoom={mapZoom} 
-        scrollWheelZoom={true} 
-        style={{ height: '100%', width: '100%' }}
-      >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &amp; Satellite: &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        />
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          pane="tilePane" 
-        />
-        
-        {user?.farmLatitude && user?.farmLongitude && 
-         !farmFields.some(f => (f.latitude === user.farmLatitude && f.longitude === user.farmLongitude) || f.geojsonBoundary) && (
-          <Marker position={[user.farmLatitude, user.farmLongitude]}>
-            <Popup>
-              {user.farmName || 'Your Farm Location'}
-            </Popup>
-          </Marker>
-        )}
-
-        {parsedGeoJsonFeatures.map((geoJsonData, index) => (
-          <GeoJSON 
-            key={geoJsonData.properties?.id || `geojson-${index}`} 
-            data={geoJsonData} 
-            onEachFeature={onEachFeature}
-            style={{ color: "hsl(var(--primary))", weight: 2, opacity: 0.8, fillOpacity: 0.1 }}
-          />
-        ))}
-
-        {farmFields.map(field => (
-          !field.geojsonBoundary && field.latitude != null && field.longitude != null ? (
-            <Marker key={field.id} position={[field.latitude, field.longitude]}>
-              <Popup>
-                <strong>{field.fieldName}</strong>
-                {formatFieldSizeForPopup(field.fieldSize, field.fieldSizeUnit, preferredAreaUnit)}
-                 <br /><Link href={`/data-management?tab=fields&fieldId=${field.id}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">View Details</Link>
-              </Popup>
-            </Marker>
-          ) : null
-        ))}
-        <MapEffects features={farmFields} />
-      </MapContainer>
-    </div>
-  );
-};
-
 export function FarmMapView() {
   const { user } = useAuth();
-  const [mapCenter, setMapCenter] = useState<[number, number]>([45.4215, -75.6972]); // Default to Ottawa
+  const [mapCenter, setMapCenter] = useState<[number, number]>([45.4215, -75.6972]);
   const [mapZoom, setMapZoom] = useState(10);
   const [farmFields, setFarmFields] = useState<FieldData[]>([]);
   const [isLoadingFields, setIsLoadingFields] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const preferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
+  const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   
-  const [mapKey, setMapKey] = useState<string>('map-initial-' + Date.now()); 
-
-  // Effect to update mapKey when critical props change, forcing MapContainer to remount
-  useEffect(() => {
-    setMapKey(`map-${Date.now()}-${mapCenter.join(',')}-${mapZoom}-${farmFields.length}`);
-  }, [mapCenter, mapZoom, farmFields.length]);
+  const mapKey = useMemo(() => `farm-map-${user?.farmId || 'no-farm'}-${Date.now()}`, [user?.farmId]);
 
   useEffect(() => {
     let initialLat = user?.farmLatitude;
     let initialLng = user?.farmLongitude;
     let initialZoom = 10;
 
-    if (initialLat && initialLng) {
+    if (initialLat != null && initialLng != null) { // Check for null explicitly
       setMapCenter([initialLat, initialLng]);
       initialZoom = 13; 
     }
@@ -190,18 +108,42 @@ export function FarmMapView() {
           } as FieldData));
           setFarmFields(fetchedFields);
 
-          if (fetchedFields.length > 0 && (!initialLat || !initialLng)) {
-            const firstFieldWithGeoJSON = fetchedFields.find(f => f.geojsonBoundary);
-            const firstFieldWithSimpleCoords = fetchedFields.find(f => f.latitude != null && f.longitude != null);
-            if (firstFieldWithGeoJSON) {
-              initialZoom = 14; 
-            } else if (firstFieldWithSimpleCoords) {
-              setMapCenter([firstFieldWithSimpleCoords.latitude!, firstFieldWithSimpleCoords.longitude!]);
-              initialZoom = 14; 
+          // Auto-center/zoom logic
+          if (fetchedFields.length > 0) {
+            const bounds = L.latLngBounds([]);
+            let hasValidFeatureForBounds = false;
+            fetchedFields.forEach(field => {
+              if (field.geojsonBoundary) {
+                try {
+                  const geoJsonData = JSON.parse(field.geojsonBoundary) as GeoJsonObject;
+                  const layer = L.geoJSON(geoJsonData);
+                  const layerBounds = layer.getBounds();
+                  if (layerBounds.isValid()) {
+                    bounds.extend(layerBounds);
+                    hasValidFeatureForBounds = true;
+                  }
+                } catch (e) {
+                  if (field.latitude != null && field.longitude != null) {
+                     bounds.extend([field.latitude, field.longitude]); hasValidFeatureForBounds = true;
+                  }
+                }
+              } else if (field.latitude != null && field.longitude != null) {
+                bounds.extend([field.latitude, field.longitude]);
+                hasValidFeatureForBounds = true;
+              }
+            });
+            if (hasValidFeatureForBounds && bounds.isValid()) {
+              // Set initial center and zoom based on features if mapInstance isn't ready
+              // The MapEffects component will handle fitBounds once map is ready
+              if (!mapInstance) {
+                setMapCenter(bounds.getCenter().toArray() as [number,number]);
+                // Zoom is harder to set perfectly without map.getBoundsZoom, rely on fitBounds
+              }
+            } else if (initialLat == null || initialLng == null) { // No features with coords, no farm loc
+                setMapCenter([45.4215, -75.6972]); initialZoom = 10;
             }
-          } else if (fetchedFields.length === 0 && (!initialLat || !initialLng)) {
-             setMapCenter([45.4215, -75.6972]); 
-             initialZoom = 10;
+          } else if (initialLat == null || initialLng == null) { // No fields, no farm loc
+             setMapCenter([45.4215, -75.6972]); initialZoom = 10;
           }
         } catch (e) {
           console.error("Error fetching fields for map:", e);
@@ -214,10 +156,11 @@ export function FarmMapView() {
     } else {
       setIsLoadingFields(false); 
     }
-    if (initialZoom !== mapZoom) setMapZoom(initialZoom); 
-  }, [user?.farmId, user?.farmLatitude, user?.farmLongitude]); // Removed mapZoom from deps
+    if (mapZoom !== initialZoom) setMapZoom(initialZoom); 
+  }, [user?.farmId, user?.farmLatitude, user?.farmLongitude, mapInstance]);
 
-  const formatFieldSizeForPopup = (size?: number, unit?: string, targetUnit?: PreferredAreaUnit): string => {
+
+  const formatFieldSizeForPopup = useCallback((size?: number, unit?: string, targetUnit?: PreferredAreaUnit): string => {
     if (size === undefined || size === null) return "";
     
     const originalUnit = unit?.toLowerCase() || "acres"; 
@@ -233,7 +176,7 @@ export function FarmMapView() {
         else displaySize = sizeInAcres; 
     }
     return `<br />Size: ${displaySize.toFixed(1)} ${displayUnit}`;
-  };
+  }, []);
   
   const parsedGeoJsonFeatures = useMemo(() => 
     farmFields.map(field => {
@@ -243,7 +186,7 @@ export function FarmMapView() {
           const featureProperties = { 
             name: field.fieldName, 
             id: field.id, 
-            sizeInfo: formatFieldSizeForPopup(field.fieldSize, field.fieldSizeUnit, preferredAreaUnit) 
+            sizeInfoHTML: formatFieldSizeForPopup(field.fieldSize, field.fieldSizeUnit, preferredAreaUnit) 
           };
 
           if (parsed.type === "Feature") {
@@ -253,36 +196,46 @@ export function FarmMapView() {
             return {
               type: "Feature",
               properties: featureProperties,
-              geometry: parsed
+              geometry: parsed as Geometry // Cast here, already validated by form
             } as Feature;
           }
-          return null; // Not a supported top-level geometry type for direct use as a Feature
+          return null;
         } catch (e) {
+          console.error("Error parsing GeoJSON for field:", field.fieldName, e);
           return null; 
         }
       }
       return null;
     }).filter(Boolean) as Feature[], 
-  [farmFields, preferredAreaUnit]);
+  [farmFields, preferredAreaUnit, formatFieldSizeForPopup]);
 
-  const onEachFeature = (feature: Feature, layer: L.Layer) => {
+  const onEachFeature = useCallback((feature: Feature, layer: L.Layer) => {
     if (feature.properties) {
       let popupContent = `<strong>${feature.properties.name || 'Unnamed Field'}</strong>`;
-      if (feature.properties.sizeInfo) {
-        popupContent += `${feature.properties.sizeInfo}`;
+      if (feature.properties.sizeInfoHTML) {
+        popupContent += `${feature.properties.sizeInfoHTML}`;
       }
-      // Placeholder link - actual functionality for field details page/modal would be separate
-      popupContent += `<br /><a href="/data-management?tab=fields&fieldId=${feature.properties.id}" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">View Details</a>`;
+      popupContent += `<br /><a href="/data-management?tab=fields&fieldId=${feature.properties.id}" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">View/Edit Details</a>`;
       layer.bindPopup(popupContent);
+
+      layer.on('click', (e) => {
+        if (mapInstance && e.target.getBounds) {
+          const bounds = e.target.getBounds();
+          if (bounds && bounds.isValid()) {
+            mapInstance.fitBounds(bounds, { padding: [70, 70], maxZoom: 18 });
+          }
+        }
+      });
     }
-  };
+  }, [mapInstance]); // mapInstance dependency for click handler
   
-  if (isLoadingFields && !user?.farmId && !user) {
+  if (!user && !isLoadingFields) {
     return (
-      <div className="space-y-4">
-          <Skeleton className="h-10 w-1/3" />
-          <Skeleton className="h-[500px] w-full rounded-md" />
-      </div>
+      <Alert>
+        <Icons.Info className="h-4 w-4" />
+        <AlertTitle>Please Log In</AlertTitle>
+        <AlertDescription>Log in to view your farm map.</AlertDescription>
+      </Alert>
     );
   }
 
@@ -292,9 +245,7 @@ export function FarmMapView() {
         <Icons.Info className="h-4 w-4" />
         <AlertTitle>Farm Map View</AlertTitle>
         <AlertDescription>
-          Map centers on your farm's location (set in Profile if owner). 
-          Fields with boundary data are shown as polygons. Fields with only Lat/Lon are shown as markers. 
-          Drawing field boundaries is done in the Field Definition form.
+          Map centers on your farm (set in Profile if owner). Fields with boundary data are polygons (click to zoom). Fields with only Lat/Lon are markers. Draw boundaries in Data Management {'>'} Fields.
         </AlertDescription>
       </Alert>
 
@@ -310,17 +261,55 @@ export function FarmMapView() {
         {isLoadingFields ? (
            <Skeleton className="h-full w-full" />
         ) : ( 
-          <DynamicMap
-            mapKey={mapKey} // Pass mapKey as a prop
-            mapCenter={mapCenter}
-            mapZoom={mapZoom}
-            farmFields={farmFields}
-            user={user}
-            preferredAreaUnit={preferredAreaUnit}
-            formatFieldSizeForPopup={formatFieldSizeForPopup}
-            parsedGeoJsonFeatures={parsedGeoJsonFeatures}
-            onEachFeature={onEachFeature}
-          />
+          <MapContainer 
+            key={mapKey}
+            center={mapCenter} 
+            zoom={mapZoom} 
+            scrollWheelZoom={true} 
+            style={{ height: '100%', width: '100%' }}
+            whenCreated={setMapInstance} // Get map instance
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &amp; Satellite: &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            />
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              pane="tilePane" 
+            />
+            
+            {user?.farmLatitude && user?.farmLongitude && 
+             !farmFields.some(f => (f.geojsonBoundary) || (f.latitude === user.farmLatitude && f.longitude === user.farmLongitude)) && (
+              <Marker position={[user.farmLatitude, user.farmLongitude]}>
+                <Popup>
+                  {user.farmName || 'Your Farm Location'}
+                </Popup>
+              </Marker>
+            )}
+
+            {parsedGeoJsonFeatures.map((geoJsonData, index) => (
+              <GeoJSON 
+                key={geoJsonData.properties?.id || `geojson-${index}`} 
+                data={geoJsonData} 
+                onEachFeature={onEachFeature}
+                style={{ color: "hsl(var(--primary))", weight: 2, opacity: 0.8, fillOpacity: 0.2 }}
+              />
+            ))}
+
+            {farmFields.map(field => (
+              !field.geojsonBoundary && field.latitude != null && field.longitude != null ? (
+                <Marker key={field.id} position={[field.latitude, field.longitude]}>
+                  <Popup>
+                    <strong>{field.fieldName}</strong>
+                    <span dangerouslySetInnerHTML={{ __html: formatFieldSizeForPopup(field.fieldSize, field.fieldSizeUnit, preferredAreaUnit) }} />
+                    <br /><Link href={`/data-management?tab=fields&fieldId=${field.id}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">View/Edit Details</Link>
+                  </Popup>
+                </Marker>
+              ) : null
+            ))}
+            <MapEffects features={farmFields} mapInstance={mapInstance} />
+          </MapContainer>
         )}
       </div>
     </div>
