@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAuth } from '@/contexts/auth-context';
+import { useAuth, type PreferredWeightUnit } from '@/contexts/auth-context';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, QueryConstraint, doc, DocumentData } from 'firebase/firestore';
 import { cn } from '@/lib/utils';
@@ -101,8 +101,13 @@ interface FertilizerUsageSummary {
 
 type TaskStatusFilter = "All Tasks" | "To Do" | "In Progress" | "Done";
 
+const KG_TO_LBS_FACTOR = 2.20462;
+const LBS_TO_KG_FACTOR = 1 / KG_TO_LBS_FACTOR;
+
 export default function ReportingPage() {
   const { user } = useAuth();
+  const preferredWeightUnit = user?.settings?.preferredWeightUnit || "kg";
+
   // Crop Yield States
   const [allCropYields, setAllCropYields] = useState<CropYieldSummary[]>([]);
   const [filteredCropYields, setFilteredCropYields] = useState<CropYieldSummary[]>([]);
@@ -133,7 +138,6 @@ export default function ReportingPage() {
   const [fertilizerStartDate, setFertilizerStartDate] = useState<Date | undefined>(undefined);
   const [fertilizerEndDate, setFertilizerEndDate] = useState<Date | undefined>(undefined);
   
-  // General Loading/Error States
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -154,12 +158,12 @@ export default function ReportingPage() {
     }
 
     setIsLoading(true);
-    if (farmFields.length === 0) setIsLoadingFields(true); // Only set true if fields haven't been loaded yet
+    if (farmFields.length === 0) setIsLoadingFields(true);
     setError(null);
 
     const fetchReportData = async () => {
       try {
-        if (farmFields.length === 0) { // Fetch fields only if not already fetched
+        if (farmFields.length === 0) {
           const fieldsQueryRef = query(collection(db, "fields"), where("farmId", "==", user.farmId), orderBy("fieldName", "asc"));
           const fieldsSnapshot = await getDocs(fieldsQueryRef);
           const fetchedFields: Field[] = fieldsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Field));
@@ -167,15 +171,12 @@ export default function ReportingPage() {
           setIsLoadingFields(false);
         }
 
-        // Harvesting Logs Query
         const harvestingQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
         if (cropYieldStartDate) harvestingQueryConstraints.push(where("harvestDate", ">=", format(startOfDay(cropYieldStartDate), "yyyy-MM-dd")));
         if (cropYieldEndDate) harvestingQueryConstraints.push(where("harvestDate", "<=", format(endOfDay(cropYieldEndDate), "yyyy-MM-dd")));
         if (selectedYieldFieldFilter !== "All Fields") harvestingQueryConstraints.push(where("fieldId", "==", selectedYieldFieldFilter));
-        
-        harvestingQueryConstraints.push(orderBy("cropName", "asc"));
-        harvestingQueryConstraints.push(orderBy("harvestDate", cropYieldStartDate || cropYieldEndDate ? "asc" : "desc"));
-
+        harvestingQueryConstraints.push(orderBy("harvestDate", (cropYieldStartDate || cropYieldEndDate) ? "asc" : "desc"));
+        harvestingQueryConstraints.push(orderBy("cropName", "asc")); // Secondary sort for stable aggregation
 
         const harvestingQueryRef = query(collection(db, "harvestingLogs"), ...harvestingQueryConstraints);
         const harvestingSnapshot = await getDocs(harvestingQueryRef);
@@ -186,9 +187,21 @@ export default function ReportingPage() {
         harvestingLogs.forEach(log => {
           cropNamesSet.add(log.cropName);
           if (log.cropName && typeof log.yieldAmount === 'number' && log.yieldUnit) {
-            const key = `${log.cropName} - ${log.yieldUnit}`; 
-            const existing = yieldMap.get(key) || { total: 0, unit: log.yieldUnit };
-            existing.total += log.yieldAmount;
+            let amount = log.yieldAmount;
+            let unit = log.yieldUnit.toLowerCase();
+
+            if (unit === 'kg' && preferredWeightUnit === 'lbs') {
+              amount = log.yieldAmount * KG_TO_LBS_FACTOR;
+              unit = 'lbs';
+            } else if (unit === 'lbs' && preferredWeightUnit === 'kg') {
+              amount = log.yieldAmount * LBS_TO_KG_FACTOR;
+              unit = 'kg';
+            }
+            // If unit is neither kg nor lbs, or if preferred unit matches logged unit, it remains as is.
+
+            const key = `${log.cropName} - ${unit}`; 
+            const existing = yieldMap.get(key) || { total: 0, unit: unit };
+            existing.total += amount;
             yieldMap.set(key, existing);
           }
         });
@@ -204,13 +217,11 @@ export default function ReportingPage() {
         }
 
 
-        // Task Logs Query
         const tasksQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
         if (taskDueDateStart) tasksQueryConstraints.push(where("dueDate", ">=", format(startOfDay(taskDueDateStart), "yyyy-MM-dd")));
         if (taskDueDateEnd) tasksQueryConstraints.push(where("dueDate", "<=", format(endOfDay(taskDueDateEnd), "yyyy-MM-dd")));
         if (selectedTaskFieldFilter !== "All Fields") tasksQueryConstraints.push(where("fieldId", "==", selectedTaskFieldFilter));
-        
-        tasksQueryConstraints.push(orderBy("dueDate", taskDueDateStart || taskDueDateEnd ? "asc" : "desc")); 
+        tasksQueryConstraints.push(orderBy("dueDate", (taskDueDateStart || taskDueDateEnd) ? "asc" : "desc")); 
         tasksQueryConstraints.push(orderBy("createdAt", "desc"));
         
         const tasksQueryRef = query(collection(db, "taskLogs"), ...tasksQueryConstraints);
@@ -218,7 +229,6 @@ export default function ReportingPage() {
         const fetchedTasks: TaskLog[] = tasksSnapshot.docs.map(docSnap => docSnap.data() as TaskLog);
         setAllTasks(fetchedTasks);
         
-        // Financial Logs Query
         const baseFinancialQueryConstraints = [where("farmId", "==", user.farmId)];
         const financialDateConstraints: QueryConstraint[] = [];
         if (financialStartDate) financialDateConstraints.push(where("date", ">=", format(startOfDay(financialStartDate), "yyyy-MM-dd")));
@@ -244,13 +254,11 @@ export default function ReportingPage() {
         
         setFinancialSummary({ totalRevenue, totalExpenses, netProfit: totalRevenue - totalExpenses });
 
-        // Fertilizer Logs Query for Summary
         const fertilizerQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
         if (fertilizerStartDate) fertilizerQueryConstraints.push(where("dateApplied", ">=", format(startOfDay(fertilizerStartDate), "yyyy-MM-dd")));
         if (fertilizerEndDate) fertilizerQueryConstraints.push(where("dateApplied", "<=", format(endOfDay(fertilizerEndDate), "yyyy-MM-dd")));
         if (selectedFertilizerFieldFilter !== "All Fields") fertilizerQueryConstraints.push(where("fieldId", "==", selectedFertilizerFieldFilter));
-        
-        fertilizerQueryConstraints.push(orderBy("dateApplied", fertilizerStartDate || fertilizerEndDate ? "asc" : "desc"));
+        fertilizerQueryConstraints.push(orderBy("dateApplied", (fertilizerStartDate || fertilizerEndDate) ? "asc" : "desc"));
 
         const fertilizerQueryRef = query(collection(db, "fertilizerLogs"), ...fertilizerQueryConstraints);
         const fertilizerSnapshot = await getDocs(fertilizerQueryRef);
@@ -271,31 +279,33 @@ export default function ReportingPage() {
         });
         setFertilizerUsageSummary(fertSummary);
 
-
       } catch (e) {
         console.error("Error fetching report data from Firestore:", e);
         setError("Could not generate reports. Please ensure your Firestore indexes are set up if you see query errors in the console.");
       } finally {
         setIsLoading(false);
-        setIsLoadingFields(false); // Ensure this is false even if fields weren't fetched this round
+        setIsLoadingFields(false);
       }
     };
 
     fetchReportData();
   }, [user, 
       financialStartDate, financialEndDate, 
-      cropYieldStartDate, cropYieldEndDate, selectedYieldFieldFilter, selectedCropFilter, 
-      taskDueDateStart, taskDueDateEnd, selectedTaskFieldFilter, selectedTaskStatusFilter,
-      fertilizerStartDate, fertilizerEndDate, selectedFertilizerFieldFilter
-  ]); // farmFields is intentionally omitted to prevent re-fetch just for it if already loaded
+      cropYieldStartDate, cropYieldEndDate, selectedYieldFieldFilter, 
+      taskDueDateStart, taskDueDateEnd, selectedTaskFieldFilter, 
+      fertilizerStartDate, fertilizerEndDate, selectedFertilizerFieldFilter,
+      // selectedCropFilter and selectedTaskStatusFilter trigger re-filter of already fetched data, not re-fetch from DB
+  ]); 
 
   useEffect(() => {
-    if (selectedCropFilter === "All Crops") {
-      setFilteredCropYields(allCropYields);
-    } else {
-      setFilteredCropYields(allCropYields.filter(yieldData => yieldData.cropName === selectedCropFilter));
+    let filtered = allCropYields;
+    if (selectedCropFilter !== "All Crops") {
+      filtered = allCropYields.filter(yieldData => yieldData.cropName === selectedCropFilter);
     }
-  }, [selectedCropFilter, allCropYields]);
+    // Further processing for display if needed, e.g. ensuring only preferred units or consistent units.
+    // For now, this just filters by crop name. Display conversion is handled during aggregation.
+    setFilteredCropYields(filtered);
+  }, [selectedCropFilter, allCropYields, preferredWeightUnit]);
 
   useEffect(() => {
     let tasksToSummarize = allTasks;
@@ -304,20 +314,17 @@ export default function ReportingPage() {
     }
     
     const summary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: 0 };
-    // Use 'allTasks' for total counts if 'All Tasks' filter is selected, to reflect overall farm tasks
-    // but for specific status counts, use the filtered 'tasksToSummarize'
-    const sourceForOverallCounts = (selectedTaskStatusFilter === "All Tasks" && selectedTaskFieldFilter === "All Fields" && !taskDueDateStart && !taskDueDateEnd) ? allTasks : tasksToSummarize;
+    summary.toDo = allTasks.filter(t => t.status === "To Do").length; // Overall count for farm
+    summary.inProgress = allTasks.filter(t => t.status === "In Progress").length; // Overall count
+    summary.done = allTasks.filter(t => t.status === "Done").length; // Overall count
 
-    summary.toDo = allTasks.filter(t => t.status === "To Do").length;
-    summary.inProgress = allTasks.filter(t => t.status === "In Progress").length;
-    summary.done = allTasks.filter(t => t.status === "Done").length;
-
-    if (selectedTaskStatusFilter !== "All Tasks") {
-        summary.total = tasksToSummarize.length;
+    if (selectedTaskStatusFilter !== "All Tasks" || selectedTaskFieldFilter !== "All Fields" || taskDueDateStart || taskDueDateEnd) {
+        // If any filter is active, 'total' should reflect the count of *filtered* tasks.
+        summary.total = tasksToSummarize.length; 
     } else {
-        summary.total = allTasks.length;
+        // If no filters are active, 'total' is the sum of all statuses.
+        summary.total = summary.toDo + summary.inProgress + summary.done;
     }
-    
     setTaskSummary(summary);
   }, [selectedTaskStatusFilter, selectedTaskFieldFilter, taskDueDateStart, taskDueDateEnd, allTasks]);
 
@@ -325,7 +332,6 @@ export default function ReportingPage() {
   const clearCropYieldAllFilters = () => { setCropYieldStartDate(undefined); setCropYieldEndDate(undefined); setSelectedCropFilter("All Crops"); setSelectedYieldFieldFilter("All Fields"); };
   const clearTaskAllFilters = () => { setTaskDueDateStart(undefined); setTaskDueDateEnd(undefined); setSelectedTaskStatusFilter("All Tasks"); setSelectedTaskFieldFilter("All Fields"); };
   const clearFertilizerAllFilters = () => { setFertilizerStartDate(undefined); setFertilizerEndDate(undefined); setSelectedFertilizerFieldFilter("All Fields"); };
-
 
   const formatCurrency = (value: number) => value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }); 
   
@@ -409,7 +415,7 @@ export default function ReportingPage() {
             <div> 
                 <CardTitle>Crop Yield Summary</CardTitle> 
                 <CardDescription>
-                    Total harvested yield per crop.
+                    Total harvested yield per crop. Yields are displayed in your preferred unit ({preferredWeightUnit.toUpperCase()}) where conversion from kg/lbs is possible.
                     {getDateRangeDescription(cropYieldStartDate, cropYieldEndDate, ' Harvests')}.
                     {selectedCropFilter !== "All Crops" ? ` Crop: ${selectedCropFilter}.` : ""}
                     {getFieldFilterDescription(selectedYieldFieldFilter, farmFields)}
@@ -437,7 +443,7 @@ export default function ReportingPage() {
             <Table>
               <TableCaption>Data derived from your farm's harvesting logs.</TableCaption>
               <TableHeader> <TableRow> <TableHead className="w-[200px]">Crop Name</TableHead> <TableHead className="text-right">Total Yield</TableHead> <TableHead>Unit</TableHead> </TableRow> </TableHeader>
-              <TableBody> {filteredCropYields.map((crop, index) => ( <TableRow key={`${crop.cropName}-${crop.unit}-${index}`}> <TableCell className="font-medium">{crop.cropName}</TableCell> <TableCell className="text-right">{crop.totalYield.toLocaleString()}</TableCell> <TableCell>{crop.unit}</TableCell> </TableRow> ))} </TableBody>
+              <TableBody> {filteredCropYields.map((crop, index) => ( <TableRow key={`${crop.cropName}-${crop.unit}-${index}`}> <TableCell className="font-medium">{crop.cropName}</TableCell> <TableCell className="text-right">{crop.totalYield.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1})}</TableCell> <TableCell>{crop.unit}</TableCell> </TableRow> ))} </TableBody>
             </Table>
           ) : ( <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>No Yield Data</AlertTitle> <AlertDescription> {`No harvesting logs found for "${selectedCropFilter === "All Crops" ? "any crop" : selectedCropFilter}"${getFieldFilterDescription(selectedYieldFieldFilter, farmFields)}${getDateRangeDescription(cropYieldStartDate, cropYieldEndDate, ' with harvest dates')}.`} </AlertDescription> </Alert> )}
         </CardContent>
@@ -467,9 +473,9 @@ export default function ReportingPage() {
           {isLoading ? ( <div className="space-y-2"> <Skeleton className="h-6 w-1/2" /> <Skeleton className="h-6 w-1/3" /> <Skeleton className="h-6 w-1/4" /> </div>
           ) : taskSummary && (taskSummary.total > 0 || selectedTaskStatusFilter !== "All Tasks" || taskDueDateStart || taskDueDateEnd || selectedTaskFieldFilter !== "All Fields") ? (
             <ul className="space-y-2 text-sm">
-              {(selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "To Do") && taskSummary.toDo > 0 ? <li className="flex justify-between"><span>To Do:</span> <span className="font-medium">{taskSummary.toDo}</span></li> : null}
-              {(selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "In Progress") && taskSummary.inProgress > 0 ? <li className="flex justify-between"><span>In Progress:</span> <span className="font-medium">{taskSummary.inProgress}</span></li> : null}
-              {(selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "Done") && taskSummary.done > 0 ? <li className="flex justify-between"><span>Done:</span> <span className="font-medium">{taskSummary.done}</span></li> : null}
+              {(selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "To Do") && <li className="flex justify-between"><span>To Do:</span> <span className="font-medium">{taskSummary.toDo}</span></li>}
+              {(selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "In Progress") && <li className="flex justify-between"><span>In Progress:</span> <span className="font-medium">{taskSummary.inProgress}</span></li>}
+              {(selectedTaskStatusFilter === "All Tasks" || selectedTaskStatusFilter === "Done") && <li className="flex justify-between"><span>Done:</span> <span className="font-medium">{taskSummary.done}</span></li>}
               <li className="flex justify-between border-t pt-2 mt-2 font-semibold"> 
                 <span>Total {selectedTaskStatusFilter !== "All Tasks" ? selectedTaskStatusFilter : ""} Tasks{selectedTaskFieldFilter !== "All Fields" ? " for selected field" : ""}:</span> 
                 <span> 
@@ -569,4 +575,3 @@ export default function ReportingPage() {
     </div>
   );
 }
-

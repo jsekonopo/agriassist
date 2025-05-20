@@ -7,7 +7,7 @@ import { Icons } from '@/components/icons';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { useAuth } from '@/contexts/auth-context';
+import { useAuth, type PreferredWeightUnit } from '@/contexts/auth-context';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { format, parseISO } from 'date-fns';
@@ -25,12 +25,12 @@ interface HarvestingLog {
 
 interface DynamicYieldData {
   year: string;
-  [cropNameAndUnit: string]: number | string; // e.g., "Corn (kg)": 5000
+  [cropNameAndUnit: string]: number | string; 
 }
 
 interface MonthlyUsageDataPoint {
-  month: string; // e.g., "Jan"
-  [unitKey: string]: number | string; // e.g., "kg": 50, "lbs/acre": 20
+  month: string; 
+  [unitKey: string]: number | string; 
 }
 
 
@@ -60,8 +60,13 @@ const chartColors = [
 
 const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+const KG_TO_LBS_FACTOR = 2.20462;
+const LBS_TO_KG_FACTOR = 1 / KG_TO_LBS_FACTOR;
+
 export default function AnalyticsPage() {
   const { user } = useAuth();
+  const preferredWeightUnit = user?.settings?.preferredWeightUnit || "kg";
+
   const [dynamicYieldData, setDynamicYieldData] = useState<DynamicYieldData[]>([]);
   const [uniqueCropUnitKeysForChart, setUniqueCropUnitKeysForChart] = useState<string[]>([]);
   const [isLoadingYieldData, setIsLoadingYieldData] = useState(true);
@@ -104,12 +109,24 @@ export default function AnalyticsPage() {
             yieldLogs.forEach(log => {
               if (log.harvestDate && typeof log.yieldAmount === 'number' && log.yieldUnit) {
                 const year = format(parseISO(log.harvestDate), 'yyyy');
-                const cropUnitKey = `${log.cropName} (${log.yieldUnit})`;
+                let amount = log.yieldAmount;
+                let unit = log.yieldUnit.toLowerCase();
+
+                if (unit === 'kg' && preferredWeightUnit === 'lbs') {
+                    amount = log.yieldAmount * KG_TO_LBS_FACTOR;
+                    unit = 'lbs';
+                } else if (unit === 'lbs' && preferredWeightUnit === 'kg') {
+                    amount = log.yieldAmount * LBS_TO_KG_FACTOR;
+                    unit = 'kg';
+                }
+                // For units other than kg/lbs, or if preferredUnit matches logged unit, use as is.
+
+                const cropUnitKey = `${log.cropName} (${unit})`;
                 allCropUnitKeys.add(cropUnitKey);
 
                 if (!yieldsByYearAndCropUnit[year]) yieldsByYearAndCropUnit[year] = {};
                 if (!yieldsByYearAndCropUnit[year][cropUnitKey]) yieldsByYearAndCropUnit[year][cropUnitKey] = 0;
-                yieldsByYearAndCropUnit[year][cropUnitKey] += log.yieldAmount;
+                yieldsByYearAndCropUnit[year][cropUnitKey] += amount;
               }
             });
             
@@ -119,7 +136,7 @@ export default function AnalyticsPage() {
             const chartData: DynamicYieldData[] = Object.entries(yieldsByYearAndCropUnit).map(([year, cropUnits]) => {
               const yearData: DynamicYieldData = { year };
               uniqueKeysArray.forEach(key => {
-                yearData[key] = cropUnits[key] || 0;
+                yearData[key] = cropUnits[key] || 0; // Default to 0 if no data for that crop+unit in that year
               });
               return yearData;
             }).sort((a, b) => parseInt(a.year) - parseInt(b.year)); 
@@ -151,7 +168,7 @@ export default function AnalyticsPage() {
             fertilizerLogs.forEach(log => {
                 if (log.dateApplied && typeof log.amountApplied === 'number' && log.amountUnit) {
                     const monthName = format(parseISO(log.dateApplied), 'MMM');
-                    const unitKey = `${log.amountUnit}`; // e.g. "kg", "lbs/acre"
+                    const unitKey = `${log.amountUnit}`; 
                     allFertilizerUnits.add(unitKey);
                     if (!usageByMonthAndUnit[monthName][unitKey]) usageByMonthAndUnit[monthName][unitKey] = 0;
                     usageByMonthAndUnit[monthName][unitKey] += log.amountApplied;
@@ -193,7 +210,7 @@ export default function AnalyticsPage() {
             waterLogs.forEach(log => {
                 if (log.irrigationDate && typeof log.amountApplied === 'number' && log.amountUnit) {
                     const monthName = format(parseISO(log.irrigationDate), 'MMM');
-                    const unitKey = `${log.amountUnit}`; // e.g. "mm", "gallons"
+                    const unitKey = `${log.amountUnit}`; 
                     allWaterUnits.add(unitKey);
                     if (!usageByMonthAndUnit[monthName][unitKey]) usageByMonthAndUnit[monthName][unitKey] = 0;
                     usageByMonthAndUnit[monthName][unitKey] += log.amountApplied;
@@ -222,7 +239,7 @@ export default function AnalyticsPage() {
     };
 
     fetchAllAnalyticsData();
-  }, [user]);
+  }, [user, preferredWeightUnit]); // Add preferredWeightUnit to dependency array for yield chart
 
   return (
     <div className="space-y-6">
@@ -236,7 +253,7 @@ export default function AnalyticsPage() {
         <Icons.Info className="h-4 w-4" />
         <AlertTitle>Data Source Information</AlertTitle>
         <AlertDescription>
-          Charts below are generated from your farm's logged data in Firestore. Ensure you have logged sufficient data (including units) for meaningful trends. Different units for resources (fertilizer, water) will be shown as separate series in their respective charts.
+          Charts below are generated from your farm's logged data in Firestore. Yield comparison attempts to convert kg/lbs to your preferred weight unit. Fertilizer and Water usage charts show data as logged; different units for the same resource will appear as separate series.
         </AlertDescription>
       </Alert>
 
@@ -307,7 +324,7 @@ export default function AnalyticsPage() {
                         key={`water-${unitKey}`} 
                         type="monotone" 
                         dataKey={`Water (${unitKey})`} 
-                        stroke={chartColors[(index + 1) % chartColors.length]}  // Offset color to avoid clashing with fertilizer
+                        stroke={chartColors[(index + 1) % chartColors.length]}  
                         name={`Water (${unitKey})`} 
                         strokeWidth={2} 
                         dot={{ r: 4, fill: chartColors[(index + 1) % chartColors.length] }} 
@@ -325,10 +342,10 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-       <Card className="shadow-lg mt-6"> {/* Added mt-6 for spacing */}
+       <Card className="shadow-lg mt-6"> 
         <CardHeader>
           <CardTitle>Historical Yield Comparison</CardTitle>
-          <CardDescription>Year-over-year yield trends. Different units for the same crop are shown as separate series.</CardDescription>
+          <CardDescription>Year-over-year yield trends. Yields in kg/lbs are converted to your preferred unit ({preferredWeightUnit.toUpperCase()}). Other units are shown as separate series.</CardDescription>
         </CardHeader>
         <CardContent className="h-[350px]">
           {isLoadingYieldData ? (
@@ -365,7 +382,7 @@ export default function AnalyticsPage() {
         </CardContent>
       </Card>
 
-      <Card className="shadow-lg mt-6"> {/* Added mt-6 for spacing */}
+      <Card className="shadow-lg mt-6">
         <CardHeader>
           <CardTitle>Resource Optimization Tips</CardTitle>
         </CardHeader>
@@ -388,4 +405,3 @@ export default function AnalyticsPage() {
     </div>
   );
 }
-

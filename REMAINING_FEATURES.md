@@ -20,15 +20,15 @@ This document tracks the major remaining features and potential enhancements for
         *   More robust server-side GeoJSON validation if direct pasting of GeoJSON were re-enabled.
         *   More interactive map features on the `FarmMapView` (e.g., highlighting related logs on field click).
 2.  **Advanced Reporting & Data Export (Further Enhancements):**
-    *   **Status:** Basic summary reports with filtering options for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range, field) exist. **Date range filtering added to Task Reports.**
+    *   **Status:** Basic summary reports with filtering options for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range, field) exist. Fertilizer usage report with field/date filters implemented.
     *   **Remaining:**
         *   More filtering options for *all* reports.
-        *   New types of reports (e.g., input usage trends per field, cost analysis per crop, detailed livestock reports, fertilizer/irrigation summaries per field/crop).
+        *   New types of reports (e.g., input usage trends per field, cost analysis per crop, detailed livestock reports, irrigation summaries per field/crop).
         *   Functionality to export data and reports (e.g., to CSV, PDF).
 3.  **Using Stored Unit Preferences Throughout the App (Full Implementation):**
-    *   **Status:** Users can save preferred area/weight units. Display of field sizes, total acreage, and livestock weights respects these preferences. Input forms for field area, weight logs, farm inputs, fertilizer, and irrigation now use `Select` dropdowns for units and/or default to user preferences where applicable.
+    *   **Status:** Users can save preferred area/weight units. Display of field sizes, total acreage, and livestock weights respects these preferences. Input forms for field area, weight logs, farm inputs, fertilizer, and irrigation now use `Select` dropdowns for units and/or default to user preferences where applicable. **Yield displays in reports and analytics attempt conversion for kg/lbs to preferred weight unit.**
     *   **Remaining:**
-        *   Ensure *all* relevant data displays (e.g., in *all* analytics charts, *all* reports) consistently use or convert to the user's preferred units.
+        *   Ensure *all other* relevant data displays (e.g., in fertilizer/irrigation analytics charts, other reports) consistently use or convert to the user's preferred units (this requires defining preferences for volume, application rates, etc.).
         *   For data *input* in forms like Farm Inputs, Fertilizer, Irrigation: currently, the selected unit is stored. Consider if conversion to a standard storage unit is needed, with display conversion back to preferred units.
 
 ## IV. Broader Application Features & User Experience:
@@ -51,6 +51,3 @@ This document tracks the major remaining features and potential enhancements for
     *   **Status:** Standard components provide a good baseline.
 6.  **Performance Optimization for Large Datasets.**
     *   **Status:** Not explicitly addressed.
-
-
-    
