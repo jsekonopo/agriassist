@@ -36,7 +36,7 @@ This document tracks the major remaining features and potential enhancements for
     *   **LLM Prompt Example:** "Modify `FarmMapView.tsx`. On GeoJSON polygon click, fetch last 3 planting logs and most recent soil test for that `field.id`. Display this in the popup."
 
 2.  **Advanced Reporting & Data Export (Further Enhancements):**
-    *   **Status:** Basic summary reports with filtering for financial overview (date range), crop yield (crop, field, date range), task status (status, due date range, field), and fertilizer usage (field, date range) exist.
+    *   **Status:** Basic summary reports with filtering for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range, field) exist. Fertilizer usage report with field/date filters implemented.
     *   **Remaining:**
         *   More filtering options for *all* reports.
         *   New types of reports (e.g., input usage trends, cost analysis per crop, livestock reports, irrigation summaries).
@@ -51,7 +51,7 @@ This document tracks the major remaining features and potential enhancements for
     *   **LLM Prompt Example:** "Add 'Export to CSV' button to 'Crop Yield Summary' in `reporting/page.tsx`. On click, convert `filteredCropYields` to CSV and trigger download."
 
 3.  **Using Stored Unit Preferences Throughout the App (Full Implementation):**
-    *   **Status:** Users can save preferred area/weight units. Key displays (field size, total acreage, livestock weight) and form defaults respect these. **Yield displays in reports and analytics attempt kg/lbs conversion.**
+    *   **Status:** Users can save preferred area/weight units. Key displays (field size, total acreage, livestock weight) and form defaults respect these. Yield displays in reports and analytics attempt kg/lbs conversion. Fertilizer/irrigation/input forms use Select dropdowns for units.
     *   **Remaining:**
         *   Ensure *all other* relevant data displays (e.g., fertilizer/irrigation amounts in analytics/reports) consistently use/convert units (requires defining preferences for volume, application rates, etc.).
         *   Input conversion: Allow input in preferred unit, convert to standard storage unit if needed.
@@ -124,12 +124,12 @@ This document tracks the major remaining features and potential enhancements for
         "Review the `AppNotifications.tsx` component. What ARIA attributes should be added to improve accessibility?"
 
 6.  **Performance Optimization for Large Datasets.**
-    *   **Status:** Not explicitly addressed.
-    *   **Remaining:** Implement pagination, virtualized lists, optimize Firestore queries (indexing), and consider data denormalization.
-    *   **Implementation Steps (Table Pagination):**
-        1.  For `FieldDefinitionTable.tsx`, implement client-side pagination if dataset is small, or server-side pagination with Firestore query cursors if large.
-        2.  Add UI controls for "Next Page", "Previous Page".
+    *   **Status:** Client-side pagination added to `FieldDefinitionTable`.
+    *   **Remaining:** Implement server-side pagination for tables with potentially very large datasets (e.g., logs), implement virtualized lists where appropriate, optimize Firestore queries (indexing reviews), and consider data denormalization strategies.
+    *   **Implementation Steps (Server-Side Table Pagination for `PlantingLogTable.tsx`):**
+        1.  Modify `fetchPlantingLogs` to use Firestore query cursors (`startAfter`, `limit`).
+        2.  Add UI controls for "Next Page", "Previous Page" that trigger re-fetch with new cursor.
+        3.  Manage loading states.
     *   **LLM Prompt Example:**
-        "Modify `FieldDefinitionTable.tsx` for client-side pagination: display 10 fields per page, with 'Previous' and 'Next' buttons."
-
-    
+        "Modify `PlantingLogTable.tsx` and its data fetching logic to implement server-side pagination using Firestore query cursors. Display 10 logs per page. Include 'Previous' and 'Next' buttons."
+```

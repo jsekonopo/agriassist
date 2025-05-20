@@ -26,12 +26,12 @@ interface FieldDefinitionLog {
   fieldSize?: number;
   fieldSizeUnit?: string; 
   geojsonBoundary?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   notes?: string;
   createdAt?: Timestamp | Date; 
   farmId: string;
   userId: string;
-  latitude?: number | null;
-  longitude?: number | null;
 }
 
 interface FieldDefinitionTableProps {
@@ -59,6 +59,9 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
   const { user } = useAuth();
   const preferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   useEffect(() => {
     if (!user || !user.farmId) { 
       setIsLoading(false);
@@ -82,6 +85,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
           createdAt: docSnap.data().createdAt?.toDate ? docSnap.data().createdAt.toDate() : undefined,
         } as FieldDefinitionLog));
         setLogs(fetchedLogs);
+        setCurrentPage(1); // Reset to first page on new data fetch
       } catch (e) {
         console.error("Failed to load field definitions from Firestore:", e);
         setError("Could not load field definitions. Please try again.");
@@ -97,8 +101,8 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
     fetchFieldDefinitions();
   }, [user?.farmId, refreshTrigger, toast]);
 
-  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDeleteFields.includes(user.roleOnCurrentFarm);
-  const canUserEdit = user?.roleOnCurrentFarm && rolesThatCanEditFields.includes(user.roleOnCurrentFarm);
+  const canUserDelete = user?.roleOnCurrentFarm && rolesThatCanDeleteFields.includes(user.roleOnCurrentFarm as UserRole);
+  const canUserEdit = user?.roleOnCurrentFarm && rolesThatCanEditFields.includes(user.roleOnCurrentFarm as UserRole);
 
 
   const handleDeleteLog = async (logId: string) => {
@@ -148,6 +152,24 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
     }
     return `${sizeInAcres.toFixed(1)} ${displayUnit}`;
   };
+
+  // Pagination logic
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = logs.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(logs.length / itemsPerPage);
+
+  const handleNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  const handlePreviousPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
   
   if (isLoading) {
     return <p className="text-center text-muted-foreground py-4">Loading field definitions...</p>;
@@ -188,44 +210,61 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
   }
 
   return (
-    <div className="mt-8 border rounded-lg shadow-sm overflow-x-auto">
-      <Table>
-        <TableCaption>A list of your farm fields. Displaying area in {preferredAreaUnit}.</TableCaption>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="min-w-[150px]">Field Name</TableHead>
-            <TableHead className="min-w-[120px]">Size ({preferredAreaUnit})</TableHead>
-            <TableHead className="min-w-[120px]">Boundary Data</TableHead>
-            <TableHead className="min-w-[200px]">Notes</TableHead>
-            {(canUserEdit || canUserDelete) && <TableHead className="text-right w-[120px]">Actions</TableHead>}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {logs.map((log) => (
-            <TableRow key={log.id}>
-              <TableCell className="font-medium">{log.fieldName}</TableCell>
-              <TableCell>{formatFieldSize(log.fieldSize, log.fieldSizeUnit, preferredAreaUnit)}</TableCell>
-              <TableCell>{log.geojsonBoundary && log.geojsonBoundary.trim() !== "" ? "Yes" : "No"}</TableCell>
-              <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
-              {(canUserEdit || canUserDelete) && (
-                <TableCell className="text-right space-x-1">
-                  {canUserEdit && (
-                    <Button variant="ghost" size="icon" onClick={() => onEditField(log.id)} aria-label="Edit field">
-                      <Icons.Edit3 className="h-4 w-4 text-blue-600" />
-                    </Button>
-                  )}
-                  {canUserDelete && (
-                    <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete field">
-                      <Icons.Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  )}
-                </TableCell>
-              )}
+    <div className="mt-8">
+      <div className="border rounded-lg shadow-sm overflow-x-auto">
+        <Table>
+          <TableCaption>A list of your farm fields. Displaying area in {preferredAreaUnit}. Page {currentPage} of {totalPages}.</TableCaption>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[150px]">Field Name</TableHead>
+              <TableHead className="min-w-[120px]">Size ({preferredAreaUnit})</TableHead>
+              <TableHead className="min-w-[120px]">Boundary Data</TableHead>
+              <TableHead className="min-w-[200px]">Notes</TableHead>
+              {(canUserEdit || canUserDelete) && <TableHead className="text-right w-[120px]">Actions</TableHead>}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
-    
+          </TableHeader>
+          <TableBody>
+            {currentItems.map((log) => (
+              <TableRow key={log.id}>
+                <TableCell className="font-medium">{log.fieldName}</TableCell>
+                <TableCell>{formatFieldSize(log.fieldSize, log.fieldSizeUnit, preferredAreaUnit)}</TableCell>
+                <TableCell>{log.geojsonBoundary && log.geojsonBoundary.trim() !== "" ? "Yes" : "No"}</TableCell>
+                <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.notes}>{log.notes || "N/A"}</TableCell>
+                {(canUserEdit || canUserDelete) && (
+                  <TableCell className="text-right space-x-1">
+                    {canUserEdit && (
+                      <Button variant="ghost" size="icon" onClick={() => onEditField(log.id)} aria-label="Edit field">
+                        <Icons.Edit3 className="h-4 w-4 text-blue-600" />
+                      </Button>
+                    )}
+                    {canUserDelete && (
+                      <Button variant="ghost" size="icon" onClick={() => handleDeleteLog(log.id)} aria-label="Delete field">
+                        <Icons.Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    )}
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      {logs.length > itemsPerPage && (
+        <div className="flex items-center justify-end space-x-2 py-4">
+          <span className="text-sm text-muted-foreground">
+            Page {currentPage} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePreviousPage}
+            disabled={currentPage === 1}
+          >
+            Previous
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleNextPage}
+            disabled={currentPage === totalPages}
+          >
