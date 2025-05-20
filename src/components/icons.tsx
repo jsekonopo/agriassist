@@ -47,13 +47,13 @@ import {
   Beef,
   ActivitySquare,
   GitFork,
-  ListChecks, // Keep for generic list checks, or Features
+  ListChecks, 
   Scale,
   Bell,
-  Users, // Added for About Us
-  Mail, // Added for Contact
-  Smartphone, // Added for UI/UX example
-  TrendingUp, // Added for UI/UX example
+  Users, 
+  Mail, 
+  Smartphone, 
+  TrendingUp, 
 } from 'lucide-react';
 
 export const Icons = {
@@ -66,6 +66,7 @@ export const Icons = {
   DataManagement: Database,
   Analytics: BarChart3,
   AIExpert: BrainCircuit,
+  BrainCircuit: BrainCircuit, // Added direct mapping
   ChevronDown,
   ChevronRight,
   Search,
@@ -92,7 +93,7 @@ export const Icons = {
   Tractor,
   Camera,
   ScanSearch,
-  ClipboardList, // For Task Logs
+  ClipboardList, 
   Recycle,
   FlaskConical,
   Reporting: FileText, 
@@ -107,13 +108,11 @@ export const Icons = {
   FeedLog: ListChecks, 
   WeightLog: Scale,
   Bell,
-  Users, // For About Us page link
-  Mail,  // For Contact page link
-  Smartphone, // For Landing Page benefit card
-  TrendingUp, // For Landing Page benefit card
-  ListChecksFeatures: ListChecks, // Explicitly for Features page link if needed to differentiate
+  Users, 
+  Mail,  
+  Smartphone, 
+  TrendingUp, 
+  ListChecksFeatures: ListChecks, 
 };
 
 export type IconName = keyof typeof Icons;
-
-    
