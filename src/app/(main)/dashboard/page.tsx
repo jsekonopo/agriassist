@@ -17,6 +17,7 @@ import { format, parseISO, isToday, isPast, differenceInDays, addDays, isWithinI
 import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
 import { useToast } from "@/hooks/use-toast";
 import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; 
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
 interface WeatherData {
   temperature: number;
@@ -63,6 +64,8 @@ interface TaskLog {
   userId: string;
   description?: string;
   createdAt?: Timestamp;
+  fieldId?: string | null;
+  fieldName?: string | null;
 }
 
 interface CropYieldData {
@@ -141,7 +144,7 @@ export default function DashboardPage() {
   const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm as UserRoleOnFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
-  const triggerWeatherAlertNotification = useCallback(async (alertType: 'frost' | 'storm', alertTitle: string, alertMessage: string) => {
+  const triggerWeatherAlertNotification = useCallback(async (alertType: 'frost' | 'storm', alertData: WeatherData) => {
     if (!user || !user.farmId || !user.uid) return;
 
     const lastAlertKey = `lastWeatherAlert_${alertType}_${user.farmId}`;
@@ -151,6 +154,18 @@ export default function DashboardPage() {
     if (lastAlertTime && (now - parseInt(lastAlertTime) < WEATHER_ALERT_COOLDOWN_MS)) { 
       console.log(`Weather alert cooldown active for: ${alertType} on farm ${user.farmName || user.farmId}. Not sending new notification.`);
       return;
+    }
+    
+    const farmDisplayNameForAlert = user?.farmName ? `at ${user.farmName}` : ( (user?.farmLatitude && user?.farmLongitude) ? "at Your Farm Location" : "for Default Location (Ottawa)");
+    let alertTitle = "";
+    let alertMessage = "";
+
+    if (alertType === 'frost') {
+        alertTitle = `Weather Alert: Potential Frost ${farmDisplayNameForAlert}!`;
+        alertMessage = `Current temperature is ${alertData.temperature}°C. Take precautions for frost-sensitive crops.`;
+    } else if (alertType === 'storm') {
+        alertTitle = `Weather Alert: Storm Approaching ${farmDisplayNameForAlert}!`;
+        alertMessage = `Current weather conditions indicate a storm: ${alertData.description}. Secure equipment and livestock.`;
     }
 
     try {
@@ -179,8 +194,10 @@ export default function DashboardPage() {
       let locationName = `Weather for ${currentFarmNameForWeather}`; 
 
       if (lat == null || lon == null) { 
-         locationName = `Current Weather (${currentFarmNameForWeather} - Default Location)`;
-         lat = 45.4215; lon = -75.6972; 
+         locationName = `Current Weather (${currentFarmNameForWeather} - Default Location: Ottawa)`;
+         lat = 45.4215; lon = -75.6972; // Default to Ottawa
+      } else {
+         locationName = `Weather for ${currentFarmNameForWeather} (Custom Location)`;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -197,20 +214,11 @@ export default function DashboardPage() {
           };
           setWeather(currentWeatherData);
 
-          const farmDisplayNameForAlert = user?.farmName ? `at ${user.farmName}` : "on your farm";
           if (currentWeatherData.temperature < FROST_TEMP_THRESHOLD_CELSIUS) {
-            triggerWeatherAlertNotification(
-              'frost',
-              `Weather Alert: Potential Frost ${farmDisplayNameForAlert}!`,
-              `Current temperature is ${currentWeatherData.temperature}°C. Take precautions for frost-sensitive crops.`
-            );
+            triggerWeatherAlertNotification('frost', currentWeatherData);
           }
           if (STORM_WEATHER_CODES.includes(currentWeatherData.weathercode)) {
-             triggerWeatherAlertNotification(
-              'storm',
-              `Weather Alert: Storm Approaching ${farmDisplayNameForAlert}!`,
-              `Current weather conditions indicate a storm: ${currentWeatherData.description}. Secure equipment and livestock.`
-            );
+             triggerWeatherAlertNotification('storm', currentWeatherData);
           }
 
         } else throw new Error("Current weather data not available");
@@ -227,7 +235,7 @@ export default function DashboardPage() {
         fetchFarmLocationAndWeather();
     } else if (!user && !authLoading) { 
         setWeatherLoading(false);
-        setWeatherLocationDisplay("Weather (No Farm Set - Default Location)");
+        setWeatherLocationDisplay("Weather (No Farm Set - Default Location: Ottawa)");
     }
   }, [user, authLoading, triggerWeatherAlertNotification]); 
 
@@ -275,18 +283,22 @@ export default function DashboardPage() {
         setActiveCropsCount(uniqueCrops.size);
         setNextHarvestCrop(pLogs[0]?.cropName || "N/A"); 
 
-        const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId));
+        const harvestingLogsQuery = query(collection(db, "harvestingLogs"), where("farmId", "==", user.farmId), orderBy("harvestDate", "desc"));
         const harvestingLogsSnapshot = await getDocs(harvestingLogsQuery);
         const hLogs = harvestingLogsSnapshot.docs.map(docSnap => docSnap.data() as HarvestingLog);
+        
         const yields: { [key: string]: { total: number; unit?: string } } = {};
         hLogs.forEach(log => {
-          if (log.cropName && typeof log.yieldAmount === 'number') {
-            if (!yields[log.cropName]) yields[log.cropName] = { total: 0, unit: log.yieldUnit };
-            yields[log.cropName].total += log.yieldAmount;
-            if (!yields[log.cropName].unit && log.yieldUnit) yields[log.cropName].unit = log.yieldUnit; 
+          if (log.cropName && typeof log.yieldAmount === 'number' && log.yieldAmount > 0) {
+            const cropKey = log.cropName; // Group by crop name only for this chart
+            if (!yields[cropKey]) yields[cropKey] = { total: 0, unit: log.yieldUnit || 'units' }; // Take first unit or default
+            // For simplicity, if units are mixed for the same crop, this chart will sum them. More advanced chart needed for mixed units per crop.
+            yields[cropKey].total += log.yieldAmount;
+            if (!yields[cropKey].unit && log.yieldUnit) yields[cropKey].unit = log.yieldUnit; // Attempt to get a unit
           }
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
+
 
         const tasksQuery = query(
           collection(db, "taskLogs"), 
@@ -356,7 +368,7 @@ export default function DashboardPage() {
 
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
         let notificationTitle = "AI Farm Alert";
-        let notificationMessage = "The AI Farm Expert has generated new insights. ";
+        let notificationMessage = "The AI Farm Expert has generated new insights for your farm. ";
         
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
             notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Opportunities & Risks Identified!`;
@@ -411,7 +423,7 @@ export default function DashboardPage() {
     const today = new Date();
     const reminderCooldownPerTask = 6 * 60 * 60 * 1000; // 6 hours per specific task
 
-    for (const task of upcomingTasks) {
+    for (const task of upcomingTasks) { // Use tasks from state
       if (task.dueDate) {
         const dueDate = parseISO(task.dueDate);
         let title = "";
@@ -460,7 +472,7 @@ export default function DashboardPage() {
     } else {
       toast({ title: "No New Task Reminders", description: "No tasks are currently due today or recently overdue that need new reminders." });
     }
-    localStorage.setItem(lastCheckKey, now.toString()); // Update overall check time
+    localStorage.setItem(lastCheckKey, now.toString()); 
     setIsCheckingReminders(false);
   }, [user, upcomingTasks, makeApiRequest, toast]);
 
@@ -799,5 +811,7 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+    
 
     

@@ -20,10 +20,10 @@ This document tracks the major remaining features and potential enhancements for
         *   More robust server-side GeoJSON validation if direct pasting of GeoJSON were re-enabled.
         *   More interactive map features on the `FarmMapView` (e.g., highlighting related logs on field click).
 2.  **Advanced Reporting & Data Export (Further Enhancements):**
-    *   **Status:** Basic summary reports with filtering options for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range, field) exist. **New report: Fertilizer Usage Summary (with field and date range filters).**
+    *   **Status:** Basic summary reports with filtering options for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range, field) exist. **Date range filtering added to Task Reports.**
     *   **Remaining:**
         *   More filtering options for *all* reports.
-        *   New types of reports (e.g., input usage trends per field, cost analysis per crop, detailed livestock reports, irrigation summaries per field/crop).
+        *   New types of reports (e.g., input usage trends per field, cost analysis per crop, detailed livestock reports, fertilizer/irrigation summaries per field/crop).
         *   Functionality to export data and reports (e.g., to CSV, PDF).
 3.  **Using Stored Unit Preferences Throughout the App (Full Implementation):**
     *   **Status:** Users can save preferred area/weight units. Display of field sizes, total acreage, and livestock weights respects these preferences. Input forms for field area, weight logs, farm inputs, fertilizer, and irrigation now use `Select` dropdowns for units and/or default to user preferences where applicable.
@@ -42,7 +42,7 @@ This document tracks the major remaining features and potential enhancements for
         *   Implement triggering for weather alerts once the weather integration is more advanced (beyond current client-side checks).
         *   Potentially create more specific email templates for different notification types.
 3.  **User Onboarding & Help System (Part 2 - Contextual Help/FAQ):**
-    *   **Status:** Multi-step onboarding modal for new users. Searchable FAQ page created. **Basic contextual tooltips added in key areas.**
+    *   **Status:** Multi-step onboarding modal for new users. Searchable FAQ page created. Basic contextual tooltips added in key areas.
     *   **Remaining:** More contextual help/tooltips throughout the application for specific features.
 4.  **Enhanced Mobile Responsiveness & Offline Capabilities (Part 2 - Offline Support).**
     *   **Status:** Key pages have had mobile responsiveness refinements.
@@ -52,3 +52,5 @@ This document tracks the major remaining features and potential enhancements for
 6.  **Performance Optimization for Large Datasets.**
     *   **Status:** Not explicitly addressed.
 
+
+    
