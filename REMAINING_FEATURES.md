@@ -22,7 +22,7 @@ This document tracks the major remaining features and potential enhancements for
         *   More robust server-side GeoJSON validation if direct pasting of GeoJSON were re-enabled.
         *   More interactive map features on the `FarmMapView` (e.g., highlighting related logs on field click).
 2.  **Advanced Reporting & Data Export (Further Enhancements):**
-    *   **Current Status:** Basic summary reports with filtering options for financial overview, crop yield, and task status exist.
+    *   **Current Status:** Basic summary reports with filtering options for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range) exist.
     *   **Remaining:**
         *   More filtering options for *all* reports.
         *   New types of reports (e.g., input usage trends per field, cost analysis per crop, detailed livestock reports, fertilizer/irrigation summaries per field/crop).
