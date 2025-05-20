@@ -23,12 +23,12 @@ import { format, parseISO, startOfDay, endOfDay } from 'date-fns';
 interface HarvestingLog {
   id: string;
   cropName: string;
-  harvestDate: string; 
+  harvestDate: string;
   yieldAmount?: number;
   yieldUnit?: string;
   farmId: string;
   userId: string;
-  fieldId?: string; 
+  fieldId?: string;
 }
 
 interface Field {
@@ -47,7 +47,7 @@ interface TaskLog {
   id: string;
   taskName: string;
   status: "To Do" | "In Progress" | "Done";
-  dueDate?: string | null; 
+  dueDate?: string | null;
   farmId: string;
   userId: string;
   fieldId?: string | null;
@@ -63,23 +63,40 @@ interface TaskStatusSummary {
 }
 
 interface RevenueLog {
-    id: string;
-    date: string; 
-    amount: number;
-    farmId: string;
+  id: string;
+  date: string;
+  amount: number;
+  farmId: string;
 }
 
 interface ExpenseLog {
-    id: string;
-    date: string; 
-    amount: number;
-    farmId: string;
+  id: string;
+  date: string;
+  amount: number;
+  farmId: string;
 }
 
 interface FinancialSummary {
-    totalRevenue: number;
-    totalExpenses: number;
-    netProfit: number;
+  totalRevenue: number;
+  totalExpenses: number;
+  netProfit: number;
+}
+
+interface FertilizerLog {
+  id: string;
+  fieldId: string;
+  fieldName?: string;
+  dateApplied: string;
+  fertilizerType: string;
+  amountApplied: number;
+  amountUnit: string;
+  farmId: string;
+}
+
+interface FertilizerUsageSummary {
+  fertilizerType: string;
+  totalAmount: number;
+  unit: string;
 }
 
 type TaskStatusFilter = "All Tasks" | "To Do" | "In Progress" | "Done";
@@ -97,7 +114,6 @@ export default function ReportingPage() {
   const [selectedYieldFieldFilter, setSelectedYieldFieldFilter] = useState<string>("All Fields");
   const [isLoadingFields, setIsLoadingFields] = useState(true);
 
-
   // Task States
   const [allTasks, setAllTasks] = useState<TaskLog[]>([]);
   const [taskSummary, setTaskSummary] = useState<TaskStatusSummary | null>(null);
@@ -105,11 +121,17 @@ export default function ReportingPage() {
   const [taskDueDateStart, setTaskDueDateStart] = useState<Date | undefined>(undefined);
   const [taskDueDateEnd, setTaskDueDateEnd] = useState<Date | undefined>(undefined);
   const [selectedTaskFieldFilter, setSelectedTaskFieldFilter] = useState<string>("All Fields");
-  
+
   // Financial States
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
   const [financialStartDate, setFinancialStartDate] = useState<Date | undefined>(undefined);
   const [financialEndDate, setFinancialEndDate] = useState<Date | undefined>(undefined);
+
+  // Fertilizer Usage States
+  const [fertilizerUsageSummary, setFertilizerUsageSummary] = useState<FertilizerUsageSummary[]>([]);
+  const [selectedFertilizerFieldFilter, setSelectedFertilizerFieldFilter] = useState<string>("All Fields");
+  const [fertilizerStartDate, setFertilizerStartDate] = useState<Date | undefined>(undefined);
+  const [fertilizerEndDate, setFertilizerEndDate] = useState<Date | undefined>(undefined);
   
   // General Loading/Error States
   const [isLoading, setIsLoading] = useState(true);
@@ -127,6 +149,7 @@ export default function ReportingPage() {
       setAllTasks([]);
       setTaskSummary(null);
       setFinancialSummary(null);
+      setFertilizerUsageSummary([]);
       return;
     }
 
@@ -148,13 +171,9 @@ export default function ReportingPage() {
         if (cropYieldEndDate) harvestingQueryConstraints.push(where("harvestDate", "<=", format(endOfDay(cropYieldEndDate), "yyyy-MM-dd")));
         if (selectedYieldFieldFilter !== "All Fields") harvestingQueryConstraints.push(where("fieldId", "==", selectedYieldFieldFilter));
         
-        // Add orderBy for cropName for consistent grouping, then by harvestDate for chronological data if date filters are applied
         harvestingQueryConstraints.push(orderBy("cropName", "asc"));
-        if (cropYieldStartDate || cropYieldEndDate) {
-            harvestingQueryConstraints.push(orderBy("harvestDate", "asc")); 
-        } else {
-            harvestingQueryConstraints.push(orderBy("harvestDate", "desc")); // Default order if no date filter
-        }
+        if (cropYieldStartDate || cropYieldEndDate) harvestingQueryConstraints.push(orderBy("harvestDate", "asc")); 
+        else harvestingQueryConstraints.push(orderBy("harvestDate", "desc"));
 
 
         const harvestingQueryRef = query(collection(db, "harvestingLogs"), ...harvestingQueryConstraints);
@@ -178,7 +197,6 @@ export default function ReportingPage() {
         });
         setAllCropYields(yields);
         
-        // Only update uniqueCropNames if it's the initial load or if new crops appear
         if (uniqueCropNames.length <=1 || cropNamesSet.size > (uniqueCropNames.length-1) || 
             !Array.from(cropNamesSet).every(name => uniqueCropNames.includes(name))) {
             setUniqueCropNames(["All Crops", ...Array.from(cropNamesSet).sort()]);
@@ -191,11 +209,8 @@ export default function ReportingPage() {
         if (taskDueDateEnd) tasksQueryConstraints.push(where("dueDate", "<=", format(endOfDay(taskDueDateEnd), "yyyy-MM-dd")));
         if (selectedTaskFieldFilter !== "All Fields") tasksQueryConstraints.push(where("fieldId", "==", selectedTaskFieldFilter));
         
-        if (taskDueDateStart || taskDueDateEnd) {
-            tasksQueryConstraints.push(orderBy("dueDate", "asc"));
-        } else {
-            tasksQueryConstraints.push(orderBy("createdAt", "desc")); 
-        }
+        if (taskDueDateStart || taskDueDateEnd) tasksQueryConstraints.push(orderBy("dueDate", "asc"));
+        else tasksQueryConstraints.push(orderBy("createdAt", "desc")); 
         
         const tasksQueryRef = query(collection(db, "taskLogs"), ...tasksQueryConstraints);
         const tasksSnapshot = await getDocs(tasksQueryRef);
@@ -209,25 +224,49 @@ export default function ReportingPage() {
         if (financialEndDate) financialDateConstraints.push(where("date", "<=", format(endOfDay(financialEndDate), "yyyy-MM-dd")));
         
         const finalFinancialRevenueConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
-        if (financialStartDate || financialEndDate) {
-            finalFinancialRevenueConstraints.push(orderBy("date", "asc"));
-        }
-
+        if (financialStartDate || financialEndDate) finalFinancialRevenueConstraints.push(orderBy("date", "asc"));
         const revenueQueryRef = query(collection(db, "revenueLogs"), ...finalFinancialRevenueConstraints);
         const revenueSnapshot = await getDocs(revenueQueryRef);
         const revenueLogs: RevenueLog[] = revenueSnapshot.docs.map(docSnap => docSnap.data() as RevenueLog);
         const totalRevenue = revenueLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
 
         const finalFinancialExpenseConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
-        if (financialStartDate || financialEndDate) {
-            finalFinancialExpenseConstraints.push(orderBy("date", "asc"));
-        }
+        if (financialStartDate || financialEndDate) finalFinancialExpenseConstraints.push(orderBy("date", "asc"));
         const expenseQueryRef = query(collection(db, "expenseLogs"), ...finalFinancialExpenseConstraints);
         const expenseSnapshot = await getDocs(expenseQueryRef);
         const expenseLogs: ExpenseLog[] = expenseSnapshot.docs.map(docSnap => docSnap.data() as ExpenseLog);
         const totalExpenses = expenseLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
         
         setFinancialSummary({ totalRevenue, totalExpenses, netProfit: totalRevenue - totalExpenses });
+
+        // Fertilizer Logs Query for Summary
+        const fertilizerQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
+        if (fertilizerStartDate) fertilizerQueryConstraints.push(where("dateApplied", ">=", format(startOfDay(fertilizerStartDate), "yyyy-MM-dd")));
+        if (fertilizerEndDate) fertilizerQueryConstraints.push(where("dateApplied", "<=", format(endOfDay(fertilizerEndDate), "yyyy-MM-dd")));
+        if (selectedFertilizerFieldFilter !== "All Fields") fertilizerQueryConstraints.push(where("fieldId", "==", selectedFertilizerFieldFilter));
+        
+        if (fertilizerStartDate || fertilizerEndDate) fertilizerQueryConstraints.push(orderBy("dateApplied", "asc"));
+        else fertilizerQueryConstraints.push(orderBy("dateApplied", "desc"));
+
+        const fertilizerQueryRef = query(collection(db, "fertilizerLogs"), ...fertilizerQueryConstraints);
+        const fertilizerSnapshot = await getDocs(fertilizerQueryRef);
+        const fertilizerLogs: FertilizerLog[] = fertilizerSnapshot.docs.map(docSnap => docSnap.data() as FertilizerLog);
+
+        const fertUsageMap = new Map<string, { total: number; unit: string }>();
+        fertilizerLogs.forEach(log => {
+          if (log.fertilizerType && typeof log.amountApplied === 'number' && log.amountUnit) {
+            const key = `${log.fertilizerType} - ${log.amountUnit}`;
+            const existing = fertUsageMap.get(key) || { total: 0, unit: log.amountUnit };
+            existing.total += log.amountApplied;
+            fertUsageMap.set(key, existing);
+          }
+        });
+        const fertSummary: FertilizerUsageSummary[] = Array.from(fertUsageMap.entries()).map(([key, data]) => {
+          const [fertilizerType] = key.split(' - ');
+          return { fertilizerType, totalAmount: data.total, unit: data.unit };
+        });
+        setFertilizerUsageSummary(fertSummary);
+
 
       } catch (e) {
         console.error("Error fetching report data from Firestore:", e);
@@ -238,7 +277,12 @@ export default function ReportingPage() {
     };
 
     fetchReportData();
-  }, [user, financialStartDate, financialEndDate, cropYieldStartDate, cropYieldEndDate, taskDueDateStart, taskDueDateEnd, selectedYieldFieldFilter, selectedCropFilter, selectedTaskFieldFilter, selectedTaskStatusFilter]); // Added selectedTaskStatusFilter
+  }, [user, 
+      financialStartDate, financialEndDate, 
+      cropYieldStartDate, cropYieldEndDate, selectedYieldFieldFilter, selectedCropFilter, 
+      taskDueDateStart, taskDueDateEnd, selectedTaskFieldFilter, selectedTaskStatusFilter,
+      fertilizerStartDate, fertilizerEndDate, selectedFertilizerFieldFilter
+  ]);
 
   useEffect(() => {
     if (selectedCropFilter === "All Crops") {
@@ -255,8 +299,6 @@ export default function ReportingPage() {
     }
     
     const summary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: 0 };
-    
-    // If no specific status filter is applied, calculate all based on allTasks (which is already date/field filtered if those are active)
     const sourceForOverallCounts = selectedTaskStatusFilter === "All Tasks" ? allTasks : tasksToSummarize;
 
     summary.toDo = sourceForOverallCounts.filter(t => t.status === "To Do").length;
@@ -270,6 +312,8 @@ export default function ReportingPage() {
   const clearFinancialDateFilters = () => { setFinancialStartDate(undefined); setFinancialEndDate(undefined); };
   const clearCropYieldAllFilters = () => { setCropYieldStartDate(undefined); setCropYieldEndDate(undefined); setSelectedCropFilter("All Crops"); setSelectedYieldFieldFilter("All Fields"); };
   const clearTaskAllFilters = () => { setTaskDueDateStart(undefined); setTaskDueDateEnd(undefined); setSelectedTaskStatusFilter("All Tasks"); setSelectedTaskFieldFilter("All Fields"); };
+  const clearFertilizerAllFilters = () => { setFertilizerStartDate(undefined); setFertilizerEndDate(undefined); setSelectedFertilizerFieldFilter("All Fields"); };
+
 
   const formatCurrency = (value: number) => value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }); 
   
@@ -427,9 +471,89 @@ export default function ReportingPage() {
           ) : ( <Alert> <Icons.Info className="h-4 w-4" /> <AlertTitle>No Task Data</AlertTitle> <AlertDescription> {`No tasks found for this farm${getDateRangeDescription(taskDueDateStart, taskDueDateEnd, ' with due dates')}${getFieldFilterDescription(selectedTaskFieldFilter, farmFields)} that match the status "${selectedTaskStatusFilter}".`} </AlertDescription> </Alert> )}
         </CardContent>
       </Card>
+
+      <Card className="shadow-lg">
+        <CardHeader>
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <CardTitle>Fertilizer Usage Summary</CardTitle>
+              <CardDescription>
+                Total amount of each fertilizer type applied.
+                {getDateRangeDescription(fertilizerStartDate, fertilizerEndDate, ' Applications')}.
+                {getFieldFilterDescription(selectedFertilizerFieldFilter, farmFields)}
+              </CardDescription>
+            </div>
+            <div className="flex flex-col sm:flex-row flex-wrap gap-2 w-full md:w-auto items-stretch md:items-center">
+              <div className="w-full sm:w-auto md:min-w-[150px]">
+                <Label htmlFor="field-fertilizer-filter" className="sr-only">Filter by Field</Label>
+                <Select value={selectedFertilizerFieldFilter} onValueChange={setSelectedFertilizerFieldFilter} disabled={isLoadingFields}>
+                  <SelectTrigger id="field-fertilizer-filter" aria-label="Filter by Field">
+                    <SelectValue placeholder={isLoadingFields ? "Loading fields..." : "Filter by Field"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {farmFields.map(field => (<SelectItem key={field.id} value={field.id}>{field.fieldName}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !fertilizerStartDate && "text-muted-foreground")}>
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {fertilizerStartDate ? format(fertilizerStartDate, "PPP") : <span>Application Start</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={fertilizerStartDate} onSelect={setFertilizerStartDate} initialFocus /></PopoverContent>
+              </Popover>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !fertilizerEndDate && "text-muted-foreground")}>
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {fertilizerEndDate ? format(fertilizerEndDate, "PPP") : <span>Application End</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={fertilizerEndDate} onSelect={setFertilizerEndDate} initialFocus disabled={(date) => fertilizerStartDate ? date < fertilizerStartDate : false} /></PopoverContent>
+              </Popover>
+              {(fertilizerStartDate || fertilizerEndDate || selectedFertilizerFieldFilter !== "All Fields") && (
+                <Button variant="ghost" onClick={clearFertilizerAllFilters} size="sm" className="w-full sm:w-auto self-center">Clear Filters</Button>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2"> <Skeleton className="h-8 w-full" /> <Skeleton className="h-8 w-full" /> </div>
+          ) : fertilizerUsageSummary.length > 0 ? (
+            <Table>
+              <TableCaption>Summary of fertilizer applications from your logs.</TableCaption>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[250px]">Fertilizer Type</TableHead>
+                  <TableHead className="text-right">Total Amount Applied</TableHead>
+                  <TableHead>Unit</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {fertilizerUsageSummary.map((item, index) => (
+                  <TableRow key={`${item.fertilizerType}-${item.unit}-${index}`}>
+                    <TableCell className="font-medium">{item.fertilizerType}</TableCell>
+                    <TableCell className="text-right">{item.totalAmount.toLocaleString()}</TableCell>
+                    <TableCell>{item.unit}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Alert>
+              <Icons.Info className="h-4 w-4" />
+              <AlertTitle>No Fertilizer Data</AlertTitle>
+              <AlertDescription>
+                {`No fertilizer logs found${getFieldFilterDescription(selectedFertilizerFieldFilter, farmFields)}${getDateRangeDescription(fertilizerStartDate, fertilizerEndDate, ' with application dates')}.`}
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+
     </div>
   );
 }
-
-
-    
