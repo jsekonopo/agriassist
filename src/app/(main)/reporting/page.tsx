@@ -154,16 +154,18 @@ export default function ReportingPage() {
     }
 
     setIsLoading(true);
-    setIsLoadingFields(true);
+    if (farmFields.length === 0) setIsLoadingFields(true); // Only set true if fields haven't been loaded yet
     setError(null);
 
     const fetchReportData = async () => {
       try {
-        const fieldsQueryRef = query(collection(db, "fields"), where("farmId", "==", user.farmId), orderBy("fieldName", "asc"));
-        const fieldsSnapshot = await getDocs(fieldsQueryRef);
-        const fetchedFields: Field[] = fieldsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Field));
-        setFarmFields([{ id: "All Fields", fieldName: "All Fields", farmId: user.farmId }, ...fetchedFields]);
-        setIsLoadingFields(false);
+        if (farmFields.length === 0) { // Fetch fields only if not already fetched
+          const fieldsQueryRef = query(collection(db, "fields"), where("farmId", "==", user.farmId), orderBy("fieldName", "asc"));
+          const fieldsSnapshot = await getDocs(fieldsQueryRef);
+          const fetchedFields: Field[] = fieldsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Field));
+          setFarmFields([{ id: "All Fields", fieldName: "All Fields", farmId: user.farmId }, ...fetchedFields]);
+          setIsLoadingFields(false);
+        }
 
         // Harvesting Logs Query
         const harvestingQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
@@ -172,8 +174,7 @@ export default function ReportingPage() {
         if (selectedYieldFieldFilter !== "All Fields") harvestingQueryConstraints.push(where("fieldId", "==", selectedYieldFieldFilter));
         
         harvestingQueryConstraints.push(orderBy("cropName", "asc"));
-        if (cropYieldStartDate || cropYieldEndDate) harvestingQueryConstraints.push(orderBy("harvestDate", "asc")); 
-        else harvestingQueryConstraints.push(orderBy("harvestDate", "desc"));
+        harvestingQueryConstraints.push(orderBy("harvestDate", cropYieldStartDate || cropYieldEndDate ? "asc" : "desc"));
 
 
         const harvestingQueryRef = query(collection(db, "harvestingLogs"), ...harvestingQueryConstraints);
@@ -209,8 +210,8 @@ export default function ReportingPage() {
         if (taskDueDateEnd) tasksQueryConstraints.push(where("dueDate", "<=", format(endOfDay(taskDueDateEnd), "yyyy-MM-dd")));
         if (selectedTaskFieldFilter !== "All Fields") tasksQueryConstraints.push(where("fieldId", "==", selectedTaskFieldFilter));
         
-        if (taskDueDateStart || taskDueDateEnd) tasksQueryConstraints.push(orderBy("dueDate", "asc"));
-        else tasksQueryConstraints.push(orderBy("createdAt", "desc")); 
+        tasksQueryConstraints.push(orderBy("dueDate", taskDueDateStart || taskDueDateEnd ? "asc" : "desc")); 
+        tasksQueryConstraints.push(orderBy("createdAt", "desc"));
         
         const tasksQueryRef = query(collection(db, "taskLogs"), ...tasksQueryConstraints);
         const tasksSnapshot = await getDocs(tasksQueryRef);
@@ -225,6 +226,8 @@ export default function ReportingPage() {
         
         const finalFinancialRevenueConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
         if (financialStartDate || financialEndDate) finalFinancialRevenueConstraints.push(orderBy("date", "asc"));
+        else finalFinancialRevenueConstraints.push(orderBy("date", "desc"));
+
         const revenueQueryRef = query(collection(db, "revenueLogs"), ...finalFinancialRevenueConstraints);
         const revenueSnapshot = await getDocs(revenueQueryRef);
         const revenueLogs: RevenueLog[] = revenueSnapshot.docs.map(docSnap => docSnap.data() as RevenueLog);
@@ -232,6 +235,8 @@ export default function ReportingPage() {
 
         const finalFinancialExpenseConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
         if (financialStartDate || financialEndDate) finalFinancialExpenseConstraints.push(orderBy("date", "asc"));
+        else finalFinancialExpenseConstraints.push(orderBy("date", "desc"));
+
         const expenseQueryRef = query(collection(db, "expenseLogs"), ...finalFinancialExpenseConstraints);
         const expenseSnapshot = await getDocs(expenseQueryRef);
         const expenseLogs: ExpenseLog[] = expenseSnapshot.docs.map(docSnap => docSnap.data() as ExpenseLog);
@@ -245,8 +250,7 @@ export default function ReportingPage() {
         if (fertilizerEndDate) fertilizerQueryConstraints.push(where("dateApplied", "<=", format(endOfDay(fertilizerEndDate), "yyyy-MM-dd")));
         if (selectedFertilizerFieldFilter !== "All Fields") fertilizerQueryConstraints.push(where("fieldId", "==", selectedFertilizerFieldFilter));
         
-        if (fertilizerStartDate || fertilizerEndDate) fertilizerQueryConstraints.push(orderBy("dateApplied", "asc"));
-        else fertilizerQueryConstraints.push(orderBy("dateApplied", "desc"));
+        fertilizerQueryConstraints.push(orderBy("dateApplied", fertilizerStartDate || fertilizerEndDate ? "asc" : "desc"));
 
         const fertilizerQueryRef = query(collection(db, "fertilizerLogs"), ...fertilizerQueryConstraints);
         const fertilizerSnapshot = await getDocs(fertilizerQueryRef);
@@ -273,6 +277,7 @@ export default function ReportingPage() {
         setError("Could not generate reports. Please ensure your Firestore indexes are set up if you see query errors in the console.");
       } finally {
         setIsLoading(false);
+        setIsLoadingFields(false); // Ensure this is false even if fields weren't fetched this round
       }
     };
 
@@ -282,7 +287,7 @@ export default function ReportingPage() {
       cropYieldStartDate, cropYieldEndDate, selectedYieldFieldFilter, selectedCropFilter, 
       taskDueDateStart, taskDueDateEnd, selectedTaskFieldFilter, selectedTaskStatusFilter,
       fertilizerStartDate, fertilizerEndDate, selectedFertilizerFieldFilter
-  ]);
+  ]); // farmFields is intentionally omitted to prevent re-fetch just for it if already loaded
 
   useEffect(() => {
     if (selectedCropFilter === "All Crops") {
@@ -299,15 +304,22 @@ export default function ReportingPage() {
     }
     
     const summary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: 0 };
-    const sourceForOverallCounts = selectedTaskStatusFilter === "All Tasks" ? allTasks : tasksToSummarize;
+    // Use 'allTasks' for total counts if 'All Tasks' filter is selected, to reflect overall farm tasks
+    // but for specific status counts, use the filtered 'tasksToSummarize'
+    const sourceForOverallCounts = (selectedTaskStatusFilter === "All Tasks" && selectedTaskFieldFilter === "All Fields" && !taskDueDateStart && !taskDueDateEnd) ? allTasks : tasksToSummarize;
 
-    summary.toDo = sourceForOverallCounts.filter(t => t.status === "To Do").length;
-    summary.inProgress = sourceForOverallCounts.filter(t => t.status === "In Progress").length;
-    summary.done = sourceForOverallCounts.filter(t => t.status === "Done").length;
-    summary.total = sourceForOverallCounts.length;
+    summary.toDo = allTasks.filter(t => t.status === "To Do").length;
+    summary.inProgress = allTasks.filter(t => t.status === "In Progress").length;
+    summary.done = allTasks.filter(t => t.status === "Done").length;
+
+    if (selectedTaskStatusFilter !== "All Tasks") {
+        summary.total = tasksToSummarize.length;
+    } else {
+        summary.total = allTasks.length;
+    }
     
     setTaskSummary(summary);
-  }, [selectedTaskStatusFilter, allTasks]);
+  }, [selectedTaskStatusFilter, selectedTaskFieldFilter, taskDueDateStart, taskDueDateEnd, allTasks]);
 
   const clearFinancialDateFilters = () => { setFinancialStartDate(undefined); setFinancialEndDate(undefined); };
   const clearCropYieldAllFilters = () => { setCropYieldStartDate(undefined); setCropYieldEndDate(undefined); setSelectedCropFilter("All Crops"); setSelectedYieldFieldFilter("All Fields"); };
@@ -557,3 +569,4 @@ export default function ReportingPage() {
     </div>
   );
 }
+
