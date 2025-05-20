@@ -17,7 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth, type UserRole } from "@/contexts/auth-context"; // Import UserRole
+import { useAuth, type UserRole } from "@/contexts/auth-context"; 
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
 
@@ -28,6 +28,8 @@ interface TaskLog {
   dueDate?: string | null; 
   assignedTo?: string;
   status: "To Do" | "In Progress" | "Done";
+  fieldId?: string | null;
+  fieldName?: string | null; // Denormalized for display
   createdAt?: Timestamp | Date; 
   farmId: string;
   userId: string;
@@ -38,7 +40,9 @@ interface TaskLogTableProps {
   onLogDeleted: () => void;
 }
 
-const rolesThatCanDelete: UserRole[] = ['free', 'pro', 'agribusiness', 'admin']; // Owner roles (PlanId) and admin
+const ownerRoles: UserRole[] = ['free', 'pro', 'agribusiness'];
+const adminRole: UserRole[] = ['admin'];
+const rolesThatCanDelete: UserRole[] = [...ownerRoles, ...adminRole];
 
 export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps) {
   const [logs, setLogs] = useState<TaskLog[]>([]);
@@ -173,6 +177,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
             <TableHead className="min-w-[120px]">Status</TableHead>
             <TableHead className="min-w-[150px]">Due Date</TableHead>
             <TableHead className="min-w-[150px]">Assigned To</TableHead>
+            <TableHead className="min-w-[150px]">Associated Field</TableHead>
             <TableHead className="min-w-[250px]">Description</TableHead>
             {canUserDelete && <TableHead className="text-right w-[100px]">Actions</TableHead>}
           </TableRow>
@@ -186,6 +191,7 @@ export function TaskLogTable({ refreshTrigger, onLogDeleted }: TaskLogTableProps
               </TableCell>
               <TableCell>{log.dueDate ? format(parseISO(log.dueDate), "MMM dd, yyyy") : "N/A"}</TableCell>
               <TableCell>{log.assignedTo || "N/A"}</TableCell>
+              <TableCell>{log.fieldName || "N/A"}</TableCell>
               <TableCell className="max-w-sm truncate whitespace-nowrap overflow-hidden text-ellipsis" title={log.description ?? undefined}>
                 {log.description || "N/A"}
               </TableCell>

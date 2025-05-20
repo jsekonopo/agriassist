@@ -17,12 +17,12 @@ This document tracks the major remaining features and potential enhancements for
 ## III. Core Farming Features - Expanding Capabilities:
 
 1.  **Visual Field Mapping (Advanced - Interaction & Robustness):**
-    *   **Current Status:** Users can define fields, input/draw/edit/delete GeoJSON boundaries within the `FieldDefinitionForm`, and these are displayed as polygons on the main map with informative popups. Basic click-to-zoom interaction added. GeoJSON validation in the form improved.
+    *   **Current Status:** Users can define fields, input/draw/edit/delete GeoJSON boundaries within the `FieldDefinitionForm`, and these are displayed as polygons on the main map with informative popups. Client-side GeoJSON validation improved; map zooms to clicked field.
     *   **Remaining:**
         *   More robust server-side GeoJSON validation if direct pasting of GeoJSON were re-enabled.
         *   More interactive map features on the `FarmMapView` (e.g., highlighting related logs on field click).
 2.  **Advanced Reporting & Data Export (Further Enhancements):**
-    *   **Current Status:** Basic summary reports with filtering options for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range) exist.
+    *   **Current Status:** Basic summary reports with filtering options for financial overview (date range), crop yield (crop, field, date range), and task status (status, due date range, field) exist. **Field filtering added to task reports.**
     *   **Remaining:**
         *   More filtering options for *all* reports.
         *   New types of reports (e.g., input usage trends per field, cost analysis per crop, detailed livestock reports, fertilizer/irrigation summaries per field/crop).
@@ -35,23 +35,22 @@ This document tracks the major remaining features and potential enhancements for
 
 ## IV. Broader Application Features & User Experience:
 
-1.  **Automated & Farm-Specific Weather Integration & Alerts (Actual Alerts): COMPLETED (Client-side alert checks with cooldown implemented)**
-    *   **Status:** Dashboard weather uses farm lat/lon if set by owner via profile. Client-side logic can trigger a weather alert notification. A cooldown mechanism prevents repeated alerts for the same condition.
-    *   **Remaining (Iterative Refinement):** More sophisticated server-side alert logic (e.g., using forecasts, multiple weather parameters). User-configurable alert thresholds.
+1.  **Automated & Farm-Specific Weather Integration & Alerts (Actual Alerts):**
+    *   **Status:** Dashboard weather uses farm lat/lon if set by owner via profile. Client-side alert checks with cooldown implemented.
+    *   **Remaining:** Implement more sophisticated server-side logic for weather alert detection (e.g., using forecasts). User-configurable alert thresholds.
 2.  **Comprehensive Notification System (Triggering Logic for More Types & Automated Task Reminders):**
-    *   **Current Status:** Framework for in-app/email notifications is in place. Staff invites, AI Insights, and manual Task Reminders (via dashboard button) can trigger notifications. User preferences for AI Insights, Task Reminders, Weather Alerts, and Staff Activity emails are respected by the API.
+    *   **Status:** Framework for in-app/email notifications is in place. Staff invites, AI Insights, and manual Task Reminders (via dashboard button) can trigger notifications. User preferences for AI Insights, Task Reminders, Weather Alerts, and Staff Activity emails are respected by the API.
     *   **Remaining:**
         *   Automate Task Reminders (currently manual via button on dashboard). This would ideally involve a backend scheduled job.
         *   Implement triggering for weather alerts once the weather integration is more advanced (beyond current client-side checks).
         *   Potentially create more specific email templates for different notification types.
 3.  **User Onboarding & Help System (Part 2 - Contextual Help/FAQ):**
-    *   **Current Status:** Multi-step onboarding modal for new users. Searchable FAQ page created.
-    *   **Remaining:** Contextual help/tooltips for specific features within the app.
+    *   **Status:** Multi-step onboarding modal for new users. Searchable FAQ page created. **Basic contextual tooltips added in key areas.**
+    *   **Remaining:** More contextual help/tooltips throughout the application for specific features.
 4.  **Enhanced Mobile Responsiveness & Offline Capabilities (Part 2 - Offline Support).**
-    *   **Current Status:** Key pages have had mobile responsiveness refinements.
+    *   **Status:** Key pages have had mobile responsiveness refinements.
     *   **Remaining:** Full offline data entry and synchronization strategies.
 5.  **Accessibility (A11y) Review & Enhancements.**
     *   **Status:** Standard components provide a good baseline.
 6.  **Performance Optimization for Large Datasets.**
     *   **Status:** Not explicitly addressed.
-
