@@ -103,7 +103,8 @@ const rolesThatCanAddData: UserRoleOnFarm[] = [...ownerRoles, 'admin', 'editor']
 const FROST_TEMP_THRESHOLD_CELSIUS = 2; 
 const STORM_WEATHER_CODES = [95, 96, 99]; 
 const WEATHER_ALERT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
-const TASK_REMINDER_CHECK_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
+const TASK_REMINDER_CHECK_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours per farm check
+const TASK_REMINDER_PER_TASK_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours per specific task reminder
 
 const planDisplayNames: Record<PlanId, string> = {
   free: "Hobbyist Farmer (Free)",
@@ -156,12 +157,12 @@ export default function DashboardPage() {
       return;
     }
     
-    const farmDisplayNameForAlert = user?.farmName ? `at ${user.farmName}` : ( (user?.farmLatitude && user?.farmLongitude) ? "at Your Farm Location" : "for Default Location (Ottawa)");
+    const farmDisplayNameForAlert = user?.farmName || ( (user?.farmLatitude && user?.farmLongitude) ? "Your Farm Location" : "Default Location (Ottawa)");
     let alertTitle = "";
     let alertMessage = "";
 
     if (alertType === 'frost') {
-        alertTitle = `Weather Alert: Potential Frost ${farmDisplayNameForAlert}!`;
+        alertTitle = `Weather Alert: Potential Frost at ${farmDisplayNameForAlert}!`;
         alertMessage = `Current temperature is ${alertData.temperature}°C. Take precautions for frost-sensitive crops.`;
     } else if (alertType === 'storm') {
         alertTitle = `Weather Alert: Storm Approaching ${farmDisplayNameForAlert}!`;
@@ -183,7 +184,7 @@ export default function DashboardPage() {
       console.error("Error creating weather alert notification:", error);
       toast({ title: "Notification Error", description: "Could not send weather alert notification.", variant: "destructive"});
     }
-  }, [user, makeApiRequest, toast]);
+  }, [user, makeApiRequest, toast]); // weatherLocationDisplay is derived from user, so user is enough
 
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
@@ -194,10 +195,10 @@ export default function DashboardPage() {
       let locationName = `Weather for ${currentFarmNameForWeather}`; 
 
       if (lat == null || lon == null) { 
-         locationName = `Current Weather (${currentFarmNameForWeather} - Default Location: Ottawa)`;
+         locationName = `Current Weather (Default Location: Ottawa)`;
          lat = 45.4215; lon = -75.6972; // Default to Ottawa
       } else {
-         locationName = `Weather for ${currentFarmNameForWeather} (Custom Location)`;
+         locationName = `Weather for ${currentFarmNameForWeather}`;
       }
       setWeatherLocationDisplay(locationName);
 
@@ -290,11 +291,10 @@ export default function DashboardPage() {
         const yields: { [key: string]: { total: number; unit?: string } } = {};
         hLogs.forEach(log => {
           if (log.cropName && typeof log.yieldAmount === 'number' && log.yieldAmount > 0) {
-            const cropKey = log.cropName; // Group by crop name only for this chart
-            if (!yields[cropKey]) yields[cropKey] = { total: 0, unit: log.yieldUnit || 'units' }; // Take first unit or default
-            // For simplicity, if units are mixed for the same crop, this chart will sum them. More advanced chart needed for mixed units per crop.
+            const cropKey = log.cropName; 
+            if (!yields[cropKey]) yields[cropKey] = { total: 0, unit: log.yieldUnit || 'units' }; 
             yields[cropKey].total += log.yieldAmount;
-            if (!yields[cropKey].unit && log.yieldUnit) yields[cropKey].unit = log.yieldUnit; // Attempt to get a unit
+            if (!yields[cropKey].unit && log.yieldUnit) yields[cropKey].unit = log.yieldUnit;
           }
         });
         setCropYieldData(Object.entries(yields).map(([name, data]) => ({ name, totalYield: data.total, unit: data.unit })));
@@ -367,17 +367,17 @@ export default function DashboardPage() {
       toast({ title: "Insights Generated", description: "Proactive insights for your farm are ready." });
 
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
-        let notificationTitle = "AI Farm Alert";
-        let notificationMessage = "The AI Farm Expert has generated new insights for your farm. ";
+        let notificationTitle = `AI Insights for ${user.farmName || 'Your Farm'}`;
+        let notificationMessage = "The AI Farm Expert has generated new insights: ";
         
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
-            notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Opportunities & Risks Identified!`;
+            notificationTitle = `AI Alert: Opportunities & Risks Identified!`;
             notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
         } else if (insights.identifiedOpportunities) {
-            notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Opportunities Found!`;
+            notificationTitle = `AI Alert: Farm Opportunities Found!`;
             notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
         } else if (insights.identifiedRisks) {
-            notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Potential Risks Identified!`;
+            notificationTitle = `AI Alert: Potential Farm Risks Identified!`;
              notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
         }
         notificationMessage += "Check your dashboard for details."
@@ -407,60 +407,59 @@ export default function DashboardPage() {
       return;
     }
 
-    const lastCheckKey = `lastTaskReminderCheck_${user.farmId}`;
-    const lastCheckTime = localStorage.getItem(lastCheckKey);
+    const lastFarmCheckKey = `lastTaskReminderCheck_${user.farmId}`;
+    const lastFarmCheckTime = localStorage.getItem(lastFarmCheckKey);
     const now = Date.now();
 
-    if (lastCheckTime && (now - parseInt(lastCheckTime) < TASK_REMINDER_CHECK_COOLDOWN_MS)) {
-      const remainingTime = TASK_REMINDER_CHECK_COOLDOWN_MS - (now - parseInt(lastCheckTime));
+    if (lastFarmCheckTime && (now - parseInt(lastFarmCheckTime) < TASK_REMINDER_CHECK_COOLDOWN_MS)) {
+      const remainingTime = TASK_REMINDER_CHECK_COOLDOWN_MS - (now - parseInt(lastFarmCheckTime));
       const remainingMinutes = Math.ceil(remainingTime / (1000 * 60));
-      toast({ title: "Task Reminders Recently Checked", description: `Please wait another ${remainingMinutes} minutes before checking again.`, variant: "default" });
+      toast({ title: "Task Reminders Recently Checked", description: `Please wait another ${remainingMinutes} minutes before checking again for the farm.`, variant: "default" });
       return;
     }
     
     setIsCheckingReminders(true);
     let remindersSentCount = 0;
     const today = new Date();
-    const reminderCooldownPerTask = 6 * 60 * 60 * 1000; // 6 hours per specific task
 
-    for (const task of upcomingTasks) { // Use tasks from state
+    for (const task of upcomingTasks) { 
       if (task.dueDate) {
         const dueDate = parseISO(task.dueDate);
-        let title = "";
-        let message = "";
+        let notificationTitle = "";
+        let notificationMessage = "";
         let shouldNotify = false;
 
-        const lastReminderKeyPerTask = `lastTaskReminder_${task.id}_${user.farmId}`;
-        const lastReminderTimePerTask = localStorage.getItem(lastReminderKeyPerTask);
+        const lastPerTaskReminderKey = `lastPerTaskReminder_${task.id}_${user.farmId}`;
+        const lastPerTaskReminderTime = localStorage.getItem(lastPerTaskReminderKey);
         
 
-        if (lastReminderTimePerTask && (now - parseInt(lastReminderTimePerTask) < reminderCooldownPerTask)) {
-          console.log(`Task reminder cooldown active for task ${task.id}. Not sending new notification.`);
+        if (lastPerTaskReminderTime && (now - parseInt(lastPerTaskReminderTime) < TASK_REMINDER_PER_TASK_COOLDOWN_MS)) {
+          console.log(`Per-task reminder cooldown active for task ${task.id}. Not sending new notification.`);
           continue; 
         }
 
         if (isToday(dueDate) && task.status !== "Done") {
-          title = `Task Reminder: "${task.taskName}" is due today!`;
-          message = `The task "${task.taskName || 'Unnamed Task'}" for farm "${user.farmName || 'your farm'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
+          notificationTitle = `Task Reminder: "${task.taskName}" is due today!`;
+          notificationMessage = `The task "${task.taskName || 'Unnamed Task'}" for farm "${user.farmName || 'your farm'}" is due on ${format(dueDate, "MMM dd, yyyy")}. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
         } else if (isPast(dueDate) && differenceInDays(today, dueDate) <= 7 && task.status !== "Done") { 
-          title = `Task Overdue: "${task.taskName}"`;
-          message = `The task "${task.taskName || 'Unnamed Task'}" for farm "${user.farmName || 'your farm'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
+          notificationTitle = `Task Overdue: "${task.taskName}"`;
+          notificationMessage = `The task "${task.taskName || 'Unnamed Task'}" for farm "${user.farmName || 'your farm'}" was due on ${format(dueDate, "MMM dd, yyyy")} and is now overdue. Description: ${task.description || 'No description.'}`;
           shouldNotify = true;
         }
         
-        if (shouldNotify && title && message) {
+        if (shouldNotify && notificationTitle && notificationMessage) {
           try {
             await makeApiRequest('/api/notifications/create', {
               userId: user.uid,
               farmId: user.farmId,
               type: 'task_reminder', 
-              title: title,
-              message: message,
+              title: notificationTitle,
+              message: notificationMessage,
               link: `/data-management?tab=tasks&taskId=${task.id}` 
             });
             remindersSentCount++;
-            localStorage.setItem(lastReminderKeyPerTask, now.toString()); 
+            localStorage.setItem(lastPerTaskReminderKey, now.toString()); 
           } catch (error) {
             console.error(`Failed to create reminder for task ${task.id}:`, error);
           }
@@ -472,7 +471,7 @@ export default function DashboardPage() {
     } else {
       toast({ title: "No New Task Reminders", description: "No tasks are currently due today or recently overdue that need new reminders." });
     }
-    localStorage.setItem(lastCheckKey, now.toString()); 
+    localStorage.setItem(lastFarmCheckKey, now.toString()); 
     setIsCheckingReminders(false);
   }, [user, upcomingTasks, makeApiRequest, toast]);
 
@@ -682,6 +681,7 @@ export default function DashboardPage() {
                     <p className="text-sm text-muted-foreground">
                       Status: {task.status}
                       {task.dueDate && ` - Due: ${format(parseISO(task.dueDate), "MMM dd, yyyy")}`}
+                      {task.fieldName && ` - Field: ${task.fieldName}`}
                     </p>
                   </div>
                 </li>
@@ -811,7 +811,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
-    
-
-    

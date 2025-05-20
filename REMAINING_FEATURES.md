@@ -36,11 +36,11 @@ This document tracks the major remaining features and potential enhancements for
     *   **Status:** Dashboard weather uses farm lat/lon if set by owner via profile. Client-side alert checks with cooldown implemented.
     *   **Remaining:** Implement more sophisticated server-side logic for weather alert detection (e.g., using forecasts). User-configurable alert thresholds.
 2.  **Comprehensive Notification System (Triggering Logic for More Types & Automated Task Reminders):**
-    *   **Status:** Framework for in-app/email notifications is in place. Staff invites, AI Insights, and manual Task Reminders (via dashboard button with cooldown) can trigger notifications. User preferences for AI Insights, Task Reminders, Weather Alerts, and Staff Activity emails are respected by the API.
+    *   **Status:** Framework for in-app/email notifications is in place. Staff invites, AI Insights, and manual Task Reminders (via dashboard button with cooldown) can trigger notifications. User preferences for AI Insights, Task Reminders, Weather Alerts, and Staff Activity emails are respected by the API. A specific Task Reminder email template has been created.
     *   **Remaining:**
-        *   Automate Task Reminders (currently manual via button on dashboard). This would ideally involve a backend scheduled job.
+        *   Automate Task Reminders (currently manual via button on dashboard). This would ideally involve a backend scheduled job (e.g., Firebase Scheduled Function querying tasks and calling `/api/notifications/create`).
         *   Implement triggering for weather alerts once the weather integration is more advanced (beyond current client-side checks).
-        *   Potentially create more specific email templates for different notification types.
+        *   Potentially create more specific email templates for different notification types (e.g., for AI Insights, Weather Alerts).
 3.  **User Onboarding & Help System (Part 2 - Contextual Help/FAQ):**
     *   **Status:** Multi-step onboarding modal for new users. Searchable FAQ page created. Basic contextual tooltips added in key areas.
     *   **Remaining:** More contextual help/tooltips throughout the application for specific features.
@@ -51,3 +51,21 @@ This document tracks the major remaining features and potential enhancements for
     *   **Status:** Standard components provide a good baseline.
 6.  **Performance Optimization for Large Datasets.**
     *   **Status:** Not explicitly addressed.
+
+**Steps for True Automated Task Reminders (Future Backend Work):**
+
+1.  **Set up Firebase Scheduled Functions:**
+    *   Initialize Firebase Functions in your project if not already done (`firebase init functions`).
+    *   Write a scheduled function (e.g., to run once daily).
+2.  **Scheduled Function Logic:**
+    *   The function would query the `taskLogs` collection in Firestore for all farms.
+    *   For each farm, it would iterate through tasks that are:
+        *   Due "today" (or within a configurable window, e.g., next 24-48 hours).
+        *   Overdue (e.g., past due date but not older than X days).
+    *   For each such task, check if a reminder was recently sent (e.g., by looking at a `lastReminderSentAt` timestamp on the task document or in a separate `taskRemindersLog` collection to avoid spamming).
+    *   If a reminder is due, construct the notification payload (user ID of task assignee or farm owner, farm ID, type 'task_reminder', title, message, link).
+    *   Make an authenticated HTTP POST request from the Cloud Function to your `/api/notifications/create` endpoint to create the in-app notification and trigger the email (if preferences allow). This is better than directly writing to Firestore and sending email from the Cloud Function to keep your notification logic centralized in the API route. The Cloud Function would need appropriate service account permissions or a way to authenticate as a "system" user to call your API.
+3.  **Task Document Update (Optional):**
+    *   Consider adding a `lastReminderSentAt` timestamp field to `taskLogs` documents, updated by the scheduled function, to manage reminder frequency.
+4.  **User Preferences:** The existing `taskRemindersEmail` preference would continue to be respected by the `/api/notifications/create` API.
+5.  **Deployment & Monitoring:** Deploy the scheduled function and monitor its execution and logs.

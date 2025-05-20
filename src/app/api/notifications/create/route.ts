@@ -4,6 +4,7 @@ import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { Resend } from 'resend';
 import GeneralNotificationEmail from '@/emails/general-notification-email'; 
+import TaskReminderEmail from '@/emails/task-reminder-email'; // Import new template
 import type { NotificationPreferences, User } from '@/contexts/auth-context'; 
 
 interface CreateNotificationBody {
@@ -31,13 +32,10 @@ export async function POST(request: NextRequest) {
             callingUid = decodedToken.uid;
         } catch (error) {
             console.warn('Warning: Invalid or missing token for notification creation:', error instanceof Error ? error.message : String(error));
-            // For critical system notifications not triggered by a user action, ensure other auth if needed.
-            // For user-triggered actions, this indicates a problem.
             return NextResponse.json({ success: false, message: 'Unauthorized: Invalid token.' }, { status: 401 });
         }
     } else {
-        // If no token, this API route should generally not be callable unless it's a trusted backend-to-backend call
-        // which would need a different authentication mechanism (e.g. API key).
+        // This should generally not happen for user-triggered notifications
         console.warn("Notification creation attempt without ID token. This endpoint requires authentication.");
         return NextResponse.json({ success: false, message: 'Unauthorized: Authentication required.' }, { status: 401 });
     }
@@ -69,6 +67,7 @@ export async function POST(request: NextRequest) {
     let shouldSendEmail = false;
     let recipientEmail: string | undefined = undefined;
     let recipientName: string | undefined = undefined;
+    let userPreferences: NotificationPreferences | undefined = undefined;
 
     try {
         const userDocRef = adminDb.collection('users').doc(body.userId); 
@@ -77,23 +76,23 @@ export async function POST(request: NextRequest) {
             const userData = userDocSnap.data() as User; 
             recipientEmail = userData.email || undefined;
             recipientName = userData.name || undefined;
-            const prefs = userData.settings?.notificationPreferences;
+            userPreferences = userData.settings?.notificationPreferences;
 
-            if (prefs && recipientEmail) {
+            if (userPreferences && recipientEmail) {
                 switch (body.type.toLowerCase()) { 
                     case 'task_reminder':
-                        if (prefs.taskRemindersEmail) shouldSendEmail = true;
+                        if (userPreferences.taskRemindersEmail) shouldSendEmail = true;
                         break;
                     case 'ai_insight':
-                        if (prefs.aiInsightsEmail) shouldSendEmail = true;
+                        if (userPreferences.aiInsightsEmail) shouldSendEmail = true;
                         break;
                     case 'weather_alert':
-                        if (prefs.weatherAlertsEmail) shouldSendEmail = true;
+                        if (userPreferences.weatherAlertsEmail) shouldSendEmail = true;
                         break;
                     case 'staff_invite_accepted': 
-                    case 'staff_activity': 
-                         if (prefs.staffActivityEmail) shouldSendEmail = true;
+                         if (userPreferences.staffActivityEmail) shouldSendEmail = true;
                          break;
+                    // Add other cases as needed
                 }
             }
         } else {
@@ -106,11 +105,33 @@ export async function POST(request: NextRequest) {
     if (shouldSendEmail && resend && fromEmail && recipientEmail) {
         try {
             const emailActionLink = body.link ? (body.link.startsWith('http') ? body.link : `${appUrl}${body.link}`) : appUrl;
-            await resend.emails.send({
-                from: fromEmail,
-                to: [recipientEmail],
-                subject: `${appName} Notification: ${body.title}`,
-                react: GeneralNotificationEmail({
+            let emailReactElement: React.ReactElement;
+
+            if (body.type.toLowerCase() === 'task_reminder') {
+                // Attempt to parse task details for the specific email template
+                let taskNameFromMessage = body.title; // Default to title
+                let dueDateFormattedFromMessage;
+                const titleMatch = body.title.match(/Reminder: ['"]?(.*?)['"]? is due/i);
+                if (titleMatch && titleMatch[1]) {
+                    taskNameFromMessage = titleMatch[1];
+                }
+                const dateMatch = body.message.match(/due on (.*?)\./i);
+                 if (dateMatch && dateMatch[1]) {
+                    dueDateFormattedFromMessage = dateMatch[1];
+                }
+
+                emailReactElement = TaskReminderEmail({
+                    taskName: taskNameFromMessage,
+                    dueDateFormatted: dueDateFormattedFromMessage,
+                    taskMessage: body.message,
+                    actionLink: emailActionLink,
+                    appName: appName,
+                    appUrl: appUrl,
+                    recipientName: recipientName,
+                });
+            } else {
+                // Fallback to GeneralNotificationEmail for other types or if parsing fails
+                emailReactElement = GeneralNotificationEmail({
                     notificationTitle: body.title,
                     notificationMessage: body.message,
                     actionLink: emailActionLink,
@@ -118,11 +139,18 @@ export async function POST(request: NextRequest) {
                     appName: appName,
                     appUrl: appUrl,
                     recipientName: recipientName,
-                }) as React.ReactElement,
+                });
+            }
+            
+            await resend.emails.send({
+                from: fromEmail,
+                to: [recipientEmail],
+                subject: `${appName} Notification: ${body.title}`,
+                react: emailReactElement,
             });
             console.log(`Email notification sent to ${recipientEmail} for type ${body.type}`);
         } catch (emailError) {
-            console.error('Resend API Error sending notification email:', emailError);
+            console.error('Resend API Error sending notification email for type', body.type, ':', emailError);
         }
     } else if (shouldSendEmail) {
         console.warn(`Could not send email for notification type ${body.type} to user ${body.userId}. Resend configured: ${!!resend}, FromEmail set: ${!!process.env.RESEND_FROM_EMAIL}, RecipientEmail: ${!!recipientEmail}`);
