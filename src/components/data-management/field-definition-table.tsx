@@ -26,8 +26,8 @@ interface FieldDefinitionLog {
   fieldSize?: number;
   fieldSizeUnit?: string; 
   geojsonBoundary?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
+  latitude?: number | null; // Added for fields that might only have lat/lon
+  longitude?: number | null; // Added for fields that might only have lat/lon
   notes?: string;
   createdAt?: Timestamp | Date; 
   farmId: string;
@@ -85,7 +85,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
           createdAt: docSnap.data().createdAt?.toDate ? docSnap.data().createdAt.toDate() : undefined,
         } as FieldDefinitionLog));
         setLogs(fetchedLogs);
-        setCurrentPage(1); // Reset to first page on new data fetch
+        setCurrentPage(1); 
       } catch (e) {
         console.error("Failed to load field definitions from Firestore:", e);
         setError("Could not load field definitions. Please try again.");
@@ -153,7 +153,6 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
     return `${sizeInAcres.toFixed(1)} ${displayUnit}`;
   };
 
-  // Pagination logic
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = logs.slice(indexOfFirstItem, indexOfLastItem);
@@ -209,7 +208,7 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
     );
   }
 
-  return (
+  return ( // This is the return statement in question
     <div className="mt-8">
       <div className="border rounded-lg shadow-sm overflow-x-auto">
         <Table>
@@ -268,3 +267,10 @@ export function FieldDefinitionTable({ refreshTrigger, onLogDeleted, onEditField
             onClick={handleNextPage}
             disabled={currentPage === totalPages}
           >
+            Next
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
