@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth, type UserRoleOnFarm, type PreferredAreaUnit, type PlanId } from '@/contexts/auth-context'; 
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
-import { format, parseISO, isToday, isPast, differenceInDays } from 'date-fns';
+import { format, parseISO, isToday, isPast, differenceInDays, addDays, isWithinInterval } from 'date-fns';
 import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/flows/proactive-farm-insights-flow";
 import { useToast } from "@/hooks/use-toast";
 import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; 
@@ -138,7 +138,7 @@ export default function DashboardPage() {
   const [isCompletingPayment, setIsCompletingPayment] = useState(false);
 
 
-  const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm);
+  const canUserAddData = user?.roleOnCurrentFarm && rolesThatCanAddData.includes(user.roleOnCurrentFarm as UserRoleOnFarm);
   const preferredAreaUnit: PreferredAreaUnit = user?.settings?.preferredAreaUnit || "acres";
 
   const triggerWeatherAlertNotification = useCallback(async (alertType: 'frost' | 'storm', alertTitle: string, alertMessage: string) => {
@@ -330,7 +330,7 @@ export default function DashboardPage() {
     try {
       const result = await updateUserPlan(user.selectedPlanId); 
       if (result.success && result.sessionId) {
-        // Stripe redirection is handled by updateUserPlan (or pricing page which calls it)
+        // Stripe redirection is handled by updateUserPlan 
       } else {
          toast({ title: "Payment Initiation Failed", description: result.message || result.error || "Could not start payment process.", variant: "destructive"});
       }
@@ -357,19 +357,18 @@ export default function DashboardPage() {
       if (insights && (insights.identifiedOpportunities || insights.identifiedRisks)) {
         let notificationTitle = "AI Farm Alert";
         let notificationMessage = "The AI Farm Expert has generated new insights. ";
-        let summaryForMessage = "";
-
+        
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
             notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Opportunities & Risks Identified!`;
-            summaryForMessage = `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
+            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
         } else if (insights.identifiedOpportunities) {
             notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Opportunities Found!`;
-            summaryForMessage = `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
+            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
         } else if (insights.identifiedRisks) {
             notificationTitle = `AI Alert for ${user.farmName || 'Your Farm'}: Potential Risks Identified!`;
-             summaryForMessage = `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
+             notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
         }
-        notificationMessage += summaryForMessage + "Check your dashboard for details."
+        notificationMessage += "Check your dashboard for details."
         
         await makeApiRequest('/api/notifications/create', {
             userId: user.uid, 

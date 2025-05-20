@@ -142,11 +142,16 @@ export default function ReportingPage() {
         setFarmFields([{ id: "All Fields", fieldName: "All Fields", farmId: user.farmId }, ...fetchedFields]);
         setIsLoadingFields(false);
 
+        // Harvesting Logs Query
         const harvestingQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
         if (cropYieldStartDate) harvestingQueryConstraints.push(where("harvestDate", ">=", format(startOfDay(cropYieldStartDate), "yyyy-MM-dd")));
         if (cropYieldEndDate) harvestingQueryConstraints.push(where("harvestDate", "<=", format(endOfDay(cropYieldEndDate), "yyyy-MM-dd")));
         if (selectedYieldFieldFilter !== "All Fields") harvestingQueryConstraints.push(where("fieldId", "==", selectedYieldFieldFilter));
-        harvestingQueryConstraints.push(orderBy("harvestDate", cropYieldStartDate || cropYieldEndDate ? "asc" : "desc")); 
+        if (cropYieldStartDate || cropYieldEndDate || selectedCropFilter !== "All Crops" || selectedYieldFieldFilter !== "All Fields") {
+            harvestingQueryConstraints.push(orderBy("harvestDate", "asc")); // Order by date if any filter applied for consistency
+        } else {
+            harvestingQueryConstraints.push(orderBy("harvestDate", "desc")); // Default order
+        }
         harvestingQueryConstraints.push(orderBy("cropName", "asc"));
 
         const harvestingQueryRef = query(collection(db, "harvestingLogs"), ...harvestingQueryConstraints);
@@ -158,7 +163,7 @@ export default function ReportingPage() {
         harvestingLogs.forEach(log => {
           cropNamesSet.add(log.cropName);
           if (log.cropName && typeof log.yieldAmount === 'number' && log.yieldUnit) {
-            const key = `${log.cropName} - ${log.yieldUnit}`;
+            const key = `${log.cropName} - ${log.yieldUnit}`; // Group by crop AND unit
             const existing = yieldMap.get(key) || { total: 0, unit: log.yieldUnit };
             existing.total += log.yieldAmount;
             yieldMap.set(key, existing);
@@ -174,31 +179,49 @@ export default function ReportingPage() {
             setUniqueCropNames(["All Crops", ...Array.from(cropNamesSet).sort()]);
         }
 
+        // Task Logs Query
         const tasksQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
         if (taskDueDateStart) tasksQueryConstraints.push(where("dueDate", ">=", format(startOfDay(taskDueDateStart), "yyyy-MM-dd")));
         if (taskDueDateEnd) tasksQueryConstraints.push(where("dueDate", "<=", format(endOfDay(taskDueDateEnd), "yyyy-MM-dd")));
         if (selectedTaskFieldFilter !== "All Fields") tasksQueryConstraints.push(where("fieldId", "==", selectedTaskFieldFilter));
         
-        if (taskDueDateStart || taskDueDateEnd) tasksQueryConstraints.push(orderBy("dueDate", "asc"));
-        else tasksQueryConstraints.push(orderBy("createdAt", "desc"));
+        if (taskDueDateStart || taskDueDateEnd) {
+            tasksQueryConstraints.push(orderBy("dueDate", "asc"));
+        } else if (selectedTaskFieldFilter !== "All Fields" || selectedTaskStatusFilter !== "All Tasks") {
+             // Add a default sort if other filters are active but not date
+            tasksQueryConstraints.push(orderBy("createdAt", "desc"));
+        } else {
+            tasksQueryConstraints.push(orderBy("createdAt", "desc")); // Default order
+        }
+
 
         const tasksQueryRef = query(collection(db, "taskLogs"), ...tasksQueryConstraints);
         const tasksSnapshot = await getDocs(tasksQueryRef);
         const fetchedTasks: TaskLog[] = tasksSnapshot.docs.map(docSnap => docSnap.data() as TaskLog);
         setAllTasks(fetchedTasks);
         
+        // Financial Logs Query
         const baseFinancialQueryConstraints = [where("farmId", "==", user.farmId)];
         const financialDateConstraints: QueryConstraint[] = [];
         if (financialStartDate) financialDateConstraints.push(where("date", ">=", format(startOfDay(financialStartDate), "yyyy-MM-dd")));
         if (financialEndDate) financialDateConstraints.push(where("date", "<=", format(endOfDay(financialEndDate), "yyyy-MM-dd")));
-        if (financialStartDate || financialEndDate) financialDateConstraints.unshift(orderBy("date", "asc"));
         
-        const revenueQueryRef = query(collection(db, "revenueLogs"), ...baseFinancialQueryConstraints, ...financialDateConstraints);
+        // Add orderBy only if date constraints are applied
+        const finalFinancialRevenueConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
+        if (financialStartDate || financialEndDate) {
+            finalFinancialRevenueConstraints.push(orderBy("date", "asc"));
+        }
+
+        const revenueQueryRef = query(collection(db, "revenueLogs"), ...finalFinancialRevenueConstraints);
         const revenueSnapshot = await getDocs(revenueQueryRef);
         const revenueLogs: RevenueLog[] = revenueSnapshot.docs.map(docSnap => docSnap.data() as RevenueLog);
         const totalRevenue = revenueLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
 
-        const expenseQueryRef = query(collection(db, "expenseLogs"), ...baseFinancialQueryConstraints, ...financialDateConstraints);
+        const finalFinancialExpenseConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
+        if (financialStartDate || financialEndDate) {
+            finalFinancialExpenseConstraints.push(orderBy("date", "asc")); // Reuse logic for expenses
+        }
+        const expenseQueryRef = query(collection(db, "expenseLogs"), ...finalFinancialExpenseConstraints);
         const expenseSnapshot = await getDocs(expenseQueryRef);
         const expenseLogs: ExpenseLog[] = expenseSnapshot.docs.map(docSnap => docSnap.data() as ExpenseLog);
         const totalExpenses = expenseLogs.reduce((sum, log) => sum + (log.amount || 0), 0);
@@ -225,24 +248,27 @@ export default function ReportingPage() {
   }, [selectedCropFilter, allCropYields]);
 
   useEffect(() => {
-    const tasksToSummarize = selectedTaskStatusFilter === "All Tasks" 
-      ? allTasks 
-      : allTasks.filter(task => task.status === selectedTaskStatusFilter);
+    let tasksToSummarize = allTasks;
+    if (selectedTaskStatusFilter !== "All Tasks") {
+        tasksToSummarize = tasksToSummarize.filter(task => task.status === selectedTaskStatusFilter);
+    }
     
     const summary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: 0 };
     
+    // If no specific status filter is applied, calculate all.
+    // Otherwise, only the filtered status will have a count from tasksToSummarize.
     if (selectedTaskStatusFilter === "All Tasks") {
         summary.toDo = allTasks.filter(t => t.status === "To Do").length;
         summary.inProgress = allTasks.filter(t => t.status === "In Progress").length;
         summary.done = allTasks.filter(t => t.status === "Done").length;
         summary.total = allTasks.length;
     } else {
-        tasksToSummarize.forEach(log => {
+        tasksToSummarize.forEach(log => { // tasksToSummarize is already filtered by status if not "All Tasks"
             if (log.status === "To Do") summary.toDo++;
             else if (log.status === "In Progress") summary.inProgress++;
             else if (log.status === "Done") summary.done++;
         });
-        summary.total = tasksToSummarize.length;
+        summary.total = tasksToSummarize.length; // This will be count of specific status
     }
     setTaskSummary(summary);
   }, [selectedTaskStatusFilter, allTasks]);
@@ -308,10 +334,10 @@ export default function ReportingPage() {
                 Summary of logged revenue and expenses{getDateRangeDescription(financialStartDate, financialEndDate)}.
               </CardDescription>
             </div>
-            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-center">
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-stretch">
               <Popover><PopoverTrigger asChild><Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !financialStartDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{financialStartDate ? format(financialStartDate, "PPP") : <span>Start Date</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0"><Calendar mode="single" selected={financialStartDate} onSelect={setFinancialStartDate} initialFocus /></PopoverContent></Popover>
               <Popover><PopoverTrigger asChild><Button variant={"outline"} className={cn("w-full sm:w-auto justify-start text-left font-normal", !financialEndDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{financialEndDate ? format(financialEndDate, "PPP") : <span>End Date</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0"><Calendar mode="single" selected={financialEndDate} onSelect={setFinancialEndDate} initialFocus disabled={(date) => financialStartDate ? date < financialStartDate : false} /></PopoverContent></Popover>
-              {(financialStartDate || financialEndDate) && (<Button variant="ghost" onClick={clearFinancialDateFilters} size="sm" className="w-full sm:w-auto">Clear Dates</Button>)}
+              {(financialStartDate || financialEndDate) && (<Button variant="ghost" onClick={clearFinancialDateFilters} size="sm" className="w-full sm:w-auto self-center">Clear Dates</Button>)}
             </div>
           </div>
         </CardHeader>
@@ -410,3 +436,4 @@ export default function ReportingPage() {
     </div>
   );
 }
+
