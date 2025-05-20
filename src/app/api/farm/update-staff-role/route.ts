@@ -1,4 +1,3 @@
-
 import { type NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -47,19 +46,6 @@ export async function POST(request: NextRequest) {
     }
     const farmData = farmDocSnap.data()!;
 
-    // Permission Check: Requester must be owner or admin of this farm
-    if (!isRequesterOwner && requesterRole !== 'admin') {
-        return NextResponse.json({ success: false, message: 'Unauthorized: Only farm owner or admin can update staff roles.' }, { status: 403 });
-    }
-    // Ensure farm ownerId matches for owner, or farmId matches for admin
-    if (isRequesterOwner && farmData.ownerId !== requesterUid) {
-        return NextResponse.json({ success: false, message: 'Unauthorized: Requester is not the owner of this farm.' }, { status: 403 });
-    }
-    if (requesterRole === 'admin' && farmId !== farmData.farmId) { // farmId is doc ID, farmData.farmId is field
-        return NextResponse.json({ success: false, message: 'Admin not associated with this farm.' }, { status: 403 });
-    }
-
-
     if (farmData.ownerId === staffUidToUpdate) {
         return NextResponse.json({ success: false, message: 'Cannot change the role of the farm owner.'}, { status: 400 });
     }
@@ -76,8 +62,11 @@ export async function POST(request: NextRequest) {
     
     const staffToUpdateCurrentRole = currentStaffArray[staffIndex].role;
 
-    // Admin Permission Logic:
-    if (requesterRole === 'admin') { // and not owner
+    if (!isRequesterOwner) { // If requester is not owner, they must be admin
+        if (requesterRole !== 'admin') {
+             return NextResponse.json({ success: false, message: 'Unauthorized: Only farm owner or admin can update staff roles.' }, { status: 403 });
+        }
+        // Admin specific checks
         if (staffToUpdateCurrentRole === 'admin') {
             return NextResponse.json({ success: false, message: 'Admins cannot modify the role of other admins.' }, { status: 403 });
         }
@@ -85,13 +74,14 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: false, message: 'Admins cannot promote other staff to an admin role.' }, { status: 403 });
         }
     }
-    // Owners have full permission to change any staff role on their farm.
+    // Owners have full permission to change any staff role on their farm (except owner themselves).
 
     const updatedStaffArray = [...currentStaffArray];
     updatedStaffArray[staffIndex] = { ...updatedStaffArray[staffIndex], role: newRole };
 
     const batch = adminDb.batch();
-    batch.update(farmDocRef, { staff: updatedStaffArray, updatedAt: FieldValue.serverTimestamp() });
+    // Pass farmId in the update object
+    batch.update(farmDocRef, { staff: updatedStaffArray, updatedAt: FieldValue.serverTimestamp(), farmId: farmId }); 
     
     const staffUserDocRef = adminDb.collection('users').doc(staffUidToUpdate);
     batch.update(staffUserDocRef, { roleOnCurrentFarm: newRole, updatedAt: FieldValue.serverTimestamp() });
