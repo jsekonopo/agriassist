@@ -147,12 +147,15 @@ export default function ReportingPage() {
         if (cropYieldStartDate) harvestingQueryConstraints.push(where("harvestDate", ">=", format(startOfDay(cropYieldStartDate), "yyyy-MM-dd")));
         if (cropYieldEndDate) harvestingQueryConstraints.push(where("harvestDate", "<=", format(endOfDay(cropYieldEndDate), "yyyy-MM-dd")));
         if (selectedYieldFieldFilter !== "All Fields") harvestingQueryConstraints.push(where("fieldId", "==", selectedYieldFieldFilter));
-        if (cropYieldStartDate || cropYieldEndDate || selectedCropFilter !== "All Crops" || selectedYieldFieldFilter !== "All Fields") {
-            harvestingQueryConstraints.push(orderBy("harvestDate", "asc")); // Order by date if any filter applied for consistency
-        } else {
-            harvestingQueryConstraints.push(orderBy("harvestDate", "desc")); // Default order
-        }
+        
+        // Add orderBy for cropName for consistent grouping, then by harvestDate for chronological data if date filters are applied
         harvestingQueryConstraints.push(orderBy("cropName", "asc"));
+        if (cropYieldStartDate || cropYieldEndDate) {
+            harvestingQueryConstraints.push(orderBy("harvestDate", "asc")); 
+        } else {
+            harvestingQueryConstraints.push(orderBy("harvestDate", "desc")); // Default order if no date filter
+        }
+
 
         const harvestingQueryRef = query(collection(db, "harvestingLogs"), ...harvestingQueryConstraints);
         const harvestingSnapshot = await getDocs(harvestingQueryRef);
@@ -163,7 +166,7 @@ export default function ReportingPage() {
         harvestingLogs.forEach(log => {
           cropNamesSet.add(log.cropName);
           if (log.cropName && typeof log.yieldAmount === 'number' && log.yieldUnit) {
-            const key = `${log.cropName} - ${log.yieldUnit}`; // Group by crop AND unit
+            const key = `${log.cropName} - ${log.yieldUnit}`; 
             const existing = yieldMap.get(key) || { total: 0, unit: log.yieldUnit };
             existing.total += log.yieldAmount;
             yieldMap.set(key, existing);
@@ -174,10 +177,13 @@ export default function ReportingPage() {
           return { cropName, totalYield: data.total, unit: data.unit };
         });
         setAllCropYields(yields);
+        
+        // Only update uniqueCropNames if it's the initial load or if new crops appear
         if (uniqueCropNames.length <=1 || cropNamesSet.size > (uniqueCropNames.length-1) || 
             !Array.from(cropNamesSet).every(name => uniqueCropNames.includes(name))) {
             setUniqueCropNames(["All Crops", ...Array.from(cropNamesSet).sort()]);
         }
+
 
         // Task Logs Query
         const tasksQueryConstraints: QueryConstraint[] = [where("farmId", "==", user.farmId)];
@@ -187,14 +193,10 @@ export default function ReportingPage() {
         
         if (taskDueDateStart || taskDueDateEnd) {
             tasksQueryConstraints.push(orderBy("dueDate", "asc"));
-        } else if (selectedTaskFieldFilter !== "All Fields" || selectedTaskStatusFilter !== "All Tasks") {
-             // Add a default sort if other filters are active but not date
-            tasksQueryConstraints.push(orderBy("createdAt", "desc"));
         } else {
-            tasksQueryConstraints.push(orderBy("createdAt", "desc")); // Default order
+            tasksQueryConstraints.push(orderBy("createdAt", "desc")); 
         }
-
-
+        
         const tasksQueryRef = query(collection(db, "taskLogs"), ...tasksQueryConstraints);
         const tasksSnapshot = await getDocs(tasksQueryRef);
         const fetchedTasks: TaskLog[] = tasksSnapshot.docs.map(docSnap => docSnap.data() as TaskLog);
@@ -206,7 +208,6 @@ export default function ReportingPage() {
         if (financialStartDate) financialDateConstraints.push(where("date", ">=", format(startOfDay(financialStartDate), "yyyy-MM-dd")));
         if (financialEndDate) financialDateConstraints.push(where("date", "<=", format(endOfDay(financialEndDate), "yyyy-MM-dd")));
         
-        // Add orderBy only if date constraints are applied
         const finalFinancialRevenueConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
         if (financialStartDate || financialEndDate) {
             finalFinancialRevenueConstraints.push(orderBy("date", "asc"));
@@ -219,7 +220,7 @@ export default function ReportingPage() {
 
         const finalFinancialExpenseConstraints = [...baseFinancialQueryConstraints, ...financialDateConstraints];
         if (financialStartDate || financialEndDate) {
-            finalFinancialExpenseConstraints.push(orderBy("date", "asc")); // Reuse logic for expenses
+            finalFinancialExpenseConstraints.push(orderBy("date", "asc"));
         }
         const expenseQueryRef = query(collection(db, "expenseLogs"), ...finalFinancialExpenseConstraints);
         const expenseSnapshot = await getDocs(expenseQueryRef);
@@ -237,7 +238,7 @@ export default function ReportingPage() {
     };
 
     fetchReportData();
-  }, [user, financialStartDate, financialEndDate, cropYieldStartDate, cropYieldEndDate, taskDueDateStart, taskDueDateEnd, selectedYieldFieldFilter, selectedCropFilter, selectedTaskFieldFilter]);
+  }, [user, financialStartDate, financialEndDate, cropYieldStartDate, cropYieldEndDate, taskDueDateStart, taskDueDateEnd, selectedYieldFieldFilter, selectedCropFilter, selectedTaskFieldFilter, selectedTaskStatusFilter]); // Added selectedTaskStatusFilter
 
   useEffect(() => {
     if (selectedCropFilter === "All Crops") {
@@ -255,21 +256,14 @@ export default function ReportingPage() {
     
     const summary: TaskStatusSummary = { toDo: 0, inProgress: 0, done: 0, total: 0 };
     
-    // If no specific status filter is applied, calculate all.
-    // Otherwise, only the filtered status will have a count from tasksToSummarize.
-    if (selectedTaskStatusFilter === "All Tasks") {
-        summary.toDo = allTasks.filter(t => t.status === "To Do").length;
-        summary.inProgress = allTasks.filter(t => t.status === "In Progress").length;
-        summary.done = allTasks.filter(t => t.status === "Done").length;
-        summary.total = allTasks.length;
-    } else {
-        tasksToSummarize.forEach(log => { // tasksToSummarize is already filtered by status if not "All Tasks"
-            if (log.status === "To Do") summary.toDo++;
-            else if (log.status === "In Progress") summary.inProgress++;
-            else if (log.status === "Done") summary.done++;
-        });
-        summary.total = tasksToSummarize.length; // This will be count of specific status
-    }
+    // If no specific status filter is applied, calculate all based on allTasks (which is already date/field filtered if those are active)
+    const sourceForOverallCounts = selectedTaskStatusFilter === "All Tasks" ? allTasks : tasksToSummarize;
+
+    summary.toDo = sourceForOverallCounts.filter(t => t.status === "To Do").length;
+    summary.inProgress = sourceForOverallCounts.filter(t => t.status === "In Progress").length;
+    summary.done = sourceForOverallCounts.filter(t => t.status === "Done").length;
+    summary.total = sourceForOverallCounts.length;
+    
     setTaskSummary(summary);
   }, [selectedTaskStatusFilter, allTasks]);
 
@@ -437,3 +431,5 @@ export default function ReportingPage() {
   );
 }
 
+
+    
