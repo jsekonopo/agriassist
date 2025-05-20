@@ -18,6 +18,8 @@ import { proactiveFarmInsights, type ProactiveFarmInsightsOutput } from "@/ai/fl
 import { useToast } from "@/hooks/use-toast";
 import { OnboardingModal } from '@/components/onboarding/onboarding-modal'; 
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Tooltip as ShadTooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
 
 interface WeatherData {
   temperature: number;
@@ -157,16 +159,25 @@ export default function DashboardPage() {
       return;
     }
     
-    const farmDisplayNameForAlert = user?.farmName || ( (user?.farmLatitude && user?.farmLongitude) ? "Your Farm Location" : "Default Location (Ottawa)");
+    let farmDisplayNameForAlert = "your farm location";
+    if (user.farmName && (user.farmLatitude && user.farmLongitude)) { // Check if specific coords are set
+        farmDisplayNameForAlert = `farm "${user.farmName}"`;
+    } else if (user.farmLatitude && user.farmLongitude) { // Specific coords but no farm name
+        farmDisplayNameForAlert = "your farm's set location";
+    } else { // Default location
+        farmDisplayNameForAlert = "the default location (Ottawa)";
+    }
+
+
     let alertTitle = "";
     let alertMessage = "";
 
     if (alertType === 'frost') {
-        alertTitle = `Weather Alert: Potential Frost at ${farmDisplayNameForAlert}!`;
-        alertMessage = `Current temperature is ${alertData.temperature}°C. Take precautions for frost-sensitive crops.`;
+        alertTitle = `Weather Alert: Potential Frost at ${user.farmName || 'Your Farm'}!`;
+        alertMessage = `Current temperature is ${alertData.temperature}°C at ${farmDisplayNameForAlert}. Take precautions for frost-sensitive crops.`;
     } else if (alertType === 'storm') {
-        alertTitle = `Weather Alert: Storm Approaching ${farmDisplayNameForAlert}!`;
-        alertMessage = `Current weather conditions indicate a storm: ${alertData.description}. Secure equipment and livestock.`;
+        alertTitle = `Weather Alert: Storm Approaching ${user.farmName || 'Your Farm'}!`;
+        alertMessage = `Current weather conditions indicate a storm (${alertData.description}) at ${farmDisplayNameForAlert}. Secure equipment and livestock.`;
     }
 
     try {
@@ -184,7 +195,7 @@ export default function DashboardPage() {
       console.error("Error creating weather alert notification:", error);
       toast({ title: "Notification Error", description: "Could not send weather alert notification.", variant: "destructive"});
     }
-  }, [user, makeApiRequest, toast]); // weatherLocationDisplay is derived from user, so user is enough
+  }, [user, makeApiRequest, toast]); 
 
   useEffect(() => {
     async function fetchFarmLocationAndWeather() {
@@ -371,16 +382,16 @@ export default function DashboardPage() {
         let notificationMessage = "The AI Farm Expert has generated new insights: ";
         
         if (insights.identifiedOpportunities && insights.identifiedRisks) {
-            notificationTitle = `AI Alert: Opportunities & Risks Identified!`;
-            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,70)}... Risks: ${insights.identifiedRisks.substring(0,70)}... `;
+            notificationTitle = `AI Alert: Opportunities & Risks Identified for ${user.farmName || 'your farm'}!`;
+            notificationMessage += `Opportunities found: "${insights.identifiedOpportunities.substring(0,70)}...". Risks identified: "${insights.identifiedRisks.substring(0,70)}...".`;
         } else if (insights.identifiedOpportunities) {
-            notificationTitle = `AI Alert: Farm Opportunities Found!`;
-            notificationMessage += `Opportunities: ${insights.identifiedOpportunities.substring(0,140)}... `;
+            notificationTitle = `AI Alert: Farm Opportunities Found for ${user.farmName || 'your farm'}!`;
+            notificationMessage += `Opportunities: "${insights.identifiedOpportunities.substring(0,140)}...".`;
         } else if (insights.identifiedRisks) {
-            notificationTitle = `AI Alert: Potential Farm Risks Identified!`;
-             notificationMessage += `Risks: ${insights.identifiedRisks.substring(0,140)}... `;
+            notificationTitle = `AI Alert: Potential Farm Risks Identified for ${user.farmName || 'your farm'}!`;
+             notificationMessage += `Risks: "${insights.identifiedRisks.substring(0,140)}...".`;
         }
-        notificationMessage += "Check your dashboard for details."
+        notificationMessage += " Check your dashboard for details."
         
         await makeApiRequest('/api/notifications/create', {
             userId: user.uid, 
@@ -414,7 +425,7 @@ export default function DashboardPage() {
     if (lastFarmCheckTime && (now - parseInt(lastFarmCheckTime) < TASK_REMINDER_CHECK_COOLDOWN_MS)) {
       const remainingTime = TASK_REMINDER_CHECK_COOLDOWN_MS - (now - parseInt(lastFarmCheckTime));
       const remainingMinutes = Math.ceil(remainingTime / (1000 * 60));
-      toast({ title: "Task Reminders Recently Checked", description: `Please wait another ${remainingMinutes} minutes before checking again for the farm.`, variant: "default" });
+      toast({ title: "Task Reminders Recently Checked", description: `Please wait another ${remainingMinutes} minutes before checking again for this farm.`, variant: "default" });
       return;
     }
     
@@ -432,7 +443,6 @@ export default function DashboardPage() {
         const lastPerTaskReminderKey = `lastPerTaskReminder_${task.id}_${user.farmId}`;
         const lastPerTaskReminderTime = localStorage.getItem(lastPerTaskReminderKey);
         
-
         if (lastPerTaskReminderTime && (now - parseInt(lastPerTaskReminderTime) < TASK_REMINDER_PER_TASK_COOLDOWN_MS)) {
           console.log(`Per-task reminder cooldown active for task ${task.id}. Not sending new notification.`);
           continue; 
@@ -712,16 +722,25 @@ export default function DashboardPage() {
           <CardDescription>AI-powered lookahead for potential opportunities or risks on your farm. Data is based on recent logs.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button onClick={handleGetProactiveInsights} disabled={isLoadingInsights || !user?.farmId || authLoading || dataLoading} className="mb-4">
-            {isLoadingInsights ? (
-              <>
-                <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
-                Generating Insights...
-              </>
-            ) : (
-              "Get Latest Insights"
-            )}
-          </Button>
+         <TooltipProvider>
+            <ShadTooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={handleGetProactiveInsights} disabled={isLoadingInsights || !user?.farmId || authLoading || dataLoading} className="mb-4">
+                  {isLoadingInsights ? (
+                    <>
+                      <Icons.Search className="mr-2 h-4 w-4 animate-spin" />
+                      Generating Insights...
+                    </>
+                  ) : (
+                    "Get Latest Insights"
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Click to generate AI-powered insights based on your recent farm data.</p>
+              </TooltipContent>
+            </ShadTooltip>
+          </TooltipProvider>
           {isLoadingInsights && (
             <div className="space-y-3">
               <Skeleton className="h-4 w-1/3" />
@@ -811,3 +830,6 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+
+    
